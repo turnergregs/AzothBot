@@ -1,21 +1,16 @@
-# azoth_logic.py
+from PIL import Image, ImageDraw
+import io
 
-# Placeholder functions — we'll replace these with real logic
-async def create_card(name, valence, element, type, text):
-	return f"🆕 Created card: {name} (Cost: {valence}, Element: {element}, Type: {type})"
+def render_card_image(card: dict) -> bytes:
+	img = Image.new("RGB", (400, 600), color=(245, 245, 245))
+	draw = ImageDraw.Draw(img)
 
-async def modify_card(name, field, value):
-	return f"✏️ Modified `{name}`: set `{field}` to `{value}`"
+	draw.text((20, 20), f"{card['name']}", fill="black")
+	draw.text((20, 60), f"{card['type']} • {card['element']}", fill="black")
+	draw.text((20, 100), f"Valence: {card['valence']}", fill="black")
+	draw.text((20, 160), card['text'], fill="black")
 
-async def get_card(name):
-	return f"📋 Info for card: {name}"
-
-async def delete_card(name):
-	return f"🗑️ Deleted card: {name}"
-
-async def rename_card(old_name, new_name):
-	return f"🔄 Renamed `{old_name}` to `{new_name}`"
-
-async def render_card(name):
-	# Temporary fake path — later this will return an actual rendered file
-	return "rendered_cards/fake.png"
+	buffer = io.BytesIO()
+	img.save(buffer, format="PNG")
+	buffer.seek(0)
+	return buffer.getvalue()
