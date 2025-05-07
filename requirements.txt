@@ -1,0 +1,17 @@
+# Discord bot (with slash command support)
+nextcord==2.6.0
+
+# Supabase Python client
+supabase==1.0.3
+
+# Removed pinned httpx version to avoid conflict
+
+# Image manipulation (for rendering cards, if needed)
+Pillow==10.2.0
+
+# Optional: fuzzy matching like in original bot
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.23.0
+
+# Environment variable support
+python-dotenv==1.0.1

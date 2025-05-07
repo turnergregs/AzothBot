@@ -1,0 +1,73 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Supabase generated config (if using CLI)
+.supabase/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs and local state
+*.log
+*.pid
+*.seed
+*.db
+*.sqlite3
+
+# VS Code settings
+.vscode/
+
+# macOS
+.DS_Store
+
+# Environment variables
+.env
+.env.*
+
+# Jupyter notebooks (if used for debugging)
+.ipynb_checkpoints/
+
+# Images or output
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Test caches
+.pytest_cache/
+.tox/
+coverage.*
+htmlcov/
+nosetests.xml
+*.cover
+*.py,cover
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
