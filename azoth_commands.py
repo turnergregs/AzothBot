@@ -3,27 +3,28 @@ from dotenv import load_dotenv
 import nextcord
 from nextcord.ext import commands
 from nextcord import Interaction, SlashOption
-from supabase_client import (
-	get_element_choices,
-	get_attribute_choices,
-	get_type_choices,
-)
+from utils.interaction_helpers import safe_interaction
+
 load_dotenv()
 DEV_GUILD_ID = int(os.getenv("DEV_GUILD_ID"))
-AUTHORIZED_USER_IDS = set(map(int, os.getenv("AUTHORIZED_USER_IDS", "").split(",")))
 BOT_PLAYER_ID = int(os.getenv("BOT_PLAYER_ID"))
 
 def autocomplete_from_choices(field: str, input: str) -> list[str]:
+	from supabase_client import get_element_choices, get_attribute_choices, get_type_choices
 	lookup = {
 		"element": get_element_choices,
 		"attributes": get_attribute_choices,
 		"type": get_type_choices,
 	}
+
 	choices_func = lookup.get(field)
 	if not choices_func:
 		return []
-	choices = choices_func()
-	return [label for label, value in choices if input.lower() in label.lower()]
+
+	all_choices = choices_func()
+	return [v for v in all_choices if input in v][:25]
+
+
 
 class AzothCommands(commands.Cog):
 	def __init__(self, bot):
@@ -31,6 +32,7 @@ class AzothCommands(commands.Cog):
 
 	# Card CRUD commands
 	@nextcord.slash_command(name="create_card", description="Create a new card.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to create card.", require_authorized=True)
 	async def create_card_cmd(
 		self,
 		interaction: Interaction,
@@ -40,10 +42,8 @@ class AzothCommands(commands.Cog):
 		element: str = SlashOption(description="Element", autocomplete=True),
 		text: str = SlashOption(description="Card rules text"),
 		attributes: str = SlashOption(description="Attributes (comma-separated)", required=False),
-		deck: str = SlashOption(description="Deck to assign this card to", required=False, autocomplete=True),
+		# deck: str = SlashOption(description="Deck to assign this card to", required=False, autocomplete=True),
 	):
-		await interaction.response.defer()
-
 		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
 
 		card_data = {
@@ -58,44 +58,43 @@ class AzothCommands(commands.Cog):
 			"triggers": [],
 			"properties": [],
 		}
-		if deck:
-			card_data["deck"] = deck
+		# if deck:
+		# 	card_data["deck"] = deck
 
-		from azoth_logic import render_card_image
+		# from azoth_logic import render_card_image
 		from supabase_client import upload_card_image, create_card
 
-		image_bytes = render_card_image(card_data)
-		image_path = upload_card_image(name, image_bytes)
-		card_data["image"] = image_path
+		# image_bytes = render_card_image(card_data)
+		# image_path = upload_card_image(name, image_bytes)
+		# card_data["image"] = image_path
 
-		result = create_card(card_data)
-		if result:
-			await interaction.followup.send(f"✅ Card `{name}` created successfully.")
+		success, result = create_card(card_data)
+		if success:
+			return f"✅ Created `{name}`."
 		else:
-			await interaction.followup.send("❌ Failed to create card.")
+			return result
 
 
 	@nextcord.slash_command(name="update_card", description="Update fields on an existing card.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to update card.", require_authorized=True)
 	async def update_card_cmd(
 		self,
 		interaction: Interaction,
 		name: str = SlashOption(description="Name of the card to update", autocomplete=True),
+		new_name: str = SlashOption(description="New card name"),
 		type: str = SlashOption(description="New type", required=False, autocomplete=True),
 		valence: int = SlashOption(description="New valence", required=False),
 		element: str = SlashOption(description="New element", required=False, autocomplete=True),
 		text: str = SlashOption(description="New rules text", required=False),
 		attributes: str = SlashOption(description="New attributes (comma-separated)", required=False),
 	):
-		await interaction.response.defer()
-
 		from supabase_client import get_card_by_name, update_card_fields
-		card = get_card_by_name(name)
-		if not card:
-			await interaction.followup.send("❌ Card not found.")
-			return
+		success, card = get_card_by_name(name)
+		if not success:
+			return card  # this is the error message
 
 		update_data = {}
-		update_data["created_by"] = BOT_PLAYER_ID
+		if new_name: update_data["name"] = new_name
 		if type: update_data["type"] = type
 		if valence is not None: update_data["valence"] = valence
 		if element: update_data["element"] = element
@@ -103,40 +102,26 @@ class AzothCommands(commands.Cog):
 		if attributes is not None:
 			update_data["attributes"] = [a.strip() for a in attributes.split(",")]
 
-		updated = update_card_fields(card["id"], update_data)
-		if updated:
-			await interaction.followup.send(f"✅ Updated `{name}`.")
+		success, result = update_card_fields(card, update_data)
+		if success:
+			return f"✅ Updated `{name}`:\n{result}"
 		else:
-			await interaction.followup.send("❌ Failed to update card.")
+			return result
 
 
 	@nextcord.slash_command(name="get_card", description="Get card details.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to get card.")
 	async def get_card_cmd(self, interaction: Interaction, name: str):
-		response = await get_card(name)
-		await interaction.response.send_message(response)
-
+		from supabase_client import get_card_by_name
+		success, card = get_card_by_name(name)
+		return f"```{card}```"
+	
 	@nextcord.slash_command(name="delete_card", description="Delete a card.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to delete card.", require_authorized=True)
 	async def delete_card_cmd(self, interaction: Interaction, name: str):
-		if interaction.user.id not in AUTHORIZED_USER_IDS:
-			await interaction.response.send_message("❌ You’re not authorized to use this command.", ephemeral=True)
-			return
-		
-		response = await delete_card(name)
-		await interaction.response.send_message(response)
-
-	@nextcord.slash_command(name="rename_card", description="Rename a card.", guild_ids=[DEV_GUILD_ID])
-	async def rename_card_cmd(
-		self,
-		interaction: Interaction,
-		old_name: str,
-		new_name: str
-	):
-		if interaction.user.id not in AUTHORIZED_USER_IDS:
-			await interaction.response.send_message("❌ You’re not authorized to use this command.", ephemeral=True)
-			return
-		
-		response = await rename_card(old_name, new_name)
-		await interaction.response.send_message(response)
+		from supabase_client import delete_card_by_name
+		success, response = delete_card_by_name(name)
+		return response
 
 	@nextcord.slash_command(name="render_card", description="Render card image.", guild_ids=[DEV_GUILD_ID])
 	async def render_card_cmd(self, interaction: Interaction, name: str):
@@ -147,26 +132,43 @@ class AzothCommands(commands.Cog):
 			await interaction.response.send_message("❌ Could not render card.")
 
 
-	# Helpers
+	# Autocomplete functions
 	@create_card_cmd.on_autocomplete("element")
 	@update_card_cmd.on_autocomplete("element")
 	async def autocomplete_element(self, interaction: Interaction, input: str):
-		matches = autocomplete_from_choices("element", input)
-		await interaction.response.send_autocomplete(matches[:25])
+		suggestions = autocomplete_from_choices("element", input)
+		await interaction.response.send_autocomplete(suggestions)
 
 	@create_card_cmd.on_autocomplete("type")
 	@update_card_cmd.on_autocomplete("type")
 	async def autocomplete_type(self, interaction: Interaction, input: str):
-		matches = autocomplete_from_choices("type", input)
-		await interaction.response.send_autocomplete(matches[:25])
+		suggestions = autocomplete_from_choices("type", input)
+		await interaction.response.send_autocomplete(suggestions)
 
 	@create_card_cmd.on_autocomplete("attributes")
 	@update_card_cmd.on_autocomplete("attributes")
 	async def autocomplete_attributes(self, interaction: Interaction, input: str):
+		# Split into parts based on commas
 		parts = [p.strip() for p in input.split(",")]
-		last_part = parts[-1]
-		matches = autocomplete_from_choices("attributes", last_part)
-		# Prefix existing parts before final suggestion
-		prefix = ", ".join(parts[:-1]) + ", " if len(parts) > 1 else ""
-		suggestions = [prefix + match for match in matches]
-		await interaction.response.send_autocomplete(suggestions[:25])
+		existing = parts[:-1]
+		current = parts[-1]
+
+		matches = autocomplete_from_choices("attributes", current)
+
+		prefix = ", ".join(existing) + ", " if existing else ""
+		suggestions = [prefix + match for match in matches][:25]
+
+		await interaction.response.send_autocomplete(suggestions)
+
+	@update_card_cmd.on_autocomplete("name")
+	@delete_card_cmd.on_autocomplete("name")
+	@get_card_cmd.on_autocomplete("name")
+	@render_card_cmd.on_autocomplete("name")
+	async def autocomplete_card_name(self, interaction: Interaction, input: str):
+		from supabase_client import get_all_card_names
+
+		all_names = get_all_card_names()
+		matches = [n for n in all_names if input.lower() in n.lower()][:25]
+		await interaction.response.send_autocomplete(matches)
+
+
