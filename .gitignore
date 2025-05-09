@@ -38,8 +38,8 @@ venv/
 .DS_Store
 
 # Environment variables
-# .env
-# .env.*
+.env
+.env.*
 
 # Jupyter notebooks (if used for debugging)
 # .ipynb_checkpoints/
