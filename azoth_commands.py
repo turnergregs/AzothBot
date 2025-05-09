@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 import nextcord
+import json
 from nextcord.ext import commands
 from nextcord import Interaction, SlashOption
 from utils.interaction_helpers import safe_interaction
@@ -25,14 +26,13 @@ def autocomplete_from_choices(field: str, input: str) -> list[str]:
 	return [v for v in all_choices if input in v][:25]
 
 
-
 class AzothCommands(commands.Cog):
 	def __init__(self, bot):
 		self.bot = bot
 
 	# Card CRUD commands
 	@nextcord.slash_command(name="create_card", description="Create a new card.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to create card.", require_authorized=True)
+	@safe_interaction(timeout=15, error_message="❌ Failed to create card.", require_authorized=True)
 	async def create_card_cmd(
 		self,
 		interaction: Interaction,
@@ -42,8 +42,12 @@ class AzothCommands(commands.Cog):
 		element: str = SlashOption(description="Element", autocomplete=True),
 		text: str = SlashOption(description="Card rules text"),
 		attributes: str = SlashOption(description="Attributes (comma-separated)", required=False),
-		# deck: str = SlashOption(description="Deck to assign this card to", required=False, autocomplete=True),
 	):
+		from azoth_logic.image_generator import generate_card_image
+		from azoth_logic.card_renderer import CardRenderer
+		from supabase_client import create_card, upload_card_image, update_card_fields, download_card_image
+		import os
+
 		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
 
 		card_data = {
@@ -58,21 +62,59 @@ class AzothCommands(commands.Cog):
 			"triggers": [],
 			"properties": [],
 		}
-		# if deck:
-		# 	card_data["deck"] = deck
 
-		# from azoth_logic import render_card_image
-		from supabase_client import upload_card_image, create_card
+		# Step 1: Create card
+		success, created_card = create_card(card_data)
+		if not success:
+			return created_card  # Error message
 
-		# image_bytes = render_card_image(card_data)
-		# image_path = upload_card_image(name, image_bytes)
-		# card_data["image"] = image_path
+		# Step 2: Generate card art image
+		image_success, image_path_or_error = generate_card_image(card_data)
+		if not image_success:
+			return f"✅ Created `{name}`, but image generation failed:\n{image_path_or_error}"
+		image_path = image_path_or_error
 
-		success, result = create_card(card_data)
-		if success:
-			return f"✅ Created `{name}`."
-		else:
-			return result
+		# Step 3: Upload image to Supabase
+		with open(image_path, "rb") as f:
+			image_bytes = f.read()
+		upload_success, file_path_or_error = upload_card_image(name, image_bytes)
+		if not upload_success:
+			return f"✅ Created `{name}`, but failed to upload image:\n{file_path_or_error}"
+
+		# Step 4: Update card with image path
+		update_card_fields(created_card, {"image": file_path_or_error})
+		created_card["image"] = file_path_or_error
+
+		# Step 5: Download uploaded image from Supabase
+		image_download_success, image_local_path = download_card_image(file_path_or_error)
+		if not image_download_success:
+			return f"✅ Created `{name}`, image uploaded, but could not retrieve it:\n{image_local_path}"
+
+		# Step 6: Render full card
+		output_dir = "assets/rendered_cards"
+		renderer = CardRenderer()
+		renderer.render_card(created_card, output_dir=output_dir)
+
+		final_name = name.lower().replace(" ", "_") + ".png"
+		final_path = os.path.join(output_dir, final_name)
+
+		if not os.path.exists(final_path):
+			return f"✅ Created `{name}`, but final render failed."
+
+		# Step 7: Send final card to Discord
+		await interaction.followup.send(
+			content=f"✅ Created `{name}` successfully!",
+			file=nextcord.File(final_path)
+		)
+
+		# Step 8: Clean up local files
+		for path in [image_path, image_local_path, final_path]:
+			try:
+				os.remove(path)
+			except Exception as e:
+				print(f"⚠️ Cleanup failed: {path} — {e}")
+
+		return None  # already sent a response
 
 
 	@nextcord.slash_command(name="update_card", description="Update fields on an existing card.", guild_ids=[DEV_GUILD_ID])
@@ -113,9 +155,15 @@ class AzothCommands(commands.Cog):
 	@safe_interaction(timeout=5, error_message="❌ Failed to get card.")
 	async def get_card_cmd(self, interaction: Interaction, name: str):
 		from supabase_client import get_card_by_name
+
 		success, card = get_card_by_name(name)
-		return f"```{card}```"
+		if not success:
+			return card  # this is the error message string
+
+		card_json = json.dumps(card, indent=2)
+		return f"```json\n{card_json}\n```"
 	
+
 	@nextcord.slash_command(name="delete_card", description="Delete a card.", guild_ids=[DEV_GUILD_ID])
 	@safe_interaction(timeout=5, error_message="❌ Failed to delete card.", require_authorized=True)
 	async def delete_card_cmd(self, interaction: Interaction, name: str):
@@ -123,14 +171,43 @@ class AzothCommands(commands.Cog):
 		success, response = delete_card_by_name(name)
 		return response
 
-	@nextcord.slash_command(name="render_card", description="Render card image.", guild_ids=[DEV_GUILD_ID])
-	async def render_card_cmd(self, interaction: Interaction, name: str):
-		image_path = await render_card(name)
-		if image_path:
-			await interaction.response.send_message(file=nextcord.File(image_path))
-		else:
-			await interaction.response.send_message("❌ Could not render card.")
 
+	@nextcord.slash_command(name="render_card", description="Render a card and return the image.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to render card.")
+	async def render_card_cmd(self, interaction: Interaction, name: str = SlashOption(description="Card name", autocomplete=True)):
+		from supabase_client import get_card_by_name, download_card_image
+		from azoth_logic.card_renderer import CardRenderer
+
+		success, card = get_card_by_name(name)
+		if not success:
+			return card
+
+		# Download the art from Supabase
+		image_success, image_path_or_error = download_card_image(card["image"])
+		if not image_success:
+			return f"⚠️ Could not load image for `{name}`:\n{image_path_or_error}"
+
+		# Render the full card using the image
+		output_dir = "assets/rendered_cards"
+		renderer = CardRenderer()
+		renderer.render_card(card, output_dir=output_dir)
+
+		# Send the rendered file
+		filename = name.lower().replace(" ", "_") + ".png"
+		final_path = os.path.join(output_dir, filename)
+
+		if not os.path.exists(final_path):
+			return f"❌ Render failed — output not found."
+
+		await interaction.followup.send(file=nextcord.File(final_path))
+
+		try:
+			os.remove(final_path)
+		except Exception as e:
+			print(f"⚠️ Could not delete rendered card image: {e}")
+
+
+	# Deck CRUD commands
 
 	# Autocomplete functions
 	@create_card_cmd.on_autocomplete("element")
