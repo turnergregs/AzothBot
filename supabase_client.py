@@ -73,7 +73,12 @@ def get_card_by_name(name: str) -> tuple[bool, dict | str]:
 
 def create_card(card_data: dict) -> tuple[bool, dict | str]:
 	response = supabase.table("cards").insert(card_data).execute()
-	return handle_supabase_response(response, f"creating card '{card_data.get('name')}'")
+	success, data = handle_supabase_response(response, f"creating card '{card_data.get('name')}'")
+
+	if not success or not data:
+		return False, data
+	
+	return True, data[0]
 
 def update_card_fields(card: dict, update_data: dict) -> tuple[bool, str]:
 	# Build the diff before updating
@@ -112,17 +117,37 @@ def delete_card_by_name(name: str) -> tuple[bool, str]:
 		return False, result
 
 def upload_card_image(card_name: str, image_bytes: bytes) -> tuple[bool, str]:
-	file_name = f"{card_name}.png"
-	bucket = "cards"
-	response = supabase.storage.from_(bucket).upload(
-		file_name,
-		image_bytes,
-		{"content-type": "image/png", "upsert": True}
-	)
-	success, data = handle_supabase_response(response, f"uploading image for '{card_name}'")
-	if not success:
-		return False, data
-	return True, f"{bucket}/{file_name}"
+	file_name = f"{card_name.lower().replace(' ', '_')}.png"
+	bucket = "cardimages"
+	try:
+		response = supabase.storage.from_(bucket).upload(
+			file_name,
+			image_bytes,
+			{"content-type": "image/png", "x-upsert": "true"}
+		)
+		# This may return True or some object — make sure it's correct
+		if hasattr(response, "status_code") and response.status_code >= 400:
+			return False, f"Upload failed: {response.text}"
+		return True, f"{file_name}"
+	except Exception as e:
+		return False, f"Exception during upload: {e}"
+
+def download_card_image(image_name: str, download_dir: str = "assets/downloaded_images") -> tuple[bool, str]:
+	"""
+	Downloads the card's image from Supabase and returns the local path.
+	"""
+	bucket = "cardimages"
+	os.makedirs(download_dir, exist_ok=True)
+	local_path = os.path.join(download_dir, image_name)
+
+	try:
+		data = supabase.storage.from_(bucket).download(image_name)
+		with open(local_path, "wb") as f:
+			f.write(data)
+		return True, local_path
+	except Exception as e:
+		return False, f"Failed to download image: {e}"
+
 
 # Deck CRUD
 
