@@ -835,14 +835,14 @@ class CardRenderer:
         for card in cards:
             # Generate filename based on card name
             base_filename = card['name'].lower().replace(' ', '_')
-            image_path = os.path.join(os.path.dirname(output_path), f"{base_filename}.png")
+            image_path = os.path.join(RENDERED_CARDS_DIR, f"{base_filename}.png")
 
             # Load the card image if it exists, otherwise render it
             if os.path.exists(image_path):
                 card_images.append(Image.open(image_path))
             else:
                 # Render the card and get the image
-                self.render_card(card, os.path.dirname(output_path))
+                self.render_card(card, RENDERED_CARDS_DIR)
                 card_images.append(Image.open(image_path))
 
         num_cards = len(card_images)
@@ -909,7 +909,7 @@ class CardRenderer:
             if os.path.exists(image_path):
                 card_images.append(Image.open(image_path))
             else:
-                self.render_card(card, os.path.dirname(output_path))
+                self.render_card(card, RENDERED_CARDS_DIR)
                 card_images.append(Image.open(image_path))
 
         # Calculate dimensions needed for the fan layout
@@ -1013,7 +1013,7 @@ class CardRenderer:
                     card_images.append(Image.open(image_path))
                 else:
                     # Render the card if it doesn't exist yet
-                    self.render_card(card, os.path.dirname(output_path))
+                    self.render_card(card, RENDERED_CARDS_DIR)
                     card_images.append(Image.open(image_path))
             except Exception as e:
                 print(f"Error loading card image for {card['name']}: {str(e)}")
