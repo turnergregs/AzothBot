@@ -42,9 +42,11 @@ def _get_display_map(table: str) -> list[str]:
 		return [r["name"] for r in data] if data else []
 	except Exception: return []
 
-def get_element_choices() -> list[str]: return _get_display_map("elements")
-def get_attribute_choices() -> list[str]: return _get_display_map("attributes")
-def get_type_choices() -> list[str]: return _get_display_map("types")
+def get_card_element_choices() -> list[str]: return _get_display_map("card_elements")
+def get_card_attribute_choices() -> list[str]: return _get_display_map("card_attributes")
+def get_card_type_choices() -> list[str]: return _get_display_map("card_types")
+def get_deck_type_choices() -> list[str]: return _get_display_map("deck_types")
+def get_deck_content_type_choices() -> list[str]: return _get_display_map("deck_content_types")
 
 def get_all_card_names() -> list[str]:
 	try:
@@ -109,12 +111,24 @@ def delete_card_by_name(name: str) -> tuple[bool, str]:
 	success, card = get_card_by_name(name)
 	if not success:
 		return False, card
-	response = supabase.table("cards").delete().eq("id", card["id"]).execute()
-	success, result = handle_supabase_response(response, f"deleting card '{name}'")
-	if success: 
-		return True, f"✅ Deleted {name}"
+
+	# Check if the card is referenced in any decks
+	response = supabase.table("deck_cards").select("deck_id").eq("card_id", card_id).execute()
+	if response.data:
+		# Get names of decks that use this card
+		deck_ids = [row["deck_id"] for row in response.data]
+		decks_response = supabase.table("decks").select("name").in_("id", deck_ids).execute()
+		deck_names = [row["name"] for row in decks_response.data] if decks_response.data else ["unknown"]
+
+		return False, f"❌ Cannot delete `{name}` — it’s used in deck(s): {', '.join(deck_names)}"
+
+	# Safe to delete
+	response = supabase.table("cards").delete().eq("id", card_id).execute()
+	success, _ = handle_supabase_response(response, f"deleting card '{name}'")
+	if success:
+		return True, f"✅ Deleted card `{name}`"
 	else:
-		return False, result
+		return False, f"❌ Failed to delete card `{name}`"
 
 def upload_card_image(card_name: str, image_bytes: bytes) -> tuple[bool, str]:
 	file_name = f"{card_name.lower().replace(' ', '_')}.png"

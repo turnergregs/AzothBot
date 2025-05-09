@@ -11,11 +11,11 @@ DEV_GUILD_ID = int(os.getenv("DEV_GUILD_ID"))
 BOT_PLAYER_ID = int(os.getenv("BOT_PLAYER_ID"))
 
 def autocomplete_from_choices(field: str, input: str) -> list[str]:
-	from supabase_client import get_element_choices, get_attribute_choices, get_type_choices
+	from supabase_client import get_card_element_choices, get_card_attribute_choices, get_card_type_choices
 	lookup = {
-		"element": get_element_choices,
-		"attributes": get_attribute_choices,
-		"type": get_type_choices,
+		"element": get_card_element_choices,
+		"attributes": get_card_attribute_choices,
+		"type": get_card_type_choices,
 	}
 
 	choices_func = lookup.get(field)
