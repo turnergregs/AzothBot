@@ -112,6 +112,8 @@ def delete_card_by_name(name: str) -> tuple[bool, str]:
 	if not success:
 		return False, card
 
+	card_id = card["id"]
+
 	# Check if the card is referenced in any decks
 	response = supabase.table("deck_cards").select("deck_id").eq("card_id", card_id).execute()
 	if response.data:
