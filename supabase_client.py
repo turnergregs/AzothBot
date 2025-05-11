@@ -1,9 +1,6 @@
 from supabase import create_client, Client
-from dotenv import load_dotenv
 from functools import lru_cache
 import os
-
-load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -47,6 +44,8 @@ def get_card_attribute_choices() -> list[str]: return _get_display_map("card_att
 def get_card_type_choices() -> list[str]: return _get_display_map("card_types")
 def get_deck_type_choices() -> list[str]: return _get_display_map("deck_types")
 def get_deck_content_type_choices() -> list[str]: return _get_display_map("deck_content_types")
+def get_ritual_type_choices() -> list[str]: return _get_display_map("ritual_types")
+def get_difficulty_choices() -> list[str]: return _get_display_map("ritual_difficulties")
 
 def get_all_card_names() -> list[str]:
 	try:
@@ -132,9 +131,8 @@ def delete_card_by_name(name: str) -> tuple[bool, str]:
 	else:
 		return False, f"❌ Failed to delete card `{name}`"
 
-def upload_card_image(card_name: str, image_bytes: bytes) -> tuple[bool, str]:
+def upload_card_image(card_name: str, image_bytes: bytes, bucket: str) -> tuple[bool, str]:
 	file_name = f"{card_name.lower().replace(' ', '_')}.png"
-	bucket = "cardimages"
 	try:
 		response = supabase.storage.from_(bucket).upload(
 			file_name,
@@ -148,11 +146,10 @@ def upload_card_image(card_name: str, image_bytes: bytes) -> tuple[bool, str]:
 	except Exception as e:
 		return False, f"Exception during upload: {e}"
 
-def download_card_image(image_name: str, download_dir: str = "assets/downloaded_images") -> tuple[bool, str]:
+def download_card_image(image_name: str, bucket: str, download_dir: str = "assets/downloaded_images") -> tuple[bool, str]:
 	"""
 	Downloads the card's image from Supabase and returns the local path.
 	"""
-	bucket = "cardimages"
 	os.makedirs(download_dir, exist_ok=True)
 	local_path = os.path.join(download_dir, image_name)
 
@@ -356,3 +353,23 @@ def remove_from_deck(deck: dict, item_name: str, quantity: int) -> tuple[bool, s
 			supabase.table(table).delete().eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
 
 		return True, f"🗑️ Removed {min(quantity, existing)}x `{item_name}` from `{deck['name']}`"
+
+
+def create_ritual(ritual_data: dict) -> tuple[bool, dict | str]:
+	response = supabase.table("rituals").insert(ritual_data).execute()
+	success, data = handle_supabase_response(response, f"creating ritual")
+
+	if not success or not data:
+		return False, data
+	
+	return True, data[0]
+
+
+def create_ritual_side(ritual_side_data: dict) -> tuple[bool, dict | str]:
+	response = supabase.table("ritual_sides").insert(ritual_side_data).execute()
+	success, data = handle_supabase_response(response, f"creating ritual_side '{ritual_side_data.get('name')}'")
+
+	if not success or not data:
+		return False, data
+	
+	return True, data[0]

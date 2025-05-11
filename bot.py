@@ -3,7 +3,7 @@ from nextcord.ext import commands
 from dotenv import load_dotenv
 import os
 
-from azoth_commands import AzothCommands
+from azoth_commands import *
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
