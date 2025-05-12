@@ -24,9 +24,8 @@ def add_card_commands(cls):
 		deck: str = SlashOption(description="Optional deck to add this card to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
-		from azoth_logic.image_generator import generate_card_image
 		from azoth_logic.card_renderer import CardRenderer
-		from supabase_client import create_card, upload_card_image, update_card_fields, download_card_image
+		from supabase_client import create_card, update_card_fields, download_image
 
 		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
 
@@ -63,15 +62,7 @@ def add_card_commands(cls):
 				return f"✅ Created `{name}` but failed to add to `{deck}`:\n{add_msg}"
 
 		# Generate card art image
-		image_success, image_path_or_error = generate_card_image(card_data)
-		if not image_success:
-			return f"✅ Created `{name}`, but image generation failed:\n{image_path_or_error}"
-		image_path = image_path_or_error
-
-		# Upload image to Supabase
-		with open(image_path, "rb") as f:
-			image_bytes = f.read()
-		upload_success, file_path_or_error = upload_card_image(name, image_bytes, CARD_IMAGE_BUCKET)
+		upload_success, file_path = generate_and_upload_card_image(card)
 		if not upload_success:
 			return f"✅ Created `{name}`, but failed to upload image:\n{file_path_or_error}"
 
@@ -80,8 +71,8 @@ def add_card_commands(cls):
 		created_card["image"] = file_path_or_error
 
 		# Step 5: Download uploaded image from Supabase
-		image_download_success, image_local_path = download_card_image(file_path_or_error, CARD_IMAGE_BUCKET)
-		if not image_download_success:
+		download_success, image_local_path = download_image(file_path_or_error, CARD_IMAGE_BUCKET)
+		if not download_success:
 			return f"✅ Created `{name}`, image uploaded, but could not retrieve it:\n{image_local_path}"
 
 		# Render full card
@@ -101,33 +92,29 @@ def add_card_commands(cls):
 			file=nextcord.File(final_path)
 		)
 
-		# Clean up local files
-		for path in [image_path, image_local_path, final_path]:
-			try:
-				os.remove(path)
-			except Exception as e:
-				print(f"⚠️ Cleanup failed: {path} — {e}")
-
 		return None  # already sent a response
 
 
 	@nextcord.slash_command(name="update_card", description="Update fields on an existing card.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to update card.", require_authorized=True)
+	@safe_interaction(timeout=10, error_message="❌ Failed to update card.", require_authorized=True)
 	async def update_card_cmd(
 		self,
 		interaction: Interaction,
 		name: str = SlashOption(description="Name of the card to update", autocomplete=True),
-		new_name: str = SlashOption(description="New card name"),
+		new_name: str = SlashOption(description="New card name", required=False),
 		type: str = SlashOption(description="New type", required=False, autocomplete=True),
 		valence: int = SlashOption(description="New valence", required=False),
 		element: str = SlashOption(description="New element", required=False, autocomplete=True),
 		text: str = SlashOption(description="New rules text", required=False),
 		attributes: str = SlashOption(description="New attributes (comma-separated)", required=False),
+		regenerate_image: bool = SlashOption(description="Regenerate the image?", required=False, default=False),
 	):
-		from supabase_client import get_card_by_name, update_card_fields
+		from supabase_client import get_card_by_name, update_card_fields, download_image
+		from azoth_logic.card_renderer import CardRenderer
+
 		success, card = get_card_by_name(name)
 		if not success:
-			return card  # this is the error message
+			return card
 
 		update_data = {}
 		if new_name: update_data["name"] = new_name
@@ -138,11 +125,36 @@ def add_card_commands(cls):
 		if attributes is not None:
 			update_data["attributes"] = [a.strip() for a in attributes.split(",")]
 
+		card = card | update_data
+
+		if regenerate_image:
+			upload_success, file_path = generate_and_upload_card_image(card)
+			if not upload_success:
+				return f"✅ Updated `{name}`, but failed to upload image: `{file_path}`"
+
+			# Update image field
+			update_data["image"] = file_path
+
+		# Update database fields
 		success, result = update_card_fields(card, update_data)
-		if success:
-			return f"✅ Updated `{name}`:\n{result}"
-		else:
+		if not success:
 			return result
+
+		if regenerate_image:
+			download_success, local_path = download_image(file_path, CARD_IMAGE_BUCKET)
+			if download_success:
+				renderer = CardRenderer()
+				renderer.render_card(card, output_dir="assets/rendered_cards")
+				final_path = os.path.join("assets", "rendered_cards", card["name"].lower().replace(" ", "_") + ".png")
+
+				await interaction.followup.send(
+					content=f"✅ Updated `{name}` and regenerated image!",
+					file=nextcord.File(final_path)
+				)
+
+				return None
+
+		return f"✅ Updated `{name}`:\n{result}"
 
 
 	@nextcord.slash_command(name="get_card", description="Get card details.", guild_ids=[DEV_GUILD_ID])
@@ -169,7 +181,7 @@ def add_card_commands(cls):
 	@nextcord.slash_command(name="render_card", description="Render a card and return the image.", guild_ids=[DEV_GUILD_ID])
 	@safe_interaction(timeout=10, error_message="❌ Failed to render card.")
 	async def render_card_cmd(self, interaction: Interaction, name: str = SlashOption(description="Card name", autocomplete=True)):
-		from supabase_client import get_card_by_name, download_card_image
+		from supabase_client import get_card_by_name, download_image
 		from azoth_logic.card_renderer import CardRenderer
 
 		success, card = get_card_by_name(name)
@@ -177,7 +189,7 @@ def add_card_commands(cls):
 			return card
 
 		# Download the art from Supabase
-		image_success, image_path_or_error = download_card_image(card["image"], CARD_IMAGE_BUCKET)
+		image_success, image_path_or_error = download_image(card["image"], CARD_IMAGE_BUCKET)
 		if not image_success:
 			return f"⚠️ Could not load image for `{name}`:\n{image_path_or_error}"
 
@@ -195,74 +207,20 @@ def add_card_commands(cls):
 
 		await interaction.followup.send(file=nextcord.File(final_path))
 
-		try:
-			os.remove(final_path)
-		except Exception as e:
-			print(f"⚠️ Could not delete rendered card image: {e}")
+	# Card Helpers
 
-
-	@nextcord.slash_command(name="regenerate_card_image", description="Regenerate the art image for a card.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to regenerate card art.", require_authorized=True)
-	async def regenerate_card_image_cmd(
-		self,
-		interaction: Interaction,
-		name: str = SlashOption(description="Card name", autocomplete=True),
-	):
-		from supabase_client import get_card_by_name, upload_card_image, update_card_fields, download_card_image
+	def generate_and_upload_card_image(card_data: dict) -> tuple[bool, str | bytes]:
 		from azoth_logic.image_generator import generate_card_image
-		from azoth_logic.card_renderer import CardRenderer
+		from supabase_client import upload_image
 
-		success, card = get_card_by_name(name)
+		success, image_path_or_error = generate_card_image(card_data)
 		if not success:
-			return card
+			return False, image_path_or_error
 
-		# Generate card art image
-		image_success, image_path_or_error = generate_card_image(card)
-		if not image_success:
-			return f"✅ Created `{name}`, but image generation failed:\n{image_path_or_error}"
-		image_path = image_path_or_error
-
-		# Upload image to Supabase
-		with open(image_path, "rb") as f:
+		with open(image_path_or_error, "rb") as f:
 			image_bytes = f.read()
-		upload_success, file_path_or_error = upload_card_image(name, image_bytes, CARD_IMAGE_BUCKET)
-		if not upload_success:
-			return f"✅ Created `{name}`, but failed to upload image:\n{file_path_or_error}"
 
-		# Update card with image path
-		update_card_fields(card, {"image": file_path_or_error})
-		card["image"] = file_path_or_error
-
-		# Step 5: Download uploaded image from Supabase
-		image_download_success, image_local_path = download_card_image(file_path_or_error, CARD_IMAGE_BUCKET)
-		if not image_download_success:
-			return f"✅ Created `{name}`, image uploaded, but could not retrieve it:\n{image_local_path}"
-
-		# Render full card
-		output_dir = "assets/rendered_cards"
-		renderer = CardRenderer()
-		renderer.render_card(card, output_dir=output_dir)
-
-		final_name = name.lower().replace(" ", "_") + ".png"
-		final_path = os.path.join(output_dir, final_name)
-
-		if not os.path.exists(final_path):
-			return f"✅ Created `{name}`, but final render failed."
-
-		# Send final card to Discord
-		await interaction.followup.send(
-			content=f"✅ Created `{name}` successfully!",
-			file=nextcord.File(final_path)
-		)
-
-		# Clean up local files
-		for path in [image_path, image_local_path, final_path]:
-			try:
-				os.remove(path)
-			except Exception as e:
-				print(f"⚠️ Cleanup failed: {path} — {e}")
-
-		return None  # already sent a response
+		return upload_image(card_data["name"], image_bytes, CARD_IMAGE_BUCKET)
 
 
 	# Autocomplete Helpers
@@ -301,7 +259,6 @@ def add_card_commands(cls):
 	@delete_card_cmd.on_autocomplete("name")
 	@get_card_cmd.on_autocomplete("name")
 	@render_card_cmd.on_autocomplete("name")
-	@regenerate_card_image_cmd.on_autocomplete("name")
 	async def autocomplete_card_name(self, interaction: Interaction, input: str):
 		from supabase_client import get_all_card_names
 		matches = [n for n in get_all_card_names() if input.lower() in n.lower()]
@@ -329,4 +286,3 @@ def add_card_commands(cls):
 	cls.get_card_cmd 	= get_card_cmd
 	cls.delete_card_cmd = delete_card_cmd
 	cls.render_card_cmd = render_card_cmd
-	cls.regenerate_card_image_cmd = regenerate_card_image_cmd

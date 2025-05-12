@@ -1,10 +1,12 @@
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageChops
 import json
 import os
+import re
 from pathlib import Path
 import math
 import numpy as np
 from PIL.ImageSequence import Iterator
+from azoth_commands.helpers import get_local_image_path
 
 
 FONT_PATH = os.path.join("assets", "fonts", "Aldrich-Regular.ttf")
@@ -829,7 +831,7 @@ class RitualRenderer:
 
         if 'image' in card_data['challenge_side'] and card_data['challenge_side']['image']:
             if True:
-                source_image = Image.open(os.path.join(DOWNLOADED_IMAGES_DIR, card_data['challenge_side']['image']))
+                source_image = Image.open(get_local_image_path(card_data["challenge_side"]["image"]))
                 is_animated = hasattr(source_image, 'is_animated') and source_image.is_animated
 
                 # Process first frame to get parameters
@@ -840,7 +842,7 @@ class RitualRenderer:
                 # processed_frames.append(processed_frame)
 
 
-                source_image = Image.open(os.path.join(DOWNLOADED_IMAGES_DIR, card_data['bonus_side']['image']))
+                source_image = Image.open(get_local_image_path(card_data["bonus_side"]["image"]))
                 first_frame = source_image.copy()
                 bonus_frame, crop_params, paste_pos, cropped_image2 = self.process_frame(first_frame, image_area, card_data=card_data, is_dark_mode=False)
 
@@ -1100,7 +1102,7 @@ class RitualRenderer:
         side_data = card_data['bonus_side']
         if 'image' in side_data and side_data['image']:
             try:
-                source_image = Image.open(os.path.join(DOWNLOADED_IMAGES_DIR, side_data['image']))
+                source_image = Image.open(get_local_image_path(side_data["image"]))
                 is_animated = hasattr(source_image, 'is_animated') and source_image.is_animated
 
                 # Process first frame to get parameters

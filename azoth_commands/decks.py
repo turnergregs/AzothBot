@@ -4,7 +4,7 @@ import nextcord
 from nextcord.ext import commands
 from nextcord import SlashOption, Interaction
 
-from azoth_commands.helpers import safe_interaction
+from azoth_commands.helpers import safe_interaction, get_local_image_path
 from azoth_commands.autocomplete import autocomplete_from_choices
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID, CARD_IMAGE_BUCKET, RITUAL_IMAGE_BUCKET
 
@@ -16,6 +16,7 @@ def add_deck_commands(cls):
 		self,
 		interaction: Interaction,
 		name: str = SlashOption(description="Deck name"),
+		description: str = SlashOption(description="Deck Description"),
 		type: str = SlashOption(description="Deck type", autocomplete=True),
 		content_type: str = SlashOption(description="Content type", autocomplete=True),
 	):
@@ -23,6 +24,7 @@ def add_deck_commands(cls):
 
 		deck_data = {
 			"name": name,
+			"description": description,
 			"type": type,
 			"content_type": content_type,
 			"created_by": BOT_PLAYER_ID,
@@ -41,6 +43,7 @@ def add_deck_commands(cls):
 		interaction: Interaction,
 		name: str = SlashOption(description="Deck name to update", autocomplete=True),
 		new_name: str = SlashOption(description="New deck name"),
+		description: str = SlashOption(description="New deck description"),
 		type: str = SlashOption(description="New deck type", required=False, autocomplete=True),
 		archived: bool = SlashOption(description="Archive this deck?", required=False)
 	):
@@ -106,7 +109,7 @@ def add_deck_commands(cls):
 		interaction: Interaction,
 		name: str = SlashOption(description="Deck to render", autocomplete=True),
 	):
-		from supabase_client import get_deck_by_name, get_deck_contents, download_card_image
+		from supabase_client import get_deck_by_name, get_deck_contents, download_image
 		from azoth_logic.card_renderer import CardRenderer
 		import io, uuid
 
@@ -121,9 +124,11 @@ def add_deck_commands(cls):
 			return f"⚠️ Deck `{name}` is empty."
 
 		for card in cards:
-			success, result = download_card_image(card['image'], CARD_IMAGE_BUCKET)
-			if not success:
-				return f"⚠️ Failed to fetch art for `{card['name']}`: {result}"
+			local_path = get_local_image_path(card["image"])
+			if not os.path.exists(local_path):
+				success, result = download_image(card["image"], CARD_IMAGE_BUCKET)
+				if not success:
+					return f"⚠️ Failed to fetch art for `{card['name']}`: {result}"
 
 		renderer = CardRenderer()
 
@@ -149,7 +154,7 @@ def add_deck_commands(cls):
 		name: str = SlashOption(description="Deck name", autocomplete=True),
 		hand_size: int = SlashOption(description="Number of cards to draw (default 6)", default=6)
 	):
-		from supabase_client import get_deck_by_name, get_deck_contents, download_card_image
+		from supabase_client import get_deck_by_name, get_deck_contents, download_image
 		from azoth_logic.card_renderer import CardRenderer
 		import io, uuid, random
 
@@ -164,9 +169,11 @@ def add_deck_commands(cls):
 			return f"⚠️ Deck `{name}` is empty."
 
 		for card in cards:
-			success, result = download_card_image(card['image'], CARD_IMAGE_BUCKET)
-			if not success:
-				return f"⚠️ Failed to fetch art for `{card['name']}`: {result}"
+			local_path = get_local_image_path(card["image"])
+			if not os.path.exists(local_path):
+				success, result = download_image(card["image"], CARD_IMAGE_BUCKET)
+				if not success:
+					return f"⚠️ Failed to fetch art for `{card['name']}`: {result}"
 
 		renderer = CardRenderer()
 		filename = f"hand_render_{uuid.uuid4().hex}.png"
