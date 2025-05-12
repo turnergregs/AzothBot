@@ -1,10 +1,12 @@
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import json
 import os
+import re
 from pathlib import Path
 import math
 import numpy as np
 from PIL.ImageSequence import Iterator
+from azoth_commands.helpers import get_local_image_path
 
 FONT_PATH = os.path.join("assets", "fonts", "Aldrich-Regular.ttf")
 ICON_DIR = os.path.join("assets", "icons")
@@ -518,7 +520,7 @@ class CardRenderer:
 
         if 'image' in card_data and card_data['image']:
             try:
-                source_image = Image.open(os.path.join(DOWNLOADED_IMAGES_DIR, card_data['image']))
+                source_image = Image.open(get_local_image_path(card_data["image"]))
                 is_animated = hasattr(source_image, 'is_animated') and source_image.is_animated
 
                 # Process first frame to get parameters

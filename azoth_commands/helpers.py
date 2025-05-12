@@ -3,6 +3,7 @@ import functools
 import nextcord
 from dotenv import load_dotenv
 import os
+import re
 
 load_dotenv()
 
@@ -46,3 +47,22 @@ def safe_interaction(timeout=10, error_message="⚠️ Something went wrong.", r
 
 		return wrapper
 	return decorator
+
+
+def generate_image_filename(name: str, version: int) -> str:
+	safe_name = re.sub(r'\W+', '_', name.lower()).strip('_')
+	return f"{safe_name}_{version}.png"
+
+def generate_local_filename(name: str) -> str:
+	safe_name = re.sub(r'\W+', '_', name.lower()).strip('_')
+	return f"{safe_name}.png"
+
+def get_local_image_path(supabase_image_name: str, download_dir: str = "assets/downloaded_images") -> str:
+	"""
+	Converts a Supabase image name (e.g. 'catalyst_of_anima_2.png') into a local path
+	where the image is saved as just 'catalyst_of_anima.png'.
+	"""
+	match = re.match(r"(.+?)(?:_\d+)?\.png$", supabase_image_name)
+	base_name = match.group(1) if match else os.path.splitext(supabase_image_name)[0]
+	local_filename = f"{base_name}.png"
+	return os.path.join(download_dir, local_filename)
