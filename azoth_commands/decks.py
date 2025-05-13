@@ -247,8 +247,14 @@ def add_deck_commands(cls):
 	@render_deck_cmd.on_autocomplete("name")
 	@render_hand_cmd.on_autocomplete("name")
 	async def autocomplete_deck_name(self, interaction: Interaction, input: str):
-		from supabase_client import get_all_deck_names
-		matches = [d for d in get_all_deck_names() if input.lower() in d.lower()]
+		from supabase_client import get_all_deck_names, get_deck_names_by_type
+		command = interaction.data.get("name")
+		if command == "render_hand" or command == "render_deck":
+			names = get_deck_names_by_type("cards")
+		else:
+			names = get_all_deck_names()
+
+		matches = [name for name in names if input.lower() in name.lower()]
 		await interaction.response.send_autocomplete(matches[:25])
 
 
