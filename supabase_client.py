@@ -63,6 +63,14 @@ def get_all_deck_names() -> list[str]:
 		return sorted([r["name"] for r in data]) if data else []
 	except Exception: return []
 
+def get_deck_names_by_type(content_type: str) -> list[str]:
+	response = supabase.table("decks").select("name, content_type").eq("content_type", content_type).execute()
+	success, data = handle_supabase_response(response, f"fetching {content_type} decks")
+	if not success:
+		return []
+
+	return [d["name"] for d in data]
+
 def get_all_ritual_names() -> list[str]:
 	try:
 		query = supabase.table("rituals").select(
@@ -235,6 +243,7 @@ def get_deck_by_name(name: str) -> tuple[bool, dict | str]:
 		return False, data
 	return True, data[0]
 
+
 def create_deck(deck_data: dict) -> tuple[bool, str]:
 	try:
 		response = supabase.table("decks").insert(deck_data).execute()
@@ -245,6 +254,7 @@ def create_deck(deck_data: dict) -> tuple[bool, str]:
 	except Exception as e:
 		return False, f"❌ Deck creation failed: {e}"
 
+
 def update_deck_fields(deck_id: int, update_data: dict) -> tuple[bool, str]:
 	response = supabase.table("decks").update(update_data).eq("id", deck_id).execute()
 	success, result = handle_supabase_response(response, f"updating deck ID {deck_id}")
@@ -252,6 +262,7 @@ def update_deck_fields(deck_id: int, update_data: dict) -> tuple[bool, str]:
 		return True, f"✅ Updated deck: {', '.join(update_data.keys())}"
 	else:
 		return False, result
+
 
 def delete_deck_by_name(name: str) -> tuple[bool, str]:
 	from datetime import datetime
@@ -284,36 +295,40 @@ def delete_deck_by_name(name: str) -> tuple[bool, str]:
 
 
 def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict | str] | str]:
-	"""
-	Retrieves the contents of a deck.
-	If full=False: returns a list of names (used by /get_deck).
-	If full=True: returns full dicts with all attributes (used by render).
-	"""
+	from collections import Counter
+
 	content_type = deck["content_type"]
 	if content_type == "cards":
 		table = "deck_cards"
 		id_field = "card_id"
 		data_table = "cards"
 	elif content_type == "rituals":
-		table = "deck_contents"
+		table = "deck_rituals"
 		id_field = "ritual_id"
 		data_table = "rituals"
 	else:
 		return False, f"Unsupported content type: {content_type}"
 
-	# Fetch raw deck entry rows
-	response = supabase.table(table).select(f"{id_field}, quantity" if content_type == "rituals" else f"{id_field}").eq("deck_id", deck["id"]).execute()
+	# Fetch raw deck entries
+	response = supabase.table(table).select(id_field).eq("deck_id", deck["id"]).execute()
 	success, rows = handle_supabase_response(response, f"fetching deck contents for {deck['name']}")
 	if not success or not rows:
 		return True, []
 
-	# Collect all referenced IDs
-	id_list = [r[id_field] for r in rows]
-	if not id_list:
+	id_counts = Counter(r[id_field] for r in rows)
+	if not id_counts:
 		return True, []
 
-	# Fetch full content records
-	response = supabase.table(data_table).select("*").in_("id", id_list).execute()
+	# Select correct fields
+	if content_type == "rituals":
+		response = supabase.table(data_table).select(
+			"*, bonus_side:ritual_sides!rituals_bonus_side_id_fkey(*), "
+			"challenge_side:ritual_sides!rituals_challenge_side_id_fkey(*), "
+			"event_side:ritual_sides!rituals_event_side_id_fkey(*)"
+		).in_("id", list(id_counts)).execute()
+	else:
+		response = supabase.table(data_table).select("*").in_("id", list(id_counts)).execute()
+
 	success, data = handle_supabase_response(response, f"fetching {content_type} records")
 	if not success:
 		return False, data
@@ -321,102 +336,130 @@ def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict |
 	id_to_obj = {r["id"]: r for r in data}
 
 	if full:
-		if content_type == "cards":
-			# Return one entry per row (no quantity)
-			return True, [id_to_obj[r[id_field]] for r in rows if r[id_field] in id_to_obj]
-		else:  # rituals with quantity
-			final = []
-			for row in rows:
-				item = id_to_obj.get(row[id_field])
-				if item:
-					final.extend([item] * row["quantity"])
-			return True, final
+		final = []
+		for id_, count in id_counts.items():
+			obj = id_to_obj.get(id_)
+			if obj:
+				final.extend([obj] * count)
+		return True, final
 	else:
-		# Return list of names only
-		return True, sorted([id_to_obj[r[id_field]]["name"] for r in rows if r[id_field] in id_to_obj])
+		names = []
+		for id_, count in id_counts.items():
+			obj = id_to_obj.get(id_)
+			if obj:
+				name = get_display_name(obj, content_type)
+				names.extend([name] * count)
+		return True, sorted(names)
 
 
 def add_to_deck(deck: dict, item_name: str, quantity: int) -> tuple[bool, str]:
 	content_type = deck["content_type"]
-	table, id_field, name_table = {
-		"cards": ("deck_cards", "card_id", "cards"),
-		"rituals": ("deck_contents", "ritual_id", "rituals")
-	}.get(content_type, (None, None, None))
+	table, id_field = {
+		"cards": ("deck_cards", "card_id"),
+		"rituals": ("deck_rituals", "ritual_id"),
+	}.get(content_type, (None, None))
 
 	if not table:
 		return False, f"Unsupported content_type: {content_type}"
 
-	# Lookup card/ritual by name
-	response = supabase.table(name_table).select("id").ilike("name", item_name).limit(1).execute()
-	success, data = handle_supabase_response(response, f"finding {content_type} '{item_name}'")
-	if not success or not data:
-		return False, f"{content_type[:-1].capitalize()} '{item_name}' not found."
+	# Use helper to resolve name and ID
+	success, result = resolve_item_by_name(content_type, item_name)
+	if not success:
+		return False, result
 
-	item_id = data[0]["id"]
+	item_id = result["id"]
+	display_name = result["name"]
 
-	if content_type == "cards":
-		# Insert one row per copy
-		rows = [{"deck_id": deck["id"], id_field: item_id} for _ in range(quantity)]
-		supabase.table(table).insert(rows).execute()
-	else:
-		# Add/update quantity (same as before)
-		check = supabase.table(table).select("quantity").eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
-		exists = check.data[0]["quantity"] if check.data else 0
-		new_quantity = exists + quantity
-		if exists:
-			supabase.table(table).update({"quantity": new_quantity}).eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
-		else:
-			supabase.table(table).insert({"deck_id": deck["id"], id_field: item_id, "quantity": quantity}).execute()
+	# Add one row per copy (same for cards and rituals in your schema)
+	rows = [{"deck_id": deck["id"], id_field: item_id} for _ in range(quantity)]
+	supabase.table(table).insert(rows).execute()
 
-	return True, f"✅ Added {quantity}x `{item_name}` to `{deck['name']}`"
+	return True, f"✅ Added {quantity}x `{display_name}` to `{deck['name']}`"
+
 
 def remove_from_deck(deck: dict, item_name: str, quantity: int) -> tuple[bool, str]:
 	content_type = deck["content_type"]
-	table, id_field, name_table = {
-		"cards": ("deck_cards", "card_id", "cards"),
-		"rituals": ("deck_contents", "ritual_id", "rituals")
-	}.get(content_type, (None, None, None))
+	table, id_field = {
+		"cards": ("deck_cards", "card_id"),
+		"rituals": ("deck_rituals", "ritual_id"),
+	}.get(content_type, (None, None))
 
 	if not table:
 		return False, f"Unsupported content_type: {content_type}"
 
-	# Lookup item ID
-	response = supabase.table(name_table).select("id").ilike("name", item_name).limit(1).execute()
-	success, data = handle_supabase_response(response, f"finding {content_type} '{item_name}'")
-	if not success or not data:
-		return False, f"{content_type[:-1].capitalize()} '{item_name}' not found."
+	# Use helper to resolve name and ID
+	success, result = resolve_item_by_name(content_type, item_name)
+	if not success:
+		return False, result
 
-	item_id = data[0]["id"]
+	item_id = result["id"]
+	display_name = result["name"]
 
+	# Fetch all matching rows
+	response = supabase.table(table).select("id").eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
+	success, data = handle_supabase_response(response, f"finding deck entries for {display_name}")
+	if not success:
+		return False, data
+
+	matching_ids = [r["id"] for r in data]
+	if not matching_ids:
+		return False, f"`{display_name}` is not in `{deck['name']}`."
+
+	to_delete = matching_ids[:quantity]
+	for row_id in to_delete:
+		supabase.table(table).delete().eq("id", row_id).execute()
+
+	return True, f"🗑️ Removed {len(to_delete)}x `{display_name}` from `{deck['name']}`"
+
+
+def resolve_item_by_name(content_type: str, name: str) -> tuple[bool, dict | str]:
+	"""
+	Resolves an item (card or ritual) by name and returns its full data and display name.
+	"""
 	if content_type == "cards":
-		# Fetch all matching rows
-		rows = supabase.table(table).select("id").eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
-		matching_ids = [r["id"] for r in rows.data]
+		response = supabase.table("cards").select("id, name").ilike("name", name).limit(1).execute()
+		success, data = handle_supabase_response(response, f"finding card '{name}'")
+		if not success or not data:
+			return False, f"Card '{name}' not found."
+		card = data[0]
+		return True, {"id": card["id"], "name": card["name"]}
 
-		if not matching_ids:
-			return False, f"`{item_name}` is not in `{deck['name']}`."
+	elif content_type == "rituals":
+		response = supabase.table("rituals").select(
+			"id, type, "
+			"bonus_side:ritual_sides!rituals_bonus_side_id_fkey(name), "
+			"challenge_side:ritual_sides!rituals_challenge_side_id_fkey(name), "
+			"event_side:ritual_sides!rituals_event_side_id_fkey(name)"
+		).limit(100).execute()  # No ilike on side.name, so fetch a batch and search manually
 
-		to_delete = matching_ids[:quantity]
-		for row_id in to_delete:
-			supabase.table(table).delete().eq("id", row_id).execute()
+		success, data = handle_supabase_response(response, f"finding ritual '{name}'")
+		if not success:
+			return False, data
 
-		return True, f"🗑️ Removed {len(to_delete)}x `{item_name}` from `{deck['name']}`"
+		for ritual in data:
+			ritual_type = ritual["type"]
+			display_name = get_display_name(ritual, "rituals")
+			if display_name and display_name.lower() == name.lower():
+				return True, {"id": ritual["id"], "name": display_name}
+
+		return False, f"Ritual '{name}' not found."
 
 	else:
-		# Ritual decks still use quantity model
-		check = supabase.table(table).select("quantity").eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
-		if not check.data:
-			return False, f"`{item_name}` is not in `{deck['name']}`."
+		return False, f"Unsupported content_type: {content_type}"
 
-		existing = check.data[0]["quantity"]
-		new_quantity = existing - quantity
 
-		if new_quantity > 0:
-			supabase.table(table).update({"quantity": new_quantity}).eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
-		else:
-			supabase.table(table).delete().eq("deck_id", deck["id"]).eq(id_field, item_id).execute()
-
-		return True, f"🗑️ Removed {min(quantity, existing)}x `{item_name}` from `{deck['name']}`"
+def get_display_name(item: dict, content_type: str) -> str:
+	if content_type == "cards":
+		return item.get("name", "(unknown)")
+	elif content_type == "rituals":
+		ritual_type = item.get("type")
+		if ritual_type == "ritual":
+			return item.get("challenge_side", {}).get("name", "(unnamed ritual)")
+		elif ritual_type == "event":
+			return item.get("event_side", {}).get("name", "(unnamed event)")
+		elif ritual_type == "consumable":
+			return item.get("bonus_side", {}).get("name", "(unnamed consumable)")
+	return "(unknown)"
 
 
 # Ritual CRUD
@@ -542,5 +585,3 @@ def delete_ritual_by_name(name: str) -> tuple[bool, str]:
 			print(f"⚠️ Failed to delete ritual_side {side_id}: {e}")
 
 	return True, f"✅ Deleted ritual `{name}`"
-
-
