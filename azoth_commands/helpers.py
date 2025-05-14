@@ -1,10 +1,10 @@
 import asyncio
 import functools
 import nextcord
-from dotenv import load_dotenv
 import os
 import re
 
+from dotenv import load_dotenv
 load_dotenv()
 
 AUTHORIZED_USER_IDS = set(
@@ -66,3 +66,29 @@ def get_local_image_path(supabase_image_name: str, download_dir: str = "assets/d
 	base_name = match.group(1) if match else os.path.splitext(supabase_image_name)[0]
 	local_filename = f"{base_name}.png"
 	return os.path.join(download_dir, local_filename)
+
+
+def generate_and_upload_image(obj_data: dict, bucket: str, ritual_side: str = "") -> tuple[bool, str | bytes]:
+	from azoth_logic.image_generator import generate_image
+	from supabase_storage import upload_image
+	"""
+	Generates and uploads an image for any supported game object type (card, ritual, event, etc.)
+	Returns (success: bool, file_path or error string)
+	"""
+
+	# Generate image using shared function
+	success, image_path = generate_image(obj_data)
+	if not success:
+		return False, image_path  # this is the error string
+
+	try:
+		with open(image_path, "rb") as f:
+			image_bytes = f.read()
+
+		if ritual_side != "":
+			return upload_image(obj_data[f"{ritual_side}_name"], image_bytes, bucket)
+		else:
+			return upload_image(obj_data["name"], image_bytes, bucket)
+
+	except Exception as e:
+		return False, f"❌ Failed to upload image: {e}"

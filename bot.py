@@ -19,6 +19,7 @@ async def on_ready():
 	try:
 		dev_guild_id = int(os.getenv("DEV_GUILD_ID"))
 		await bot.sync_application_commands(guild_id=dev_guild_id)
+		# await bot.sync_all_application_commands()
 		print(f"🔁 Synced slash commands to dev guild {dev_guild_id}")
 	except nextcord.HTTPException as e:
 		print("❌ Failed to sync commands:")

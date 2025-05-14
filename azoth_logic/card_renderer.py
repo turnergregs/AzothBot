@@ -6,13 +6,12 @@ from pathlib import Path
 import math
 import numpy as np
 from PIL.ImageSequence import Iterator
-from azoth_commands.helpers import get_local_image_path
 
 FONT_PATH = os.path.join("assets", "fonts", "Aldrich-Regular.ttf")
 ICON_DIR = os.path.join("assets", "icons")
 
-DOWNLOADED_IMAGES_DIR = os.path.join("assets", "downloaded_images")
-RENDERED_CARDS_DIR = os.path.join("assets", "rendered_cards")
+DOWNLOADED_IMAGES_DIR = os.path.join("assets", "downloaded_images", "cards")
+RENDERED_CARDS_DIR = os.path.join("assets", "renders", "cards")
 
 
 class CardRenderer:
@@ -520,7 +519,7 @@ class CardRenderer:
 
         if 'image' in card_data and card_data['image']:
             try:
-                source_image = Image.open(get_local_image_path(card_data["image"]))
+                source_image = Image.open(os.path.join(DOWNLOADED_IMAGES_DIR, card_data["image"]))
                 is_animated = hasattr(source_image, 'is_animated') and source_image.is_animated
 
                 # Process first frame to get parameters
@@ -820,6 +819,8 @@ class CardRenderer:
 
         # with open(json_path, 'w', encoding='utf-8') as f:
         #     json.dump(card_info, indent=2, ensure_ascii=False)
+
+        return output_path
 
 
     def create_tiled_image(self, cards, output_path):

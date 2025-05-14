@@ -9,44 +9,36 @@ from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUC
 from supabase_helpers import fetch_all, update_record
 from supabase_storage import download_image
 
-from azoth_logic.card_renderer import CardRenderer
-renderer = CardRenderer()
+from azoth_logic.ritual_renderer import RitualRenderer
+renderer = RitualRenderer()
 
-TABLE_NAME = "cards"
-MODEL_NAME = "card"
+TABLE_NAME = "events"
+MODEL_NAME = "event"
 
 bucket = ASSET_BUCKET_NAMES[MODEL_NAME]
 render_dir = ASSET_RENDER_PATHS[MODEL_NAME]
 download_dir = ASSET_DOWNLOAD_PATHS[MODEL_NAME]
 
-def add_card_commands(cls):
+def add_event_commands(cls):
 
-	@nextcord.slash_command(name="create_card", description="Create a new card.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=15, error_message="❌ Failed to create card.", require_authorized=True)
-	async def create_card_cmd(
+	@nextcord.slash_command(name="create_event", description="Create a new event.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=15, error_message="❌ Failed to create event.", require_authorized=True)
+	async def create_event_cmd(
 		self,
 		interaction: Interaction,
-		name: str = SlashOption(description="Card name"),
-		type: str = SlashOption(description="Card type", autocomplete=True),
-		valence: int = SlashOption(description="Card valence"),
-		element: str = SlashOption(description="Element", autocomplete=True),
-		text: str = SlashOption(description="Card rules text"),
-		attributes: str = SlashOption(description="Attributes (comma-separated)", required=False),
-		deck: str = SlashOption(description="Optional deck to add this card to", required=False, autocomplete=True),
+		name: str = SlashOption(description="Event name"),
+		text: str = SlashOption(description="Event rules text"),
+		foresight: int = SlashOption(description="Fate Foresight"),
+		deck: str = SlashOption(description="Optional deck to add this event to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
 		from supabase_helpers import create_record
 		from supabase_client import add_to_deck
 
-		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
-
 		create_data = {
 			"name": name,
-			"type": type,
-			"valence": valence,
-			"element": element,
 			"text": text,
-			"attributes": attr_list,
+			"foresight": foresight,
 			"created_by": BOT_PLAYER_ID,
 			"actions": [],
 			"triggers": [],
@@ -87,7 +79,8 @@ def add_card_commands(cls):
 			return f"✅ Created `{name}`, but failed to retrieve image:\n{image_local_path}"
 
 		# Render and send
-		render_path = renderer.render_card(created_record, output_dir=render_dir)
+		created_record["fate_type"] = MODEL_NAME
+		render_path = renderer.render_fate(created_record, output_dir=render_dir)
 		await interaction.followup.send(
 			content=f"✅ Created `{name}` successfully!",
 			file=nextcord.File(render_path)
@@ -96,18 +89,15 @@ def add_card_commands(cls):
 		return None
 
 
-	@nextcord.slash_command(name="update_card", description="Update fields on an existing card.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to update card.", require_authorized=True)
-	async def update_card_cmd(
+	@nextcord.slash_command(name="update_event", description="Update fields on an existing event.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to update event.", require_authorized=True)
+	async def update_event_cmd(
 		self,
 		interaction: Interaction,
-		name: str = SlashOption(description="Name of the card to update", autocomplete=True),
-		new_name: str = SlashOption(description="New card name", required=False),
-		type: str = SlashOption(description="New type", required=False, autocomplete=True),
-		valence: int = SlashOption(description="New valence", required=False),
-		element: str = SlashOption(description="New element", required=False, autocomplete=True),
+		name: str = SlashOption(description="Name of the event to update", autocomplete=True),
+		new_name: str = SlashOption(description="New event name", required=False),
 		text: str = SlashOption(description="New rules text", required=False),
-		attributes: str = SlashOption(description="New attributes (comma-separated)", required=False),
+		foresight: int = SlashOption(description="New foresight", required=False),
 		regenerate_image: bool = SlashOption(description="Regenerate the image?", required=False, default=False),
 	):
 
@@ -119,11 +109,8 @@ def add_card_commands(cls):
 		update_data = {}
 
 		if new_name: update_data["name"] = new_name
-		if type: update_data["type"] = type
-		if valence is not None: update_data["valence"] = valence
-		if element: update_data["element"] = element
 		if text: update_data["text"] = text
-		if attributes is not None: update_data["attributes"] = [a.strip() for a in attributes.split(",")]
+		if foresight: update_data["foresight"] = foresight
 
 		# Apply update fields for rendering
 		record = record | update_data
@@ -144,7 +131,8 @@ def add_card_commands(cls):
 		if regenerate_image:
 			download_success, local_path = download_image(file_path, bucket, download_dir)
 			if download_success:
-				render_path = renderer.render_card(record, output_dir=render_dir)
+				record["fate_type"] = MODEL_NAME
+				render_path = renderer.render_fate(record, output_dir=render_dir)
 				await interaction.followup.send(
 					content=f"✅ Updated `{name}` and regenerated image!",
 					file=nextcord.File(render_path)
@@ -154,9 +142,9 @@ def add_card_commands(cls):
 		return f"✅ Updated `{name}`:\n{json.dumps(result, indent=2)}"
 
 
-	@nextcord.slash_command(name="get_card", description="Get card details.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to get card.")
-	async def get_card_cmd(self, interaction: Interaction, name: str):
+	@nextcord.slash_command(name="get_event", description="Get event details.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to get event.")
+	async def get_event_cmd(self, interaction: Interaction, name: str):
 		
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
 		if len(matches) == 0:
@@ -167,9 +155,9 @@ def add_card_commands(cls):
 		return f"```json\n{record_json}\n```"
 
 
-	@nextcord.slash_command(name="delete_card", description="Delete a card.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to delete card.", require_authorized=True)
-	async def delete_card_cmd(self, interaction: Interaction, name: str):
+	@nextcord.slash_command(name="delete_event", description="Delete an event.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to delete event.", require_authorized=True)
+	async def delete_event_cmd(self, interaction: Interaction, name: str):
 		from supabase_helpers import delete_record
 
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
@@ -184,9 +172,9 @@ def add_card_commands(cls):
 		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
 
 
-	@nextcord.slash_command(name="render_card", description="Render a card and return the image.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to render card.")
-	async def render_card_cmd(self, interaction: Interaction, name: str = SlashOption(description="Card name", autocomplete=True)):
+	@nextcord.slash_command(name="render_event", description="Render an event and return the image.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to render event.")
+	async def render_event_cmd(self, interaction: Interaction, name: str = SlashOption(description="Event name", autocomplete=True)):
 		
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
 		if len(matches) == 0:
@@ -199,68 +187,39 @@ def add_card_commands(cls):
 		if not image_success:
 			return f"⚠️ Could not load image for `{name}`:\n{image_result}"
 
-		render_path = renderer.render_card(record)
+		record["fate_type"] = MODEL_NAME
+		render_path = renderer.render_fate(record)
 		await interaction.followup.send(file=nextcord.File(render_path))
 
 
 	# Autocomplete Helpers
 
-	@create_card_cmd.on_autocomplete("element")
-	@update_card_cmd.on_autocomplete("element")
-	async def autocomplete_element(self, interaction: Interaction, input: str):
-		suggestions = autocomplete_from_table("card_elements", input)
-		await interaction.response.send_autocomplete(suggestions)
-
-
-	@create_card_cmd.on_autocomplete("type")
-	@update_card_cmd.on_autocomplete("type")
-	async def autocomplete_type(self, interaction: Interaction, input: str):
-		suggestions = autocomplete_from_table("card_types", input)
-		await interaction.response.send_autocomplete(suggestions)
-
-
-	@create_card_cmd.on_autocomplete("attributes")
-	@update_card_cmd.on_autocomplete("attributes")
-	async def autocomplete_attributes(self, interaction: Interaction, input: str):
-		# Split into parts based on commas
-		parts = [p.strip() for p in input.split(",")]
-		existing = parts[:-1]
-		current = parts[-1]
-
-		matches = autocomplete_from_table("card_attributes", current)
-
-		prefix = ", ".join(existing) + ", " if existing else ""
-		suggestions = [prefix + match for match in matches][:25]
-
-		await interaction.response.send_autocomplete(suggestions)
-
-
-	@update_card_cmd.on_autocomplete("name")
-	@delete_card_cmd.on_autocomplete("name")
-	@get_card_cmd.on_autocomplete("name")
-	@render_card_cmd.on_autocomplete("name")
-	async def autocomplete_card_name(self, interaction: Interaction, input: str):
+	@update_event_cmd.on_autocomplete("name")
+	@delete_event_cmd.on_autocomplete("name")
+	@get_event_cmd.on_autocomplete("name")
+	@render_event_cmd.on_autocomplete("name")
+	async def autocomplete_event_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
 		await interaction.response.send_autocomplete(matches[:25])
 
 
-	@create_card_cmd.on_autocomplete("deck")
-	async def autocomplete_card_decks(self, interaction: Interaction, input: str):
+	@create_event_cmd.on_autocomplete("deck")
+	async def autocomplete_fate_decks(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 
 		suggestions = autocomplete_from_table(
 			table_name="decks",
 			input=input,
 			column="name",
-			filters={"content_type": "cards"}
+			filters={"content_type": "fates"}
 		)
 
 		await interaction.response.send_autocomplete(suggestions[:25])
 
 
-	cls.create_card_cmd = create_card_cmd
-	cls.update_card_cmd = update_card_cmd
-	cls.get_card_cmd 	= get_card_cmd
-	cls.delete_card_cmd = delete_card_cmd
-	cls.render_card_cmd = render_card_cmd
+	cls.create_event_cmd = create_event_cmd
+	cls.update_event_cmd = update_event_cmd
+	cls.get_event_cmd 	= get_event_cmd
+	cls.delete_event_cmd = delete_event_cmd
+	cls.render_event_cmd = render_event_cmd
