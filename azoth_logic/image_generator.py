@@ -4,7 +4,7 @@ from azoth_logic.eigenfunction_generator import RandomEigenfunctionGenerator
 # Cache the generator (don't reinitialize every time)
 generator = RandomEigenfunctionGenerator(eigenfunctions_dir="eigenfunctions")
 
-def generate_card_image(card_data: dict, is_dark: bool = False) -> tuple[bool, str | bytes]:
+def generate_image(card_data: dict, is_dark: bool = False) -> tuple[bool, str | bytes]:
 	"""
 	Generates a PNG image for the card's element.
 	Returns (success, image_path or error message).

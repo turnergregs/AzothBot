@@ -6,13 +6,11 @@ from pathlib import Path
 import math
 import numpy as np
 from PIL.ImageSequence import Iterator
-from azoth_commands.helpers import get_local_image_path
 
 
 FONT_PATH = os.path.join("assets", "fonts", "Aldrich-Regular.ttf")
 
-DOWNLOADED_IMAGES_DIR = os.path.join("assets", "downloaded_images")
-RENDERED_RITUALS_DIR = os.path.join("assets", "rendered_rituals")
+DOWNLOAD_DIR = os.path.join("assets", "downloaded_images")
 
 
 class RitualRenderer:
@@ -174,7 +172,7 @@ class RitualRenderer:
 
         return result
 
-    def draw_right_side_label(self, cropped_image, ritual_side_data, image, dark=True):
+    def draw_right_side_label(self, cropped_image, ritual_data, image, dark=True):
         target_size = [180, 180]
 
         def maintain_aspect_ratio(image, target_size):
@@ -203,7 +201,7 @@ class RitualRenderer:
 
         spacing = 50
         x_position = [217, 2950]
-        text = ritual_side_data['name']
+        text = ritual_data["reward_name"]
         temp_img = Image.new('RGBA', (1, 1), (255, 255, 255, 0))
         temp_draw = ImageDraw.Draw(temp_img)
         bbox = temp_draw.textbbox((0, 0), text, font=self.sub_font)
@@ -253,7 +251,7 @@ class RitualRenderer:
 
         return image
 
-    def draw_left_side_label(self, cropped_image, ritual_side_data, image):
+    def draw_left_side_label(self, cropped_image, ritual_data, image):
 
         target_size = [180, 180]
 
@@ -283,7 +281,7 @@ class RitualRenderer:
 
         spacing = 50
         x_position = [217, 3000]
-        text = ritual_side_data['name']
+        text = ritual_data["challenge_name"]
         temp_img = Image.new('RGBA', (1, 1), (255, 255, 255, 0))
         temp_draw = ImageDraw.Draw(temp_img)
         bbox = temp_draw.textbbox((0, 0), text, font=self.sub_font)
@@ -635,14 +633,14 @@ class RitualRenderer:
         # Define sides configuration
         sides = [
             {
-                'name': 'challenge_side',
+                'side_key': 'challenge',
                 'x_offset': -xoffset_from_middle,  # Left of center
                 'color': colors['text'],
                 'alignment': 'right',
                 'label': "Ritual"
             },
             {
-                'name': 'bonus_side',
+                'side_key': 'reward',
                 'x_offset': xoffset_from_middle,  # Right of center
                 'color': colors['darktext'],
                 'alignment': 'left',
@@ -652,8 +650,7 @@ class RitualRenderer:
 
         # Render each side
         for side_config in sides:
-            side_name = side_config['name']
-            side_data = card_data[side_name]
+            side_name = side_config["side_key"]
 
             # Calculate positions
             center_x = self.width / 2
@@ -678,7 +675,7 @@ class RitualRenderer:
             # Render title
             self.render_card_title(
                 draw,
-                side_data['name'],
+                card_data[f"{side_name}_name"],
                 title_x,
                 self.height * 0.69,
                 base_size,
@@ -691,7 +688,7 @@ class RitualRenderer:
             # Render description text
             self.draw_wrapped_text(
                 draw,
-                side_data['text'],
+                card_data[f"{side_name}_text"],
                 text_x,
                 self.height * 0.78,
                 text_box_width,
@@ -829,9 +826,9 @@ class RitualRenderer:
     def render_ritual_card(self, card_data, processed_frames, image_area, transparent_outside, margin, colors, image_margin, output_dir, base_filename, output_path):
 
 
-        if 'image' in card_data['challenge_side'] and card_data['challenge_side']['image']:
+        if 'challenge_image' in card_data and card_data["challenge_image"] and 'reward_image' in card_data and card_data["reward_image"]:
             if True:
-                source_image = Image.open(get_local_image_path(card_data["challenge_side"]["image"]))
+                source_image = Image.open(os.path.join(DOWNLOAD_DIR, "rituals", card_data["challenge_image"]))
                 is_animated = hasattr(source_image, 'is_animated') and source_image.is_animated
 
                 # Process first frame to get parameters
@@ -842,7 +839,7 @@ class RitualRenderer:
                 # processed_frames.append(processed_frame)
 
 
-                source_image = Image.open(get_local_image_path(card_data["bonus_side"]["image"]))
+                source_image = Image.open(os.path.join(DOWNLOAD_DIR, "rituals", card_data["reward_image"]))
                 first_frame = source_image.copy()
                 bonus_frame, crop_params, paste_pos, cropped_image2 = self.process_frame(first_frame, image_area, card_data=card_data, is_dark_mode=False)
 
@@ -1008,8 +1005,8 @@ class RitualRenderer:
                 # image.paste(cropped_image1, (int(981 - w1/2), int(1050 - h1 / 2)), cropped_image1)
 
 
-                image = self.draw_right_side_label(cropped_image2, card_data['bonus_side'], image, dark=False)
-                image = self.draw_left_side_label(cropped_image1, card_data['challenge_side'], image)
+                image = self.draw_right_side_label(cropped_image2, card_data, image, dark=False)
+                image = self.draw_left_side_label(cropped_image1, card_data, image)
                 # image = Image.alpha_composite(image, frame_image)
                 # import matplotlib.pyplot as plt
                 # plt.imshow(image)
@@ -1099,10 +1096,11 @@ class RitualRenderer:
 
 
     def render_choice_card(self, card_data, processed_frames, image_area, transparent_outside, margin, colors, image_margin, output_dir, base_filename, output_path):
-        side_data = card_data['bonus_side']
-        if 'image' in side_data and side_data['image']:
+        if 'image' in card_data and card_data['image']:
             try:
-                source_image = Image.open(get_local_image_path(side_data["image"]))
+                fate_type_path = "events" if card_data["fate_type"] == "event" else "consumables"
+                image_path = os.path.join(DOWNLOAD_DIR, fate_type_path, card_data["image"])
+                source_image = Image.open(image_path)
                 is_animated = hasattr(source_image, 'is_animated') and source_image.is_animated
 
                 # Process first frame to get parameters
@@ -1213,10 +1211,10 @@ class RitualRenderer:
                 # Simple paste without using the image as its own mask
                 image.paste(frame_image, (image_margin, image_margin), frame_image)
 
-                if 'consumable' in card_data['type'].lower():
+                if 'consumable' in card_data['fate_type'].lower():
                     image = self.draw_right_side_label(cropped_images, side_data, image)
 
-                elif card_data['type'].lower() == 'ritual':
+                elif card_data['fate_type'].lower() == 'ritual':
                     image = self.draw_right_side_label(cropped_images, side_data, image)
                     image = self.draw_left_side_label(cropped_images, side_data, image)
                 # image = Image.alpha_composite(image, frame_image)
@@ -1281,7 +1279,7 @@ class RitualRenderer:
                 )
 
                 # Draw card name with auto-scaling
-                name_text = side_data['name']
+                name_text = card_data['name']
 
                 # Calculate maximum allowed width (with padding)
                 max_title_width = self.width - (2 * margin) - (4 * self.border_width) - 2 * self.px_per_mm * 3
@@ -1318,8 +1316,8 @@ class RitualRenderer:
                     colors['text']
                 )
 
-                if 'text' in side_data and side_data['text']:
-                    text = side_data['text']
+                if 'text' in card_data and card_data['text']:
+                    text = card_data['text']
 
                     # Calculate the maximum width for the text
                     text_box_width = self.width - (2 * margin) - (4 * self.border_width) - 2 * self.px_per_mm * 3
@@ -1424,3 +1422,100 @@ class RitualRenderer:
         else:
             self.render_ritual_card(card_data, processed_frames, image_area, transparent_outside, margin, colors,
                                image_margin, output_dir, base_filename, output_path)
+
+
+    def render_fate(self, card_data, output_dir="output", transparent_outside=False):
+        """Render a card and save it along with its data.
+
+        Args:
+            card_data (dict): Card data including name, cost, type, etc.
+            output_dir (str): Directory to save the output files
+            transparent_outside (bool): If True, only fill background within the rounded rectangle
+        """
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+
+
+        # Generate base filename from card name
+        base_filename = card_data["name"].lower().replace(" ", "_")
+        is_dark_mode = "Arcana" in card_data.get('type', '').split()
+        colors = self.dark_mode if is_dark_mode else self.light_mode
+
+        # base_filename = card_data['name'].lower().replace(' ', '_')
+        image_filename = f"{base_filename}.png"
+        json_filename = f"{base_filename}.json"
+        output_path = os.path.join(output_dir, image_filename)
+        json_path = os.path.join(output_dir, json_filename)
+
+        # Determine color scheme
+
+
+        # Calculate image area
+        border_width = round(self.px_per_mm * 0.5)
+        margin = round(self.px_per_mm * self.bleed_mm)
+        image_margin = margin + border_width * 2
+
+        image_area = (
+            self.width - (image_margin * 2),
+            self.height - (image_margin * 2)
+        )
+
+        # Process image if provided
+        processed_frames = []
+        crop_params = None
+        paste_pos = None
+        is_animated = False
+
+        self.render_choice_card(card_data, processed_frames, image_area, transparent_outside, margin, colors,
+                               image_margin, output_dir, base_filename, output_path)
+
+        return output_path
+
+
+    def render_ritual(self, card_data, output_dir="output", transparent_outside=False):
+        """Render a card and save it along with its data.
+
+        Args:
+            card_data (dict): Card data including name, cost, type, etc.
+            output_dir (str): Directory to save the output files
+            transparent_outside (bool): If True, only fill background within the rounded rectangle
+        """
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+
+
+        # Generate base filename from card name
+        # For rituals, use the challenge_side name
+        base_filename = card_data["challenge_name"].lower().replace(" ", "_")
+        is_dark_mode = True
+        colors = self.dark_mode if is_dark_mode else self.light_mode
+
+        # base_filename = card_data['name'].lower().replace(' ', '_')
+        image_filename = f"{base_filename}.png"
+        json_filename = f"{base_filename}.json"
+        output_path = os.path.join(output_dir, image_filename)
+        json_path = os.path.join(output_dir, json_filename)
+
+        # Determine color scheme
+
+
+        # Calculate image area
+        border_width = round(self.px_per_mm * 0.5)
+        margin = round(self.px_per_mm * self.bleed_mm)
+        image_margin = margin + border_width * 2
+
+        image_area = (
+            self.width - (image_margin * 2),
+            self.height - (image_margin * 2)
+        )
+
+        # Process image if provided
+        processed_frames = []
+        crop_params = None
+        paste_pos = None
+        is_animated = False
+
+        self.render_ritual_card(card_data, processed_frames, image_area, transparent_outside, margin, colors,
+                               image_margin, output_dir, base_filename, output_path)
+
+        return output_path
