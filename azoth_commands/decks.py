@@ -321,7 +321,7 @@ def add_deck_commands(cls):
 				for table in ["rituals", "events", "consumables"]:
 					name_column = "challenge_name" if table == "rituals" else "name"
 					records = fetch_all(table, columns=[name_column])
-					matches += [r["title"] for r in records if input.lower() in r["title"].lower()]
+					matches += [r[name_column] for r in records if input.lower() in r[name_column].lower()]
 		else:  # remove_from_deck
 			success, items = get_deck_contents(deck, full=False)
 			if not success or not items:

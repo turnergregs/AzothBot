@@ -176,7 +176,8 @@ def add_to_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, st
 	elif content_type == "fates":
 		# Check all fate tables for the item
 		for fate_type in ["ritual", "event", "consumable"]:
-			records = fetch_all(fate_type + "s", filters={"title": item_name})
+			name_column = "challenge_name" if fate_type == "ritual" else "name"
+			records = fetch_all(fate_type + "s", filters={name_column: item_name})
 			if records:
 				fate = records[0]
 				fate_id = fate["id"]
