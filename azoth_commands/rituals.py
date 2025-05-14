@@ -35,8 +35,7 @@ def add_ritual_commands(cls):
 		deck: str = SlashOption(description="Optional deck to add this ritual to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
-		from supabase_helpers import create_record
-		from supabase_client import add_to_deck
+		from supabase_helpers import create_record, add_to_deck
 
 		create_data = {
 			"challenge_name": challenge_name,

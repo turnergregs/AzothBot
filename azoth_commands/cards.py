@@ -36,7 +36,7 @@ def add_card_commands(cls):
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
 		from supabase_helpers import create_record
-		from supabase_client import add_to_deck
+		from supabase_helpers import add_to_deck
 
 		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
 
