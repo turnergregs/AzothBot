@@ -32,8 +32,7 @@ def add_consumable_commands(cls):
 		deck: str = SlashOption(description="Optional deck to add this consumable to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
-		from supabase_helpers import create_record
-		from supabase_client import add_to_deck
+		from supabase_helpers import create_record, add_to_deck
 
 		create_data = {
 			"name": name,
