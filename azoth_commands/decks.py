@@ -29,6 +29,7 @@ def add_deck_commands(cls):
 		description: str = SlashOption(description="Deck Description"),
 		type: str = SlashOption(description="Deck type", autocomplete=True),
 		content_type: str = SlashOption(description="Content type", autocomplete=True),
+		usage_type: str = SlashOption(description="Usage type", autocomplete=True)
 	):
 		from supabase_helpers import create_record
 
@@ -37,6 +38,7 @@ def add_deck_commands(cls):
 			"description": description,
 			"type": type,
 			"content_type": content_type,
+			"usage_type": usage_type,
 			"created_by": BOT_PLAYER_ID,
 		}
 
@@ -58,6 +60,7 @@ def add_deck_commands(cls):
 		new_name: str = SlashOption(description="New deck name"),
 		description: str = SlashOption(description="New deck description"),
 		type: str = SlashOption(description="New deck type", required=False, autocomplete=True),
+		usage_type: str = SlashOption(description="New usage type", required=false, autocomplete=True),
 		archived: bool = SlashOption(description="Archive this deck?", required=False)
 	):
 
@@ -71,6 +74,7 @@ def add_deck_commands(cls):
 		update_data = {}
 		if new_name: update_data["name"] = new_name
 		if type: update_data["type"] = type
+		if usage_type: update_data["usage_type"] = usage_type
 		if archived is not None: update_data["archived_at"] = datetime.utcnow().isoformat() if archived else None
 
 		record = record | update_data
@@ -279,6 +283,13 @@ def add_deck_commands(cls):
 	@create_deck_cmd.on_autocomplete("content_type")
 	async def autocomplete_deck_content_type(self, interaction: Interaction, input: str):
 		suggestions = autocomplete_from_table("deck_content_types", input)
+		await interaction.response.send_autocomplete(suggestions)
+
+
+	@create_deck_cmd.on_autocomplete("usage_type")
+	@update_deck_cmd.on_autocomplete("usage_type")
+	async def autocomplete_type(self, interaction: Interaction, input: str):
+		suggestions = autocomplete_from_table("deck_usage_types", input)
 		await interaction.response.send_autocomplete(suggestions)
 
 
