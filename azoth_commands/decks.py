@@ -60,7 +60,7 @@ def add_deck_commands(cls):
 		new_name: str = SlashOption(description="New deck name"),
 		description: str = SlashOption(description="New deck description"),
 		type: str = SlashOption(description="New deck type", required=False, autocomplete=True),
-		usage_type: str = SlashOption(description="New usage type", required=false, autocomplete=True),
+		usage_type: str = SlashOption(description="New usage type", required=False, autocomplete=True),
 		archived: bool = SlashOption(description="Archive this deck?", required=False)
 	):
 
