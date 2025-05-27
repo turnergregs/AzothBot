@@ -3,7 +3,7 @@ import json
 import nextcord
 from nextcord.ext import commands
 from nextcord import SlashOption, Interaction
-from azoth_commands.helpers import safe_interaction, generate_and_upload_image
+from azoth_commands.helpers import safe_interaction, generate_and_upload_image, record_to_json
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUCKET_NAMES, ASSET_DOWNLOAD_PATHS
 from supabase_helpers import fetch_all, update_record
@@ -138,7 +138,7 @@ def add_consumable_commands(cls):
 				)
 				return None
 
-		return f"✅ Updated `{name}`:\n{json.dumps(result, indent=2)}"
+		return f"✅ Updated `{name}`:\n{record_to_json(result)}"
 
 
 	@nextcord.slash_command(name="get_consumable", description="Get consumable details.", guild_ids=[DEV_GUILD_ID])
@@ -150,8 +150,7 @@ def add_consumable_commands(cls):
 			return f"❌ Could not find {MODEL_NAME} named `{name}`."
 
 		record = matches[0]
-		record_json = json.dumps(record, indent=2)
-		return f"```json\n{record_json}\n```"
+		return f"```json\n{record_to_json(record)}\n```"
 
 
 	@nextcord.slash_command(name="delete_consumable", description="Delete a consumable.", guild_ids=[DEV_GUILD_ID])
