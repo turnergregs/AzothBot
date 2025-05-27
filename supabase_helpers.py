@@ -7,7 +7,7 @@ from supabase_client import supabase
 	- columns: list of column names to select (defaults to '*')
 	- filters: dict of field → value pairs to filter by
 """
-def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None) -> list[dict]:
+def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, sort: list[str] = None) -> list[dict]:
 	selector = ",".join(columns) if columns else "*"
 	query = supabase.table(table_name).select(selector)
 
@@ -17,6 +17,13 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None) 
 				query = query.in_(key, value)
 			else:
 				query = query.eq(key, value)
+
+	if sort:
+		for s in sort:
+			if s.startswith("-"):
+				query = query.order(s[1:], desc=True)
+			else:
+				query = query.order(s)
 
 	try:
 		response = query.execute()
@@ -73,38 +80,42 @@ def get_display_name(obj, type):
 
 
 def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict | str] | str]:
-
 	content_type = deck.get("content_type")
 	deck_id = deck.get("id")
 
 	if content_type == "cards":
-		# Fetch join rows
 		join_rows = fetch_all("deck_cards", columns=["card_id"], filters={"deck_id": deck_id})
 		if not join_rows:
 			return True, []
 
 		card_ids = [row["card_id"] for row in join_rows]
 
-		# Fetch all relevant cards
-		card_data = fetch_all("cards", filters={"id": card_ids})
+		# Fetch and sort card data
+		card_data = fetch_all("cards", filters={"id": card_ids}, sort=["valence", "element", "name"])
 		if not card_data:
 			return False, "Failed to fetch card data."
 
-		id_to_obj = {card["id"]: card for card in card_data}
+		id_to_card = {c["id"]: c for c in card_data}
 
-		# Step 3: Build result
+		# Build sort index for card IDs
+		sort_order = {card["id"]: i for i, card in enumerate(card_data)}
+
+		# Sort the full list of card_ids (with duplicates preserved)
+		sorted_card_ids = sorted(card_ids, key=lambda cid: sort_order.get(cid, float("inf")))
+
 		if full:
 			result = []
-			for cid in card_ids:
-				card = id_to_obj.get(cid)
+			for cid in sorted_card_ids:
+				card = id_to_card.get(cid)
 				if card:
-					card_with_type = card.copy()
-					card_with_type["item_type"] = "card"
-					result.append(card_with_type)
+					card_copy = card.copy()
+					card_copy["item_type"] = "card"
+					result.append(card_copy)
 		else:
-			result = [get_display_name(id_to_obj[cid], "cards") for cid in card_ids if cid in id_to_obj]
+			result = [get_display_name(id_to_card[cid], "cards") for cid in sorted_card_ids if cid in id_to_card]
 
 		return True, result
+
 
 	elif content_type == "fates":
 		# Fetch join rows
@@ -120,33 +131,54 @@ def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict |
 			if fate_type in fate_groups:
 				fate_groups[fate_type].append(fate_id)
 
-		# Fetch each fate type
-		id_to_obj = {}
-		for fate_type, ids in fate_groups.items():
-			if not ids:
-				continue
-
-			records = fetch_all(fate_type + "s", filters={"id": ids})
-
-			if not records:
-				return False, f"Failed to fetch {fate_type} data."
-			id_to_obj.update({r["id"]: r for r in records})
-
-		# Build result list in original join order
+		# Fetch and sort each group, then accumulate
 		if full:
 			result = []
-			for row in join_rows:
-				fate = id_to_obj.get(row["fate_id"])
-				if fate:
-					fate_with_type = fate.copy()
-					fate_with_type["item_type"] = row["fate_type"]
-					result.append(fate_with_type)
+
+			for fate_type, ids in fate_groups.items():
+				if not ids:
+					continue
+
+				sort_key = "challenge_name" if fate_type == "ritual" else "name"
+				records = fetch_all(fate_type + "s", filters={"id": ids}, sort=[sort_key])
+				if not records:
+					return False, f"Failed to fetch {fate_type} data."
+
+				id_to_fate = {r["id"]: r for r in records}
+				sort_order = {r["id"]: i for i, r in enumerate(records)}
+
+				# Extract matching join rows, sort them by fate sort order
+				matching_rows = [r for r in join_rows if r["fate_type"] == fate_type]
+				sorted_rows = sorted(matching_rows, key=lambda r: sort_order.get(r["fate_id"], float("inf")))
+
+				for row in sorted_rows:
+					fate = id_to_fate.get(row["fate_id"])
+					if fate:
+						fate_copy = fate.copy()
+						fate_copy["item_type"] = fate_type
+						result.append(fate_copy)
 		else:
-			result = [
-				get_display_name(id_to_obj[row["fate_id"]], row["fate_type"])
-				for row in join_rows
-				if row["fate_id"] in id_to_obj
-			]
+			result = []
+
+			for fate_type, ids in fate_groups.items():
+				if not ids:
+					continue
+
+				sort_key = "challenge_name" if fate_type == "ritual" else "name"
+				records = fetch_all(fate_type + "s", filters={"id": ids}, sort=[sort_key])
+				if not records:
+					return False, f"Failed to fetch {fate_type} data."
+
+				id_to_fate = {r["id"]: r for r in records}
+				sort_order = {r["id"]: i for i, r in enumerate(records)}
+
+				matching_rows = [r for r in join_rows if r["fate_type"] == fate_type]
+				sorted_rows = sorted(matching_rows, key=lambda r: sort_order.get(r["fate_id"], float("inf")))
+
+				for row in sorted_rows:
+					fate = id_to_fate.get(row["fate_id"])
+					if fate:
+						result.append(get_display_name(fate, fate_type))
 
 		return True, result
 
