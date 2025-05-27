@@ -10,6 +10,7 @@ def generate_image(card_data: dict, is_dark: bool = False) -> tuple[bool, str | 
 	Returns (success, image_path or error message).
 	"""
 	element = card_data.get("element")
+
 	if not element:
 		element = "dark" if is_dark else "light"
 
