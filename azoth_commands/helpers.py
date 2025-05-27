@@ -3,6 +3,7 @@ import functools
 import nextcord
 import os
 import re
+import json
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -92,3 +93,15 @@ def generate_and_upload_image(obj_data: dict, bucket: str, ritual_side: str = ""
 
 	except Exception as e:
 		return False, f"❌ Failed to upload image: {e}"
+
+
+def record_to_json(record: dict):
+	excluded_fields = ["actions", "triggers", "properties"]
+	filtered_record = {k: v for k, v in record.items() if k not in excluded_fields}
+	return json.dumps(filtered_record, indent=2)
+
+
+def ritual_to_json(record: dict):
+	excluded_fields = ["challenge_actions", "challenge_triggers", "challenge_properties", "reward_actions", "reward_triggers", "reward_properties"]
+	filtered_record = {k: v for k, v in record.items() if k not in excluded_fields}
+	return json.dumps(filtered_record, indent=2)

@@ -3,7 +3,7 @@ import json
 import nextcord
 from nextcord.ext import commands
 from nextcord import SlashOption, Interaction
-from azoth_commands.helpers import safe_interaction, generate_and_upload_image
+from azoth_commands.helpers import safe_interaction, generate_and_upload_image, record_to_json
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUCKET_NAMES, ASSET_DOWNLOAD_PATHS
 from supabase_helpers import fetch_all, update_record
@@ -35,8 +35,7 @@ def add_card_commands(cls):
 		deck: str = SlashOption(description="Optional deck to add this card to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
-		from supabase_helpers import create_record
-		from supabase_helpers import add_to_deck
+		from supabase_helpers import create_record, add_to_deck
 
 		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
 
@@ -151,7 +150,7 @@ def add_card_commands(cls):
 				)
 				return None
 
-		return f"✅ Updated `{name}`:\n{json.dumps(result, indent=2)}"
+		return f"✅ Updated `{name}`:\n{record_to_json(result)}"
 
 
 	@nextcord.slash_command(name="get_card", description="Get card details.", guild_ids=[DEV_GUILD_ID])
@@ -163,8 +162,7 @@ def add_card_commands(cls):
 			return f"❌ Could not find {MODEL_NAME} named `{name}`."
 
 		record = matches[0]
-		record_json = json.dumps(record, indent=2)
-		return f"```json\n{record_json}\n```"
+		return f"```json\n{record_to_json(record)}\n```"
 
 
 	@nextcord.slash_command(name="delete_card", description="Delete a card.", guild_ids=[DEV_GUILD_ID])
