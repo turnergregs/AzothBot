@@ -150,7 +150,7 @@ def add_card_commands(cls):
 				)
 				return None
 
-		return f"✅ Updated `{name}`:\n{record_to_json(result)}"
+		return f"✅ Updated `{name}`:\n{record_to_json(result[0])}"
 
 
 	@nextcord.slash_command(name="get_card", description="Get card details.", guild_ids=[DEV_GUILD_ID])
