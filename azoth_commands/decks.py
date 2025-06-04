@@ -57,8 +57,8 @@ def add_deck_commands(cls):
 		self,
 		interaction: Interaction,
 		name: str = SlashOption(description="Deck name to update", autocomplete=True),
-		new_name: str = SlashOption(description="New deck name"),
-		description: str = SlashOption(description="New deck description"),
+		new_name: str = SlashOption(description="New deck name", required=False),
+		description: str = SlashOption(description="New deck description", required=False),
 		type: str = SlashOption(description="New deck type", required=False, autocomplete=True),
 		usage_type: str = SlashOption(description="New usage type", required=False, autocomplete=True),
 		archived: bool = SlashOption(description="Archive this deck?", required=False)
@@ -73,6 +73,7 @@ def add_deck_commands(cls):
 		record = matches[0]
 		update_data = {}
 		if new_name: update_data["name"] = new_name
+		if description: update_data["description"] = description
 		if type: update_data["type"] = type
 		if usage_type: update_data["usage_type"] = usage_type
 		if archived is not None: update_data["archived_at"] = datetime.utcnow().isoformat() if archived else None
@@ -222,6 +223,8 @@ def add_deck_commands(cls):
 		deck = matches[0]
 
 		success, result = add_to_deck(deck, item_name, quantity)
+		if success:
+			update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
 		return result
 
 
@@ -243,6 +246,8 @@ def add_deck_commands(cls):
 		deck = matches[0]
 
 		success, result = remove_from_deck(deck, item_name, quantity)
+		if success:
+			update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
 		return result
 
 	# Deck Helpers
