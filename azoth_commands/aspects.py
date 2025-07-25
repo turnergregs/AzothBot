@@ -12,24 +12,24 @@ from supabase_storage import download_image
 from azoth_logic.ritual_renderer import RitualRenderer
 renderer = RitualRenderer()
 
-TABLE_NAME = "events"
-MODEL_NAME = "event"
+TABLE_NAME = "aspects"
+MODEL_NAME = "aspect"
 
 bucket = ASSET_BUCKET_NAMES[MODEL_NAME]
 render_dir = ASSET_RENDER_PATHS[MODEL_NAME]
 download_dir = ASSET_DOWNLOAD_PATHS[MODEL_NAME]
 
-def add_event_commands(cls):
+def add_aspect_commands(cls):
 
-	@nextcord.slash_command(name="create_event", description="Create a new event.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=15, error_message="❌ Failed to create event.", require_authorized=True)
-	async def create_event_cmd(
+	@nextcord.slash_command(name="create_aspect", description="Create a new aspect.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=15, error_message="❌ Failed to create aspect.", require_authorized=True)
+	async def create_aspect_cmd(
 		self,
 		interaction: Interaction,
-		name: str = SlashOption(description="Event name"),
-		text: str = SlashOption(description="Event rules text"),
-		foresight: int = SlashOption(description="Fate Foresight"),
-		deck: str = SlashOption(description="Optional deck to add this event to", required=False, autocomplete=True),
+		name: str = SlashOption(description="Aspect name"),
+		text: str = SlashOption(description="Aspect rules text"),
+		attunement: float = SlashOption(description="Attunement"),
+		deck: str = SlashOption(description="Optional deck to add this aspect to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
 		from supabase_helpers import create_record, add_to_deck
@@ -37,7 +37,7 @@ def add_event_commands(cls):
 		create_data = {
 			"name": name,
 			"text": text,
-			"foresight": foresight,
+			"attunement": attunement,
 			"created_by": BOT_PLAYER_ID,
 			"actions": [],
 			"triggers": [],
@@ -88,15 +88,15 @@ def add_event_commands(cls):
 		return None
 
 
-	@nextcord.slash_command(name="update_event", description="Update fields on an existing event.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to update event.", require_authorized=True)
-	async def update_event_cmd(
+	@nextcord.slash_command(name="update_aspect", description="Update fields on an existing aspect.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to update aspect.", require_authorized=True)
+	async def update_aspect_cmd(
 		self,
 		interaction: Interaction,
-		name: str = SlashOption(description="Name of the event to update", autocomplete=True),
-		new_name: str = SlashOption(description="New event name", required=False),
+		name: str = SlashOption(description="Name of the aspect to update", autocomplete=True),
+		new_name: str = SlashOption(description="New aspect name", required=False),
 		text: str = SlashOption(description="New rules text", required=False),
-		foresight: int = SlashOption(description="New foresight", required=False),
+		attunement: float = SlashOption(description="New attunement", required=False),
 		regenerate_image: bool = SlashOption(description="Regenerate the image?", required=False, default=False),
 	):
 
@@ -109,7 +109,7 @@ def add_event_commands(cls):
 
 		if new_name: update_data["name"] = new_name
 		if text: update_data["text"] = text
-		if foresight: update_data["foresight"] = foresight
+		if attunement: update_data["attunement"] = attunement
 
 		# Apply update fields for rendering
 		record = record | update_data
@@ -153,9 +153,9 @@ def add_event_commands(cls):
 		return f"✅ Updated `{name}`:\n```json\n{record_to_json(result[0])}\n```"
 
 
-	@nextcord.slash_command(name="get_event", description="Get event details.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to get event.")
-	async def get_event_cmd(self, interaction: Interaction, name: str):
+	@nextcord.slash_command(name="get_aspect", description="Get aspect details.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to get aspect.")
+	async def get_aspect_cmd(self, interaction: Interaction, name: str):
 		
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
 		if len(matches) == 0:
@@ -165,9 +165,9 @@ def add_event_commands(cls):
 		return f"```json\n{record_to_json(record)}\n```"
 
 
-	@nextcord.slash_command(name="delete_event", description="Delete an event.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to delete event.", require_authorized=True)
-	async def delete_event_cmd(self, interaction: Interaction, name: str):
+	@nextcord.slash_command(name="delete_aspect", description="Delete an aspect.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to delete aspect.", require_authorized=True)
+	async def delete_aspect_cmd(self, interaction: Interaction, name: str):
 		from supabase_helpers import delete_record
 
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
@@ -182,9 +182,9 @@ def add_event_commands(cls):
 		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
 
 
-	@nextcord.slash_command(name="render_event", description="Render an event and return the image.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to render event.")
-	async def render_event_cmd(self, interaction: Interaction, name: str = SlashOption(description="Event name", autocomplete=True)):
+	@nextcord.slash_command(name="render_aspect", description="Render an aspect and return the image.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to render aspect.")
+	async def render_aspect_cmd(self, interaction: Interaction, name: str = SlashOption(description="Aspect name", autocomplete=True)):
 		
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
 		if len(matches) == 0:
@@ -204,17 +204,17 @@ def add_event_commands(cls):
 
 	# Autocomplete Helpers
 
-	@update_event_cmd.on_autocomplete("name")
-	@delete_event_cmd.on_autocomplete("name")
-	@get_event_cmd.on_autocomplete("name")
-	@render_event_cmd.on_autocomplete("name")
-	async def autocomplete_event_name(self, interaction: Interaction, input: str):
+	@update_aspect_cmd.on_autocomplete("name")
+	@delete_aspect_cmd.on_autocomplete("name")
+	@get_aspect_cmd.on_autocomplete("name")
+	@render_aspect_cmd.on_autocomplete("name")
+	async def autocomplete_aspect_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
 		await interaction.response.send_autocomplete(matches[:25])
 
 
-	@create_event_cmd.on_autocomplete("deck")
+	@create_aspect_cmd.on_autocomplete("deck")
 	async def autocomplete_fate_decks(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 
@@ -228,8 +228,8 @@ def add_event_commands(cls):
 		await interaction.response.send_autocomplete(suggestions[:25])
 
 
-	cls.create_event_cmd = create_event_cmd
-	cls.update_event_cmd = update_event_cmd
-	cls.get_event_cmd 	= get_event_cmd
-	cls.delete_event_cmd = delete_event_cmd
-	cls.render_event_cmd = render_event_cmd
+	cls.create_aspect_cmd = create_aspect_cmd
+	cls.update_aspect_cmd = update_aspect_cmd
+	cls.get_aspect_cmd 	= get_aspect_cmd
+	cls.delete_aspect_cmd = delete_aspect_cmd
+	cls.render_aspect_cmd = render_aspect_cmd

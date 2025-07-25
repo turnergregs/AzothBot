@@ -1,0 +1,13 @@
+"AppBuild"
+{
+	"AppID"	"3797140"
+	"Desc"	"macOS build v0.1"
+
+	"BuildOutput"	"output"
+	"ContentRoot"	"content"
+
+	"Depots"
+	{
+		"3797142"	"scripts/depot_azoth_mac.vdf"
+	}
+}

@@ -124,7 +124,7 @@ def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict |
 			return True, []
 
 		# Group fate IDs by fate_type
-		fate_groups = {"ritual": [], "event": [], "consumable": []}
+		fate_groups = {"ritual": [], "event": [], "consumable": [], "aspect": []}
 		for row in join_rows:
 			fate_type = row["fate_type"]
 			fate_id = row["fate_id"]
@@ -207,7 +207,7 @@ def add_to_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, st
 
 	elif content_type == "fates":
 		# Check all fate tables for the item
-		for fate_type in ["ritual", "event", "consumable"]:
+		for fate_type in ["ritual", "event", "consumable", "aspect"]:
 			name_column = "challenge_name" if fate_type == "ritual" else "name"
 			records = fetch_all(fate_type + "s", filters={name_column: item_name})
 			if records:
@@ -256,7 +256,7 @@ def remove_from_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[boo
 
 	elif content_type == "fates":
 		# Search across all fate types
-		for fate_type in ["ritual", "event", "consumable"]:
+		for fate_type in ["ritual", "event", "consumable", "aspect"]:
 			fates = fetch_all(fate_type + "s", filters={"title": item_name})
 			if not fates:
 				continue
