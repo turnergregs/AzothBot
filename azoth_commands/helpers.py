@@ -108,3 +108,7 @@ def ritual_to_json(record: dict):
 	excluded_fields = ["challenge_actions", "challenge_triggers", "challenge_properties", "reward_actions", "reward_triggers", "reward_properties"]
 	filtered_record = {k: v for k, v in record.items() if k not in excluded_fields}
 	return json.dumps(filtered_record, indent=2)
+
+
+def to_snake_case(s):
+	return re.sub(r'\W|^(?=\d)', '_', s).lower().replace(" ", "_")

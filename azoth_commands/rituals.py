@@ -3,7 +3,7 @@ import json
 import nextcord
 from nextcord.ext import commands
 from nextcord import SlashOption, Interaction
-from azoth_commands.helpers import safe_interaction, generate_and_upload_image, ritual_to_json
+from azoth_commands.helpers import safe_interaction, generate_and_upload_image, ritual_to_json, to_snake_case
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUCKET_NAMES, ASSET_DOWNLOAD_PATHS
 from supabase_helpers import fetch_all, update_record
@@ -144,6 +144,18 @@ def add_ritual_commands(cls):
 		if not result:
 			return f"❌ Failed to update {MODEL_NAME} `{name}`."
 
+		final_name = new_challenge_name if new_challenge_name else name
+		snake_name = to_snake_case(final_name)
+		render_path = f"{render_dir}/{snake_name}.png"
+
+		# Delete the cached rendered image if it exists
+		if os.path.exists(render_path):
+			try:
+				render_path.unlink()
+				print(f"Deleted cached render: {render_path}")
+			except Exception as e:
+				print(f"Warning: Could not delete cached render for {final_name}: {e}")
+
 		# Optional re-download + render
 		if regenerate_image:
 			download_success, local_path = download_image(file_path, bucket, download_dir)
@@ -156,7 +168,7 @@ def add_ritual_commands(cls):
 				)
 				return None
 
-		return f"✅ Updated `{name}`:\n{ritual_to_json(result[0])}"
+		return f"✅ Updated `{name}`:\n```json\n{record_to_json(result[0])}\n```"
 
 
 	@nextcord.slash_command(name="get_ritual", description="Get ritual details.", guild_ids=[DEV_GUILD_ID])
