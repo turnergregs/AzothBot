@@ -63,29 +63,29 @@ def add_aspect_commands(cls):
 				return f"✅ Created `{name}`, but could not add to deck named `{deck}`:\n{result}."
 
 		# Generate and upload image
-		upload_success, file_path = generate_and_upload_image(created_record, bucket)
-		if not upload_success:
-			return f"✅ Created `{name}`, but failed to upload image:\n{file_path}"
+		# upload_success, file_path = generate_and_upload_image(created_record, bucket)
+		# if not upload_success:
+		# 	return f"✅ Created `{name}`, but failed to upload image:\n{file_path}"
 
 		# Update Supabase record with image path
-		update_result = update_record(TABLE_NAME, created_record["id"], {"image": file_path})
-		if update_result:
-			created_record["image"] = file_path
+		# update_result = update_record(TABLE_NAME, created_record["id"], {"image": file_path})
+		# if update_result:
+		# 	created_record["image"] = file_path
 
 		# Download image for local rendering
-		download_success, image_local_path = download_image(file_path, bucket, download_dir)
-		if not download_success:
-			return f"✅ Created `{name}`, but failed to retrieve image:\n{image_local_path}"
+		# download_success, image_local_path = download_image(file_path, bucket, download_dir)
+		# if not download_success:
+		# 	return f"✅ Created `{name}`, but failed to retrieve image:\n{image_local_path}"
 
 		# Render and send
-		created_record["fate_type"] = MODEL_NAME
-		render_path = renderer.render_fate(created_record, output_dir=render_dir)
-		await interaction.followup.send(
-			content=f"✅ Created `{name}` successfully!",
-			file=nextcord.File(render_path)
-		)
+		# created_record["fate_type"] = MODEL_NAME
+		# render_path = renderer.render_fate(created_record, output_dir=render_dir)
+		# await interaction.followup.send(
+		# 	content=f"✅ Created `{name}` successfully!",
+		# 	file=nextcord.File(render_path)
+		# )
 
-		return None
+		return f"✅ Created `{name}`:\n```json\n{json.dumps(created_record, indent=2)}\n```"
 
 
 	@nextcord.slash_command(name="update_aspect", description="Update fields on an existing aspect.", guild_ids=[DEV_GUILD_ID])
@@ -97,7 +97,7 @@ def add_aspect_commands(cls):
 		new_name: str = SlashOption(description="New aspect name", required=False),
 		text: str = SlashOption(description="New rules text", required=False),
 		attunement: float = SlashOption(description="New attunement", required=False),
-		regenerate_image: bool = SlashOption(description="Regenerate the image?", required=False, default=False),
+		# regenerate_image: bool = SlashOption(description="Regenerate the image?", required=False, default=False),
 	):
 
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
@@ -115,11 +115,11 @@ def add_aspect_commands(cls):
 		record = record | update_data
 
 		# Optional image regeneration
-		if regenerate_image:
-			upload_success, file_path = generate_and_upload_image(record, bucket)
-			if not upload_success:
-				return f"✅ Updated `{name}`, but failed to upload image: `{file_path}`"
-			update_data["image"] = file_path
+		# if regenerate_image:
+		# 	upload_success, file_path = generate_and_upload_image(record, bucket)
+		# 	if not upload_success:
+		# 		return f"✅ Updated `{name}`, but failed to upload image: `{file_path}`"
+		# 	update_data["image"] = file_path
 
 		# Save updates to database
 		result = update_record(TABLE_NAME, record["id"], update_data)
@@ -131,24 +131,24 @@ def add_aspect_commands(cls):
 		render_path = f"{render_dir}/{snake_name}.png"
 
 		# Delete the cached rendered image if it exists
-		if os.path.exists(render_path):
-			try:
-				render_path.unlink()
-				print(f"Deleted cached render: {render_path}")
-			except Exception as e:
-				print(f"Warning: Could not delete cached render for {final_name}: {e}")
+		# if os.path.exists(render_path):
+		# 	try:
+		# 		render_path.unlink()
+		# 		print(f"Deleted cached render: {render_path}")
+		# 	except Exception as e:
+		# 		print(f"Warning: Could not delete cached render for {final_name}: {e}")
 
 		# Optional re-download + render
-		if regenerate_image:
-			download_success, local_path = download_image(file_path, bucket, download_dir)
-			if download_success:
-				record["fate_type"] = MODEL_NAME
-				render_path = renderer.render_fate(record, output_dir=render_dir)
-				await interaction.followup.send(
-					content=f"✅ Updated `{name}` and regenerated image!",
-					file=nextcord.File(render_path)
-				)
-				return None
+		# if regenerate_image:
+		# 	download_success, local_path = download_image(file_path, bucket, download_dir)
+		# 	if download_success:
+		# 		record["fate_type"] = MODEL_NAME
+		# 		render_path = renderer.render_fate(record, output_dir=render_dir)
+		# 		await interaction.followup.send(
+		# 			content=f"✅ Updated `{name}` and regenerated image!",
+		# 			file=nextcord.File(render_path)
+		# 		)
+		# 		return None
 
 		return f"✅ Updated `{name}`:\n```json\n{record_to_json(result[0])}\n```"
 
@@ -182,24 +182,24 @@ def add_aspect_commands(cls):
 		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
 
 
-	@nextcord.slash_command(name="render_aspect", description="Render an aspect and return the image.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to render aspect.")
-	async def render_aspect_cmd(self, interaction: Interaction, name: str = SlashOption(description="Aspect name", autocomplete=True)):
+	# @nextcord.slash_command(name="render_aspect", description="Render an aspect and return the image.", guild_ids=[DEV_GUILD_ID])
+	# @safe_interaction(timeout=10, error_message="❌ Failed to render aspect.")
+	# async def render_aspect_cmd(self, interaction: Interaction, name: str = SlashOption(description="Aspect name", autocomplete=True)):
 		
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
+	# 	matches = fetch_all(TABLE_NAME, filters={"name": name})
+	# 	if len(matches) == 0:
+	# 		return f"❌ Could not find {MODEL_NAME} named `{name}`."
 
-		record = matches[0]
+	# 	record = matches[0]
 
-		# Download the art from Supabase
-		image_success, image_result = download_image(record["image"], bucket, download_dir)
-		if not image_success:
-			return f"⚠️ Could not load image for `{name}`:\n{image_result}"
+	# 	# Download the art from Supabase
+	# 	image_success, image_result = download_image(record["image"], bucket, download_dir)
+	# 	if not image_success:
+	# 		return f"⚠️ Could not load image for `{name}`:\n{image_result}"
 
-		record["fate_type"] = MODEL_NAME
-		render_path = renderer.render_fate(record)
-		await interaction.followup.send(file=nextcord.File(render_path))
+	# 	record["fate_type"] = MODEL_NAME
+	# 	render_path = renderer.render_fate(record)
+	# 	await interaction.followup.send(file=nextcord.File(render_path))
 
 
 	# Autocomplete Helpers
@@ -207,7 +207,7 @@ def add_aspect_commands(cls):
 	@update_aspect_cmd.on_autocomplete("name")
 	@delete_aspect_cmd.on_autocomplete("name")
 	@get_aspect_cmd.on_autocomplete("name")
-	@render_aspect_cmd.on_autocomplete("name")
+	# @render_aspect_cmd.on_autocomplete("name")
 	async def autocomplete_aspect_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
@@ -232,4 +232,4 @@ def add_aspect_commands(cls):
 	cls.update_aspect_cmd = update_aspect_cmd
 	cls.get_aspect_cmd 	= get_aspect_cmd
 	cls.delete_aspect_cmd = delete_aspect_cmd
-	cls.render_aspect_cmd = render_aspect_cmd
+	# cls.render_aspect_cmd = render_aspect_cmd
