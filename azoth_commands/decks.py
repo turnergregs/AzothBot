@@ -329,12 +329,12 @@ def add_deck_commands(cls):
 		matches = []
 		command = interaction.data.get("name")
 
-		if command == "add_to_deck":
+		if command in ["add_to_deck", "remove_from_deck"]:
 			if deck["content_type"] == "cards":
 				records = fetch_all("cards", columns=["name"])
 				matches = [r["name"] for r in records if input.lower() in r["name"].lower()]
 			elif deck["content_type"] == "fates":
-				for table in ["rituals", "events", "consumables"]:
+				for table in ["rituals", "events", "consumables", "aspects"]:
 					name_column = "challenge_name" if table == "rituals" else "name"
 					records = fetch_all(table, columns=[name_column])
 					matches += [r[name_column] for r in records if input.lower() in r[name_column].lower()]

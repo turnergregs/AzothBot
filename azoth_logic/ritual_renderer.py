@@ -1098,7 +1098,12 @@ class RitualRenderer:
     def render_choice_card(self, card_data, processed_frames, image_area, transparent_outside, margin, colors, image_margin, output_dir, base_filename, output_path):
         if 'image' in card_data and card_data['image']:
             try:
-                fate_type_path = "events" if card_data["fate_type"] == "event" else "consumables"
+                fate_type_map = {
+                    "event": "events",
+                    "consumable": "consumables",
+                    "aspect": "aspects"
+                }
+                fate_type_path = fate_type_map.get(card_data["fate_type"], "unknown")
                 image_path = os.path.join(DOWNLOAD_DIR, fate_type_path, card_data["image"])
                 source_image = Image.open(image_path)
                 is_animated = hasattr(source_image, 'is_animated') and source_image.is_animated

@@ -12,22 +12,22 @@ from supabase_storage import download_image
 from azoth_logic.card_renderer import CardRenderer
 renderer = CardRenderer()
 
-TABLE_NAME = "characters"
-MODEL_NAME = "character"
+TABLE_NAME = "heroes"
+MODEL_NAME = "hero"
 
 bucket = ASSET_BUCKET_NAMES[MODEL_NAME]
 render_dir = ASSET_RENDER_PATHS[MODEL_NAME]
 download_dir = ASSET_DOWNLOAD_PATHS[MODEL_NAME]
 
-def add_character_commands(cls):
+def add_hero_commands(cls):
 
-	@nextcord.slash_command(name="create_character", description="Create a new character.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=15, error_message="❌ Failed to create character.", require_authorized=True)
-	async def create_character_cmd(
+	@nextcord.slash_command(name="create_hero", description="Create a new hero.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=15, error_message="❌ Failed to create hero.", require_authorized=True)
+	async def create_hero_cmd(
 		self,
 		interaction: Interaction,
-		name: str = SlashOption(description="Character name"),
-		text: str = SlashOption(description="Character rules text"),
+		name: str = SlashOption(description="Hero name"),
+		text: str = SlashOption(description="Hero power text"),
 		r: int = SlashOption(description="Red (0–255)", min_value=0, max_value=255),
 		g: int = SlashOption(description="Green (0–255)", min_value=0, max_value=255),
 		b: int = SlashOption(description="Blue (0–255)", min_value=0, max_value=255)
@@ -77,13 +77,13 @@ def add_character_commands(cls):
 		return f"✅ Created `{name}`:\n```json\n{json.dumps(created_record, indent=2)}\n```"
 
 
-	@nextcord.slash_command(name="update_character", description="Update fields on an existing character.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to update character.", require_authorized=True)
-	async def update_character_cmd(
+	@nextcord.slash_command(name="update_hero", description="Update fields on an existing hero.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to update hero.", require_authorized=True)
+	async def update_hero_cmd(
 		self,
 		interaction: Interaction,
-		name: str = SlashOption(description="Name of the character to update", autocomplete=True),
-		new_name: str = SlashOption(description="New character name", required=False),
+		name: str = SlashOption(description="Name of the hero to update", autocomplete=True),
+		new_name: str = SlashOption(description="New hero name", required=False),
 		text: str = SlashOption(description="New rules text", required=False),
 		r: int = SlashOption(description="Red (0–255)", min_value=0, max_value=255, required=False),
 		g: int = SlashOption(description="Green (0–255)", min_value=0, max_value=255, required=False),
@@ -136,9 +136,9 @@ def add_character_commands(cls):
 		return f"✅ Updated `{name}`:\n```json\n{record_to_json(result[0])}\n```"
 
 
-	@nextcord.slash_command(name="get_character", description="Get character details.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to get character.")
-	async def get_character_cmd(self, interaction: Interaction, name: str):
+	@nextcord.slash_command(name="get_hero", description="Get hero details.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to get hero.")
+	async def get_hero_cmd(self, interaction: Interaction, name: str):
 		
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
 		if len(matches) == 0:
@@ -148,9 +148,9 @@ def add_character_commands(cls):
 		return f"```json\n{record_to_json(record)}\n```"
 
 
-	@nextcord.slash_command(name="delete_character", description="Delete a character.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to delete character.", require_authorized=True)
-	async def delete_character_cmd(self, interaction: Interaction, name: str):
+	@nextcord.slash_command(name="delete_hero", description="Delete a hero.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to delete hero.", require_authorized=True)
+	async def delete_hero_cmd(self, interaction: Interaction, name: str):
 		from supabase_helpers import soft_delete_record
 
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
@@ -165,9 +165,9 @@ def add_character_commands(cls):
 		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
 
 
-	@nextcord.slash_command(name="render_character", description="Render a character and return the image.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to render character.")
-	async def render_character_cmd(self, interaction: Interaction, name: str):
+	@nextcord.slash_command(name="render_hero", description="Render a hero and return the image.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to render hero.")
+	async def render_hero_cmd(self, interaction: Interaction, name: str):
 		
 		return "⏰ Not supported yet, check again soon!"
 
@@ -189,18 +189,18 @@ def add_character_commands(cls):
 	# Autocomplete Helpers
 
 
-	@update_character_cmd.on_autocomplete("name")
-	@delete_character_cmd.on_autocomplete("name")
-	@get_character_cmd.on_autocomplete("name")
-	@render_character_cmd.on_autocomplete("name")
-	async def autocomplete_character_name(self, interaction: Interaction, input: str):
+	@update_hero_cmd.on_autocomplete("name")
+	@delete_hero_cmd.on_autocomplete("name")
+	@get_hero_cmd.on_autocomplete("name")
+	@render_hero_cmd.on_autocomplete("name")
+	async def autocomplete_hero_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
 		await interaction.response.send_autocomplete(matches[:25])
 
 
-	cls.create_character_cmd = create_character_cmd
-	cls.update_character_cmd = update_character_cmd
-	cls.get_character_cmd 	 = get_character_cmd
-	cls.delete_character_cmd = delete_character_cmd
-	cls.render_character_cmd = render_character_cmd
+	cls.create_hero_cmd = create_hero_cmd
+	cls.update_hero_cmd = update_hero_cmd
+	cls.get_hero_cmd 	 = get_hero_cmd
+	cls.delete_hero_cmd = delete_hero_cmd
+	cls.render_hero_cmd = render_hero_cmd

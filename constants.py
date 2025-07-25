@@ -8,26 +8,32 @@ BOT_PLAYER_ID = int(os.getenv("BOT_PLAYER_ID"))
 
 ASSET_RENDER_PATHS = {
     "card": "assets/renders/cards",
+    "aspect": "assets/renders/aspects",
     "ritual": "assets/renders/rituals",
     "deck": "assets/renders/decks",
     "hand": "assets/renders/hands",
     "event": "assets/renders/events",
     "consumable": "assets/renders/consumables",
-    "character": "assets/renders/characters"
+    "character": "assets/renders/characters",
+    "hero": "assets/renders/heroes",
 }
 
 ASSET_DOWNLOAD_PATHS = {
     "card": "assets/downloaded_images/cards",
+    "aspect": "assets/downloaded_images/aspects",
     "ritual": "assets/downloaded_images/rituals",
     "event": "assets/downloaded_images/events",
     "consumable": "assets/downloaded_images/consumables",
-    "character": "assets/downloaded_images/characters"
+    "character": "assets/downloaded_images/characters",
+    "hero": "assets/downloaded_images/heroes",
 }
 
 ASSET_BUCKET_NAMES = {
     "card": "cardimages",
+    "aspect": "aspectimages",
     "ritual": "ritualimages",
     "event": "eventimages",
     "consumable": "consumableimages",
-    "character": "characterimages"
+    "character": "characterimages",
+    "hero": "heroimages",
 }
