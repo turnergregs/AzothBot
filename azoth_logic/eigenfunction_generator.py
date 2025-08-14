@@ -23,7 +23,8 @@ class RandomEigenfunctionGenerator:
             'sol': (249, 164, 16, 255),  # Gold
             'anima': (135, 105, 233, 255),  # Purple
             'dark': (0, 0, 0, 255),  # Black
-            'light': (255, 255, 255, 255)  # White
+            'light': (255, 255, 255, 255),  # White
+            'all': (255, 255, 255, 255)  # White
         }
 
         # Define background color (near black)

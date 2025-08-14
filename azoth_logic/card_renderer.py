@@ -61,12 +61,14 @@ class CardRenderer:
             'blood': (255, 0, 0, 255),  # Red
             'sol': (249, 164, 16, 255),  # Gold
             'anima': (135, 105, 233, 255),  # Purple
+            'all': (255, 255, 255, 255)
         }
 
         self.placeholder_dict = {
             'blood': "placeholder_blood.png",
             'sol': "placeholder_sol.png",
-            'anima': "placeholder_anima.png"
+            'anima': "placeholder_anima.png",
+            'all': "placeholder_sol.png"
         }
 
 
@@ -76,6 +78,7 @@ class CardRenderer:
 
     def draw_valence_shape(self, draw, image, element, center_x, center_y, radius, colors):
         """Draw the valence shape based on the element type."""
+
         try:
             # Load the appropriate icon based on element
             icon_path = fr"{ICON_DIR}/{element.capitalize()}.png"
@@ -218,7 +221,7 @@ class CardRenderer:
         cols = np.any(pattern_mask, axis=0)
         if not np.any(rows) or not np.any(cols):
             # If no pattern found, return the original center crop
-            return self.process_frame_original(input_image, target_size, padding_ratio)
+            return self.process_frame_original(input_image, target_size)
 
         # Get the pattern boundaries
         ymin, ymax = np.where(rows)[0][[0, -1]]
@@ -668,23 +671,10 @@ class CardRenderer:
 
                 # Draw valence shape if valence exists
                 circle_radius = round(self.width * 0.064)
-                if 'valence' in card_data and card_data['valence'] is not None:
-                    # Center horizontally
-                    circle_center_x = self.width / 2
-                    # Position vertically so circle center aligns with border
-                    circle_center_y = margin + self.border_width / 2
-
-                    # Draw the appropriate valence shape based on element
-                    element = card_data.get('element', 'sol')  # Default to sol if no element specified
-                    self.draw_valence_shape(
-                        draw,
-                        image,
-                        element,
-                        circle_center_x,
-                        circle_center_y,
-                        circle_radius,
-                        colors
-                    )
+                # Center horizontally
+                circle_center_x = self.width / 2
+                # Position vertically so circle center aligns with border
+                circle_center_y = margin + self.border_width / 2
 
                 # Draw text with fake bold effect
                 def draw_semibold_text(text, x, y, font, fill):
@@ -699,20 +689,38 @@ class CardRenderer:
                     # Finally draw the main text
                     draw.text((x, y), text, font=font, fill=fill)
 
-                # Center valence text in circle with semi-bold effect
-                valence_text = str(card_data['valence'])
-                valence_bbox = draw.textbbox((0, 0), valence_text, font=self.valence_font)
-                valence_width = valence_bbox[2] - valence_bbox[0]
-                valence_height = valence_bbox[3] - valence_bbox[1]
-                valence_x = circle_center_x - valence_width / 2
-                valence_y = circle_center_y - valence_height / 2
-                draw_semibold_text(
-                    valence_text,
-                    valence_x,
-                    valence_y,
-                    self.valence_font,
-                    colors['valence']
-                )
+
+                if 'valence' in card_data and card_data['valence'] is not None:
+
+
+                    # Draw the appropriate valence shape based on element
+                    element = card_data.get('element', 'sol')  # Default to sol if no element specified
+                    self.draw_valence_shape(
+                        draw,
+                        image,
+                        element,
+                        circle_center_x,
+                        circle_center_y,
+                        circle_radius,
+                        colors
+                    )
+
+
+
+                    # Center valence text in circle with semi-bold effect
+                    valence_text = str(card_data['valence'])
+                    valence_bbox = draw.textbbox((0, 0), valence_text, font=self.valence_font)
+                    valence_width = valence_bbox[2] - valence_bbox[0]
+                    valence_height = valence_bbox[3] - valence_bbox[1]
+                    valence_x = circle_center_x - valence_width / 2
+                    valence_y = circle_center_y - valence_height / 2
+                    draw_semibold_text(
+                        valence_text,
+                        valence_x,
+                        valence_y,
+                        self.valence_font,
+                        colors['valence']
+                    )
 
                 # Draw card name with auto-scaling
                 name_text = card_data['name']

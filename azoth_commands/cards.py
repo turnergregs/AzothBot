@@ -39,6 +39,9 @@ def add_card_commands(cls):
 
 		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
 
+		if valence < 0:
+			valence = None
+
 		create_data = {
 			"name": name,
 			"type": type,
@@ -119,7 +122,11 @@ def add_card_commands(cls):
 
 		if new_name: update_data["name"] = new_name
 		if type: update_data["type"] = type
-		if valence is not None: update_data["valence"] = valence
+
+		if valence is not None:
+			if valence == -1:
+				valence = None
+			update_data["valence"] = valence
 		if element: update_data["element"] = element
 		if text: update_data["text"] = text
 		if attributes is not None: update_data["attributes"] = [a.strip() for a in attributes.split(",")]

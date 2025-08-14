@@ -12,8 +12,10 @@ def generate_image(card_data: dict, is_dark: bool = False) -> tuple[bool, str | 
 	element = card_data.get("element")
 
 	if not element:
-		element = "dark" if is_dark else "light"
+		element = "light" if is_dark else "light"
 
+	# if element == "all":
+	# 	element = "dark"
 	try:
 		params, image_path = generator.generate_random_image(element)
 		return True, image_path
