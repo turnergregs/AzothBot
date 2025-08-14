@@ -29,6 +29,7 @@ def add_aspect_commands(cls):
 		name: str = SlashOption(description="Aspect name"),
 		text: str = SlashOption(description="Aspect rules text"),
 		attunement: float = SlashOption(description="Attunement"),
+		image: str = SlashOption(description="Name of existing image to use in aspectimages", required=False),
 		deck: str = SlashOption(description="Optional deck to add this aspect to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
@@ -43,6 +44,7 @@ def add_aspect_commands(cls):
 			"triggers": [],
 			"properties": [],
 		}
+		if image: create_data["image"] = image
 
 		created = create_record(TABLE_NAME, create_data)
 		if not created:
@@ -97,6 +99,7 @@ def add_aspect_commands(cls):
 		new_name: str = SlashOption(description="New aspect name", required=False),
 		text: str = SlashOption(description="New rules text", required=False),
 		attunement: float = SlashOption(description="New attunement", required=False),
+		image: str = SlashOption(description="New image name in aspectimages", required=False),
 		# regenerate_image: bool = SlashOption(description="Regenerate the image?", required=False, default=False),
 	):
 
@@ -110,6 +113,7 @@ def add_aspect_commands(cls):
 		if new_name: update_data["name"] = new_name
 		if text: update_data["text"] = text
 		if attunement: update_data["attunement"] = attunement
+		if image: update_data["image"] = image
 
 		# Apply update fields for rendering
 		record = record | update_data
