@@ -5,7 +5,7 @@ import os
 
 from azoth_commands import *
 
-load_dotenv(r"C:\Users\Caleb\Documents\GitHub\AzothBot")
+load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = nextcord.Intents.default()

@@ -72,7 +72,6 @@ def add_ritual_commands(cls):
 				return f"✅ Created `{challenge_name}`, but could not add to deck named `{deck}`:\n{result}."
 
 		for side_key in ["challenge", "reward"]:
-
 			upload_success, file_path = generate_and_upload_image(created_record, bucket, side_key)
 			if not upload_success:
 				return f"✅ Created `{challenge_name}`, but failed to upload image:\n{file_path}"

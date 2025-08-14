@@ -78,10 +78,7 @@ def generate_and_upload_image(obj_data: dict, bucket: str, ritual_side: str = ""
 	"""
 
 	# Generate image using shared function
-	if ritual_side == "reward":
-		success, image_path = generate_image(obj_data, is_dark=True)
-	else:
-		success, image_path = generate_image(obj_data)
+	success, image_path = generate_image(obj_data)
 	if not success:
 		return False, image_path  # this is the error string
 

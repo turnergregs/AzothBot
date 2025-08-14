@@ -172,7 +172,7 @@ class RitualRenderer:
 
         return result
 
-    def draw_right_side_label(self, cropped_image, text, image, dark=True):
+    def draw_right_side_label(self, cropped_image, ritual_data, image, dark=True):
         target_size = [180, 180]
 
         def maintain_aspect_ratio(image, target_size):
@@ -201,6 +201,7 @@ class RitualRenderer:
 
         spacing = 50
         x_position = [217, 2950]
+        text = ritual_data["reward_name"]
         temp_img = Image.new('RGBA', (1, 1), (255, 255, 255, 0))
         temp_draw = ImageDraw.Draw(temp_img)
         bbox = temp_draw.textbbox((0, 0), text, font=self.sub_font)
@@ -250,7 +251,7 @@ class RitualRenderer:
 
         return image
 
-    def draw_left_side_label(self, cropped_image, text, image):
+    def draw_left_side_label(self, cropped_image, ritual_data, image):
 
         target_size = [180, 180]
 
@@ -280,7 +281,7 @@ class RitualRenderer:
 
         spacing = 50
         x_position = [217, 3000]
-
+        text = ritual_data["challenge_name"]
         temp_img = Image.new('RGBA', (1, 1), (255, 255, 255, 0))
         temp_draw = ImageDraw.Draw(temp_img)
         bbox = temp_draw.textbbox((0, 0), text, font=self.sub_font)
@@ -1004,8 +1005,8 @@ class RitualRenderer:
                 # image.paste(cropped_image1, (int(981 - w1/2), int(1050 - h1 / 2)), cropped_image1)
 
 
-                image = self.draw_right_side_label(cropped_image2, card_data['reward_name'], image, dark=False)
-                image = self.draw_left_side_label(cropped_image1, card_data['challenge_name'], image)
+                image = self.draw_right_side_label(cropped_image2, card_data, image, dark=False)
+                image = self.draw_left_side_label(cropped_image1, card_data, image)
                 # image = Image.alpha_composite(image, frame_image)
                 # import matplotlib.pyplot as plt
                 # plt.imshow(image)
@@ -1216,12 +1217,11 @@ class RitualRenderer:
                 image.paste(frame_image, (image_margin, image_margin), frame_image)
 
                 if 'consumable' in card_data['fate_type'].lower():
-
-                    image = self.draw_right_side_label(cropped_images, card_data['name'], image)
+                    image = self.draw_right_side_label(cropped_images, side_data, image)
 
                 elif card_data['fate_type'].lower() == 'ritual':
-                    image = self.draw_right_side_label(cropped_images, card_data['reward_name'], image)
-                    image = self.draw_left_side_label(cropped_images, card_data['challenge_name'], image)
+                    image = self.draw_right_side_label(cropped_images, side_data, image)
+                    image = self.draw_left_side_label(cropped_images, side_data, image)
                 # image = Image.alpha_composite(image, frame_image)
                 # import matplotlib.pyplot as plt
                 # plt.imshow(image)
