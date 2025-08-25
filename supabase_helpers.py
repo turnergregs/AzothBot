@@ -257,7 +257,7 @@ def remove_from_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[boo
 	elif content_type == "fates":
 		# Search across all fate types
 		for fate_type in ["ritual", "event", "consumable", "aspect"]:
-			fates = fetch_all(fate_type + "s", filters={"title": item_name})
+			fates = fetch_all(fate_type + "s", filters={"name": item_name})
 			if not fates:
 				continue
 
