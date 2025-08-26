@@ -5,9 +5,8 @@ from .decks import add_deck_commands
 from .cards import add_card_commands
 from .aspects import add_aspect_commands
 from .heroes import add_hero_commands
-from .rituals import add_ritual_commands
 from .events import add_event_commands
-from .consumables import add_consumable_commands
+from .misc import add_misc_commands
 
 
 class AzothCommands(commands.Cog):
@@ -19,6 +18,5 @@ add_deck_commands(AzothCommands)
 add_card_commands(AzothCommands)
 add_aspect_commands(AzothCommands)
 add_hero_commands(AzothCommands)
-# add_ritual_commands(AzothCommands)
 add_event_commands(AzothCommands)
-# add_consumable_commands(AzothCommands)
+add_misc_commands(AzothCommands)
