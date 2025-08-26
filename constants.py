@@ -14,7 +14,6 @@ ASSET_RENDER_PATHS = {
     "hand": "assets/renders/hands",
     "event": "assets/renders/events",
     "consumable": "assets/renders/consumables",
-    "character": "assets/renders/characters",
     "hero": "assets/renders/heroes",
 }
 
@@ -24,7 +23,6 @@ ASSET_DOWNLOAD_PATHS = {
     "ritual": "assets/downloaded_images/rituals",
     "event": "assets/downloaded_images/events",
     "consumable": "assets/downloaded_images/consumables",
-    "character": "assets/downloaded_images/characters",
     "hero": "assets/downloaded_images/heroes",
 }
 
@@ -34,6 +32,5 @@ ASSET_BUCKET_NAMES = {
     "ritual": "ritualimages",
     "event": "eventimages",
     "consumable": "consumableimages",
-    "character": "characterimages",
     "hero": "heroimages",
 }

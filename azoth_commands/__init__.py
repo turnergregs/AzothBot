@@ -1,7 +1,6 @@
 from nextcord.ext import commands
 
 # Import command modules
-# from .characters import add_character_commands
 from .decks import add_deck_commands
 from .cards import add_card_commands
 from .aspects import add_aspect_commands
@@ -16,7 +15,6 @@ class AzothCommands(commands.Cog):
 		self.bot = bot
 
 # Attach commands to the Cog
-# add_character_commands(AzothCommands)
 add_deck_commands(AzothCommands)
 add_card_commands(AzothCommands)
 add_aspect_commands(AzothCommands)
