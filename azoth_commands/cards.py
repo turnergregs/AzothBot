@@ -32,12 +32,14 @@ def add_card_commands(cls):
 		element: str = SlashOption(description="Element", autocomplete=True),
 		text: str = SlashOption(description="Card rules text"),
 		attributes: str = SlashOption(description="Attributes (comma-separated)", required=False),
+		subtypes: str = SlashOption(description="Subtypes (comma-separated)", required=False),
 		deck: str = SlashOption(description="Optional deck to add this card to", required=False, autocomplete=True),
 		quantity: int = SlashOption(description="Number of copies to add to deck", required=False, default=1),
 	):
 		from supabase_helpers import create_record, add_to_deck
 
 		attr_list = [a.strip() for a in attributes.split(",")] if attributes else []
+		subtype_list = [s.strip() for s in subtypes.split(",")] if subtypes else []
 
 		if valence < 0:
 			valence = None
@@ -45,6 +47,7 @@ def add_card_commands(cls):
 		create_data = {
 			"name": name,
 			"type": type,
+			"subtypes": subtype_list,
 			"valence": valence,
 			"element": element,
 			"text": text,
@@ -109,6 +112,7 @@ def add_card_commands(cls):
 		valence: int = SlashOption(description="New valence", required=False),
 		element: str = SlashOption(description="New element", required=False, autocomplete=True),
 		text: str = SlashOption(description="New rules text", required=False),
+		subtypes: str = SlashOption(description="New subtypes (comma-separated)", required=False),
 		attributes: str = SlashOption(description="New attributes (comma-separated)", required=False),
 		regenerate_image: bool = SlashOption(description="Regenerate the image?", required=False, default=False),
 	):
@@ -130,6 +134,7 @@ def add_card_commands(cls):
 		if element: update_data["element"] = element
 		if text: update_data["text"] = text
 		if attributes is not None: update_data["attributes"] = [a.strip() for a in attributes.split(",")]
+		if subtypes is not None: update_data["subtypes"] = [s.strip() for s in subtypes.split(",")]
 
 		# Apply update fields for rendering
 		record = record | update_data
