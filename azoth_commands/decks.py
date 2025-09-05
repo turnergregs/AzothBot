@@ -319,33 +319,37 @@ def add_deck_commands(cls):
 	@remove_from_deck_cmd.on_autocomplete("item_name")
 	async def autocomplete_item_name(self, interaction: Interaction, input: str):
 
-		deck_name = interaction.data["options"][0]["value"]
-		matches = fetch_all(TABLE_NAME, filters={"name": deck_name})
-		if len(matches) == 0:
-			await interaction.response.send_autocomplete([])
-			return
+	    deck_name = interaction.data["options"][0]["value"]
+	    matches = fetch_all(TABLE_NAME, filters={"name": deck_name})
+	    if len(matches) == 0:
+	        await interaction.response.send_autocomplete([])
+	        return
 
-		deck = matches[0]
-		matches = []
-		command = interaction.data.get("name")
+	    deck = matches[0]
+	    matches = []
+	    command = interaction.data.get("name")
 
-		if command == "add_to_deck":
-			if deck["content_type"] == "cards":
-				records = fetch_all("cards", columns=["name"])
-				matches = [r["name"] for r in records if input.lower() in r["name"].lower()]
-			elif deck["content_type"] == "fates":
-				for table in ["rituals", "events", "consumables", "aspects"]:
-					name_column = "challenge_name" if table == "rituals" else "name"
-					records = fetch_all(table, columns=[name_column])
-					matches += [r[name_column] for r in records if input.lower() in r[name_column].lower()]
-		else:  # remove_from_deck
-			success, items = get_deck_contents(deck, full=False)
-			if not success or not items:
-				await interaction.response.send_autocomplete([])
-				return
-			matches = [name for name in items if input.lower() in name.lower()]
+	    if command == "add_to_deck":
+	        if deck["content_type"] == "cards":
+	            records = fetch_all("cards", columns=["name"])
+	            matches = [r["name"] for r in records if input.lower() in r["name"].lower()]
+	        elif deck["content_type"] == "fates":
+	            for table in ["rituals", "events", "consumables", "aspects"]:
+	                name_column = "challenge_name" if table == "rituals" else "name"
+	                records = fetch_all(table, columns=[name_column])
+	                matches += [r[name_column] for r in records if input.lower() in r[name_column].lower()]
+	    else:  # remove_from_deck
+	        success, items = get_deck_contents(deck, full=False)
+	        if not success or not items:
+	            await interaction.response.send_autocomplete([])
+	            return
+	        matches = [name for name in items if input.lower() in name.lower()]
 
-		await interaction.response.send_autocomplete(matches[:25])
+	    # 🔑 Sort matches alphabetically (case-insensitive) before slicing
+	    matches = sorted(matches, key=lambda s: s.lower())
+
+	    await interaction.response.send_autocomplete(matches[:25])
+
 
 
 	cls.create_deck_cmd = create_deck_cmd
