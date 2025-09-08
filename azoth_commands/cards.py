@@ -186,6 +186,18 @@ def add_card_commands(cls):
 			return f"❌ Could not find {MODEL_NAME} named `{name}`."
 
 		record = matches[0]
+
+		# Look up decks that use this card
+		deck_cards = fetch_all("deck_cards", filters={"card_id": record["id"]})
+		deck_ids = [dc["deck_id"] for dc in deck_cards]
+
+		usages = []
+		if deck_ids:
+			decks = fetch_all("decks", filters={"id": deck_ids})
+			usages = [d["name"] for d in decks]
+
+		record["usages"] = usages
+
 		return f"```json\n{record_to_json(record)}\n```"
 
 

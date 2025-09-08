@@ -166,6 +166,18 @@ def add_aspect_commands(cls):
 			return f"❌ Could not find {MODEL_NAME} named `{name}`."
 
 		record = matches[0]
+
+		# Look up decks that use this aspect
+		deck_fates = fetch_all("deck_fates", filters={"fate_id": record["id"], "fate_type": MODEL_NAME})
+		deck_ids = [df["deck_id"] for df in deck_fates]
+
+		usages = []
+		if deck_ids:
+			decks = fetch_all("decks", filters={"id": deck_ids})
+			usages = [d["name"] for d in decks]
+
+		record["usages"] = usages
+
 		return f"```json\n{record_to_json(record)}\n```"
 
 
