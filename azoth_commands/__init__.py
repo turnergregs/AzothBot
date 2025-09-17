@@ -6,6 +6,7 @@ from .cards import add_card_commands
 from .aspects import add_aspect_commands
 from .heroes import add_hero_commands
 from .events import add_event_commands
+from .stats import add_stats_commands
 from .misc import add_misc_commands
 
 
@@ -19,4 +20,5 @@ add_card_commands(AzothCommands)
 add_aspect_commands(AzothCommands)
 add_hero_commands(AzothCommands)
 add_event_commands(AzothCommands)
+add_stats_commands(AzothCommands)
 add_misc_commands(AzothCommands)
