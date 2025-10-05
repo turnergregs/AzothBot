@@ -80,205 +80,106 @@ def get_display_name(obj, type):
 
 
 def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict | str] | str]:
-	content_type = deck.get("content_type")
 	deck_id = deck.get("id")
+	if not deck_id:
+		return False, "Deck is missing ID."
 
-	if content_type == "cards":
-		join_rows = fetch_all("deck_cards", columns=["card_id"], filters={"deck_id": deck_id})
-		if not join_rows:
-			return True, []
+	join_rows = fetch_all("deck_contents", columns=["id", "content_id", "content_type"], filters={"deck_id": deck_id})
+	if not join_rows:
+		return True, []
 
-		card_ids = [row["card_id"] for row in join_rows]
+	# Group by content_type
+	grouped = {}
+	for row in join_rows:
+		grouped.setdefault(row["content_type"], []).append(row["content_id"])
 
-		# Fetch and sort card data
-		card_data = fetch_all("cards", filters={"id": card_ids}, sort=["valence", "element", "name"])
-		if not card_data:
-			return False, "Failed to fetch card data."
+	results = []
 
-		id_to_card = {c["id"]: c for c in card_data}
+	for content_type, ids in grouped.items():
+		table_name = f"{content_type}s"  # e.g. 'cards', 'aspects', 'events'
+		sort_key = "challenge_name" if content_type == "ritual" else "name"
 
-		# Build sort index for card IDs
-		sort_order = {card["id"]: i for i, card in enumerate(card_data)}
+		records = fetch_all(table_name, filters={"id": ids}, sort=["name"])
+		if not records:
+			return False, f"Failed to fetch {content_type} data."
 
-		# Sort the full list of card_ids (with duplicates preserved)
-		sorted_card_ids = sorted(card_ids, key=lambda cid: sort_order.get(cid, float("inf")))
+		id_to_obj = {r["id"]: r for r in records}
+		sort_order = {r["id"]: i for i, r in enumerate(records)}
+
+		matching_rows = [r for r in join_rows if r["content_type"] == content_type]
+		sorted_rows = sorted(matching_rows, key=lambda r: sort_order.get(r["content_id"], float("inf")))
 
 		if full:
-			result = []
-			for cid in sorted_card_ids:
-				card = id_to_card.get(cid)
-				if card:
-					card_copy = card.copy()
-					card_copy["item_type"] = "card"
-					result.append(card_copy)
+			for row in sorted_rows:
+				obj = id_to_obj.get(row["content_id"])
+				if obj:
+					obj_copy = obj.copy()
+					obj_copy["item_type"] = content_type
+					results.append(obj_copy)
 		else:
-			result = [get_display_name(id_to_card[cid], "cards") for cid in sorted_card_ids if cid in id_to_card]
+			for row in sorted_rows:
+				obj = id_to_obj.get(row["content_id"])
+				if obj:
+					results.append(get_display_name(obj, content_type))
 
-		return True, result
-
-
-	elif content_type == "fates":
-		# Fetch join rows
-		join_rows = fetch_all("deck_fates", columns=["fate_id", "fate_type"], filters={"deck_id": deck_id})
-		if not join_rows:
-			return True, []
-
-		# Group fate IDs by fate_type
-		fate_groups = {"ritual": [], "event": [], "consumable": [], "aspect": []}
-		for row in join_rows:
-			fate_type = row["fate_type"]
-			fate_id = row["fate_id"]
-			if fate_type in fate_groups:
-				fate_groups[fate_type].append(fate_id)
-
-		# Fetch and sort each group, then accumulate
-		if full:
-			result = []
-
-			for fate_type, ids in fate_groups.items():
-				if not ids:
-					continue
-
-				sort_key = "challenge_name" if fate_type == "ritual" else "name"
-				records = fetch_all(fate_type + "s", filters={"id": ids}, sort=[sort_key])
-				if not records:
-					return False, f"Failed to fetch {fate_type} data."
-
-				id_to_fate = {r["id"]: r for r in records}
-				sort_order = {r["id"]: i for i, r in enumerate(records)}
-
-				# Extract matching join rows, sort them by fate sort order
-				matching_rows = [r for r in join_rows if r["fate_type"] == fate_type]
-				sorted_rows = sorted(matching_rows, key=lambda r: sort_order.get(r["fate_id"], float("inf")))
-
-				for row in sorted_rows:
-					fate = id_to_fate.get(row["fate_id"])
-					if fate:
-						fate_copy = fate.copy()
-						fate_copy["item_type"] = fate_type
-						result.append(fate_copy)
-		else:
-			result = []
-
-			for fate_type, ids in fate_groups.items():
-				if not ids:
-					continue
-
-				sort_key = "challenge_name" if fate_type == "ritual" else "name"
-				records = fetch_all(fate_type + "s", filters={"id": ids}, sort=[sort_key])
-				if not records:
-					return False, f"Failed to fetch {fate_type} data."
-
-				id_to_fate = {r["id"]: r for r in records}
-				sort_order = {r["id"]: i for i, r in enumerate(records)}
-
-				matching_rows = [r for r in join_rows if r["fate_type"] == fate_type]
-				sorted_rows = sorted(matching_rows, key=lambda r: sort_order.get(r["fate_id"], float("inf")))
-
-				for row in sorted_rows:
-					fate = id_to_fate.get(row["fate_id"])
-					if fate:
-						result.append(get_display_name(fate, fate_type))
-
-		return True, result
-
-	else:
-		return False, f"Unsupported content type: {content_type}"
+	return True, results
 
 
 def add_to_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, str]:
-
-	content_type = deck.get("content_type")
 	deck_id = deck.get("id")
+	if not deck_id:
+		return False, "Deck missing ID."
 
-	if content_type == "cards":
-		# Look up card by name (assume card names are unique)
-		cards = fetch_all("cards", filters={"name": item_name})
-		if not cards:
-			return False, f"❌ No card found named '{item_name}'."
-		card = cards[0]  # Take the first match
-		card_id = card["id"]
+	# Check all supported content tables
+	for content_type in ["card", "aspect", "event", "ritual", "consumable"]:
+		name_column = "challenge_name" if content_type == "ritual" else "name"
+		table_name = f"{content_type}s"
 
-		# Add to deck_cards N times
+		records = fetch_all(table_name, filters={name_column: item_name})
+		if not records:
+			continue
+
+		content_id = records[0]["id"]
+
 		for _ in range(quantity):
-			create_record("deck_cards", {"deck_id": deck_id, "card_id": card_id})
+			create_record("deck_contents", {
+				"deck_id": deck_id,
+				"content_id": content_id,
+				"content_type": content_type
+			})
 
 		return True, f"✅ Added {quantity}x **{item_name}** to deck **{deck['name']}**."
 
-	elif content_type == "fates":
-		# Check all fate tables for the item
-		for fate_type in ["ritual", "event", "consumable", "aspect"]:
-			name_column = "challenge_name" if fate_type == "ritual" else "name"
-			records = fetch_all(fate_type + "s", filters={name_column: item_name})
-			if records:
-				fate = records[0]
-				fate_id = fate["id"]
-
-				# Add to deck_fates N times
-				for _ in range(quantity):
-					create_record("deck_fates", {
-						"deck_id": deck_id,
-						"fate_id": fate_id,
-						"fate_type": fate_type
-					})
-
-				return True, f"✅ Added {quantity}x **{item_name}** to deck **{deck['name']}**."
-
-		return False, f"❌ No fate found named '{item_name}'."
-
-	else:
-		return False, f"❌ Unsupported deck type: {content_type}"
+	return False, f"❌ No matching item found named '{item_name}'."
 
 
 def remove_from_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, str]:
-
-	content_type = deck.get("content_type")
 	deck_id = deck.get("id")
+	if not deck_id:
+		return False, "Deck missing ID."
 
-	if content_type == "cards":
-		# Find card by name
-		cards = fetch_all("cards", filters={"name": item_name})
-		if not cards:
-			return False, f"❌ No card found named '{item_name}'."
-		card_id = cards[0]["id"]
+	for content_type in ["card", "aspect", "event", "ritual", "consumable"]:
+		name_column = "challenge_name" if content_type == "ritual" else "name"
+		table_name = f"{content_type}s"
 
-		# Find matching join records
-		join_rows = fetch_all("deck_cards", filters={"deck_id": deck_id, "card_id": card_id})
+		records = fetch_all(table_name, filters={name_column: item_name})
+		if not records:
+			continue
+
+		content_id = records[0]["id"]
+
+		join_rows = fetch_all("deck_contents", filters={
+			"deck_id": deck_id,
+			"content_id": content_id,
+			"content_type": content_type
+		})
 		if not join_rows:
 			return False, f"❌ No copies of '{item_name}' found in this deck."
 
-		# Delete up to N rows
 		to_delete = join_rows[:quantity]
 		for row in to_delete:
-			delete_record("deck_cards", row["id"])
+			delete_record("deck_contents", row["id"])
 
 		return True, f"🗑️ Removed {len(to_delete)}x **{item_name}** from **{deck['name']}**."
 
-	elif content_type == "fates":
-		# Search across all fate types
-		for fate_type in ["ritual", "event", "consumable", "aspect"]:
-			fates = fetch_all(fate_type + "s", filters={"name": item_name})
-			if not fates:
-				continue
-
-			fate_id = fates[0]["id"]
-
-			# Find matching join records
-			join_rows = fetch_all("deck_fates", filters={
-				"deck_id": deck_id,
-				"fate_id": fate_id,
-				"fate_type": fate_type
-			})
-			if not join_rows:
-				return False, f"❌ No copies of '{item_name}' found in this deck."
-
-			to_delete = join_rows[:quantity]
-			for row in to_delete:
-				delete_record("deck_fates", row["id"])
-
-			return True, f"🗑️ Removed {len(to_delete)}x **{item_name}** from **{deck['name']}**."
-
-		return False, f"❌ No fate found named '{item_name}'."
-
-	else:
-		return False, f"❌ Unsupported deck type: {content_type}"
+	return False, f"❌ No matching item found named '{item_name}'."

@@ -168,8 +168,8 @@ def add_aspect_commands(cls):
 		record = matches[0]
 
 		# Look up decks that use this aspect
-		deck_fates = fetch_all("deck_fates", filters={"fate_id": record["id"], "fate_type": MODEL_NAME})
-		deck_ids = [df["deck_id"] for df in deck_fates]
+		deck_contents = fetch_all("deck_contents", filters={"content_id": record["id"], "content_type": MODEL_NAME})
+		deck_ids = [df["deck_id"] for df in deck_contents]
 
 		usages = []
 		if deck_ids:

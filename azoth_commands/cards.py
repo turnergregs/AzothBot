@@ -188,8 +188,8 @@ def add_card_commands(cls):
 		record = matches[0]
 
 		# Look up decks that use this card
-		deck_cards = fetch_all("deck_cards", filters={"card_id": record["id"]})
-		deck_ids = [dc["deck_id"] for dc in deck_cards]
+		deck_contents = fetch_all("deck_contents", filters={"content_id": record["id"], "content_type": MODEL_NAME})
+		deck_ids = [dc["deck_id"] for dc in deck_contents]
 
 		usages = []
 		if deck_ids:
