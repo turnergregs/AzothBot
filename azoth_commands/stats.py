@@ -90,6 +90,18 @@ def add_stats_commands(cls):
             return "❌ No draft deck data available."
         return f"```json\n{json.dumps(records, indent=2)}\n```"
 
+    # --- Draft Rate Data ---
+    @stats_cmd.subcommand(name="draft_rates", description="Global draft pick rates")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft rate data.")
+    async def stats_draft_rates(
+        self,
+        interaction: Interaction
+    ):
+        records = fetch_all("draft_rates_view")
+        if not records:
+            return "❌ No draft rate data available."
+        return f"```json\n{json.dumps(records, indent=2)}\n```"
+
 
     @stats_leaderboard.on_autocomplete("player")
     @stats_player.on_autocomplete("player")
@@ -117,3 +129,4 @@ def add_stats_commands(cls):
     cls.stats_hero = stats_hero
     cls.stats_version = stats_version
     cls.stats_draft_deck = stats_draft_deck
+    cls.stats_draft_rates = stats_draft_rates
