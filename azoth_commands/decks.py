@@ -443,7 +443,7 @@ def add_deck_commands(cls):
 			)
 
 
-	@nextcord.slash_command(name="Merge Staging", description="Move all staged items back into live draft decks.", guild_ids=[DEV_GUILD_ID])
+	@nextcord.slash_command(name="merge_staging", description="Move all staged items back into live draft decks.", guild_ids=[DEV_GUILD_ID])
 	@safe_interaction(timeout=10, error_message="❌ Failed to merge items.", require_authorized=True)
 	async def merge_staging_cmd(
 		self,
