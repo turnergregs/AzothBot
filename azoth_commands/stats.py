@@ -18,6 +18,21 @@ def add_stats_commands(cls):
     async def stats_cmd(self, interaction: Interaction):
         pass
 
+    # --- Active Players ---
+    @stats_cmd.subcommand(name="active_players", description="List active players and their play statistics")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch active players.")
+    async def stats_active_players(
+        self,
+        interaction: Interaction,
+        limit: int = SlashOption(description="How many players to return", default=25)
+    ):
+        records = fetch_all("active_players_view", sort=["-game_count"])[:limit]
+
+        if not records:
+            return "❌ No active players found."
+
+        return f"```json\n{json.dumps(records, indent=2)}\n```"
+
     # --- Leaderboard ---
     @stats_cmd.subcommand(name="leaderboard", description="Show top combos")
     @safe_interaction(timeout=10, error_message="❌ Failed to fetch leaderboard.")
@@ -124,6 +139,7 @@ def add_stats_commands(cls):
 
     # Expose on class
     cls.stats_cmd = stats_cmd
+    cls.stats_active_players = stats_active_players
     cls.stats_leaderboard = stats_leaderboard
     cls.stats_player = stats_player
     cls.stats_hero = stats_hero

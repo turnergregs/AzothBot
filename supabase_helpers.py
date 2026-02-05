@@ -13,6 +13,21 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 
 	if filters:
 		for key, value in filters.items():
+			if isinstance(value, tuple):
+				op, v = value
+
+                if op == ">=":
+                    query = query.gte(key, v)
+                elif op == ">":
+                    query = query.gt(key, v)
+                elif op == "<=":
+                    query = query.lte(key, v)
+                elif op == "<=":
+                    query = query.lt(key, v)
+                elif op == "!=":
+                    query = query.neq(key, v)
+                else:
+                    raise ValueError(f"Unsupported filter operator: {op}")
 			if isinstance(value, list):
 				query = query.in_(key, value)
 			else:
