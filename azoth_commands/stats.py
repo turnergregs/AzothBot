@@ -26,7 +26,7 @@ def add_stats_commands(cls):
         interaction: Interaction,
         limit: int = SlashOption(description="How many players to return", default=25)
     ):
-        records = fetch_all("active_players_view", sort=["-game_count"])[:limit]
+        records = fetch_all("player_activity_view", sort=["-game_count"])[:limit]
 
         if not records:
             return "❌ No active players found."
