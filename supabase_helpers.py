@@ -13,7 +13,9 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 
 	if filters:
 		for key, value in filters.items():
-			if isinstance(value, list):
+			if value is None:
+				query = query.is_(key, "null")
+			elif isinstance(value, list):
 				query = query.in_(key, value)
 			else:
 				query = query.eq(key, value)
@@ -167,7 +169,9 @@ def remove_from_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[boo
 			continue
 
 		content_id = records[0]["id"]
-
+		print("deck_id: " + str(deck_id))
+		print("content_id: " + str(content_id))
+		print("content_type: " + content_type)
 		join_rows = fetch_all("deck_contents", filters={
 			"deck_id": deck_id,
 			"content_id": content_id,
