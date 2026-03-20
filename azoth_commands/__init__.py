@@ -8,6 +8,7 @@ from .heroes import add_hero_commands
 from .events import add_event_commands
 from .stats import add_stats_commands
 from .misc import add_misc_commands
+from .daily_update import add_daily_update_commands
 
 
 class AzothCommands(commands.Cog):
@@ -22,3 +23,4 @@ add_hero_commands(AzothCommands)
 add_event_commands(AzothCommands)
 add_stats_commands(AzothCommands)
 add_misc_commands(AzothCommands)
+add_daily_update_commands(AzothCommands)
