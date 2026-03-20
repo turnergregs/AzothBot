@@ -2,24 +2,37 @@ import json
 import os
 import nextcord
 from datetime import datetime, time, timedelta, timezone
-from nextcord import Interaction
+from nextcord import Interaction, SlashOption
 from nextcord.ext import tasks
 from azoth_commands.helpers import safe_interaction, AUTHORIZED_USER_IDS
 from constants import DEV_GUILD_ID
 from supabase_client import supabase
 
-# 12:00 PM CST = 18:00 UTC
-DAILY_UPDATE_TIME = time(hour=18, minute=0, tzinfo=timezone.utc)
-DAILY_UPDATE_CHANNEL_ID = 1367540804880699582
+# State file stores per-channel config:
+# {
+#   "channels": {
+#     "<channel_id>": {
+#       "send_hour_utc": 18,
+#       "send_minute_utc": 0,
+#       "last_sent_date": "2026-03-19"
+#     }
+#   }
+# }
 STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "daily_update_state.json")
+
+# Default send time: 12:00 PM CST = 18:00 UTC
+DEFAULT_SEND_HOUR = 12
+DEFAULT_UTC_OFFSET = -6
 
 
 def _load_state() -> dict:
     try:
         with open(STATE_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"enabled": False, "last_sent_date": None}
+        data = {}
+    data.setdefault("channels", {})
+    return data
 
 
 def _save_state(state: dict):
@@ -48,10 +61,34 @@ def _yesterday_cst_str():
     return (datetime.now(timezone.utc).astimezone(cst) - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
-def _is_past_send_time():
-    """Check if current UTC time is past 18:00 UTC (12pm CST)."""
-    return datetime.now(timezone.utc).time() >= time(hour=18, minute=0)
+def _is_past_send_time_utc(hour_utc: int, minute_utc: int) -> bool:
+    """Check if current UTC time is past the given hour:minute."""
+    now = datetime.now(timezone.utc).time()
+    return now >= time(hour=hour_utc, minute=minute_utc)
 
+
+def _parse_send_time(send_time: str, utc_offset: int) -> tuple[int, int]:
+    """Parse a 'HH:MM' local time + UTC offset into (hour_utc, minute_utc)."""
+    parts = send_time.strip().split(":")
+    local_hour = int(parts[0])
+    local_minute = int(parts[1]) if len(parts) > 1 else 0
+
+    if not (0 <= local_hour <= 23 and 0 <= local_minute <= 59):
+        raise ValueError("Time must be HH:MM with hour 0-23 and minute 0-59.")
+
+    utc_hour = (local_hour - utc_offset) % 24
+    return utc_hour, local_minute
+
+
+def _format_utc_to_local(hour_utc: int, minute_utc: int, utc_offset: int) -> str:
+    """Format a UTC hour:minute back to local time string for display."""
+    local_hour = (hour_utc + utc_offset) % 24
+    return f"{local_hour:02d}:{minute_utc:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Supabase data fetching
+# ---------------------------------------------------------------------------
 
 def _resolve_item_names(items: list[dict]) -> dict[tuple[str, int], str]:
     """Given draft_items rows, resolve (item_type, item_id) -> display name."""
@@ -252,6 +289,10 @@ def _fetch_daily_stats():
     }
 
 
+# ---------------------------------------------------------------------------
+# Embed building
+# ---------------------------------------------------------------------------
+
 def _format_duration(seconds):
     if seconds < 60:
         return f"{int(seconds)}s"
@@ -388,6 +429,28 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
     return embeds
 
 
+# ---------------------------------------------------------------------------
+# Sending helper
+# ---------------------------------------------------------------------------
+
+async def _send_update_to_channel(bot, channel_id: int) -> bool:
+    """Fetch stats, build embeds, and send to a channel. Returns True on success."""
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        print(f"Daily update: channel {channel_id} not found")
+        return False
+
+    stats = _fetch_daily_stats()
+    embeds = _build_update_embeds(stats)
+    for embed in embeds:
+        await channel.send(embed=embed)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Commands and background task
+# ---------------------------------------------------------------------------
+
 def add_daily_update_commands(cls):
 
     @nextcord.slash_command(name="daily_update", description="Toggle daily activity reports", guild_ids=[DEV_GUILD_ID])
@@ -395,99 +458,147 @@ def add_daily_update_commands(cls):
     async def daily_update_cmd(
         self,
         interaction: Interaction,
-        enabled: bool = nextcord.SlashOption(description="Enable or disable daily updates", required=True),
+        enabled: bool = SlashOption(description="Enable or disable daily updates", required=True),
+        send_time: str = SlashOption(
+            description="Time to send the update (HH:MM), default 12:00",
+            required=False,
+            default="12:00",
+        ),
+        utc_offset: int = SlashOption(
+            description="Your UTC offset (e.g. -6 for CST, +8 for China), default -6",
+            required=False,
+            default=-6,
+            min_value=-12,
+            max_value=14,
+        ),
     ):
+        channel_id = str(interaction.channel_id)
         state = _load_state()
-        state["enabled"] = enabled
-        _save_state(state)
 
         if enabled:
-            # Check if we missed today's update
-            today = _today_cst_str()
-            if state.get("last_sent_date") != today and _is_past_send_time():
-                stats = _fetch_daily_stats()
-                embeds = _build_update_embeds(stats)
-                channel = self.bot.get_channel(DAILY_UPDATE_CHANNEL_ID)
-                if channel:
-                    for embed in embeds:
-                        await channel.send(embed=embed)
-                    state["last_sent_date"] = today
-                    _save_state(state)
-                    return f"Daily updates **enabled**. Sent missed update for {_yesterday_cst_str()}."
-            return "Daily updates **enabled**. Next report at 12:00 PM CST."
-        else:
-            return "Daily updates **disabled**."
+            # Parse and validate time
+            try:
+                hour_utc, minute_utc = _parse_send_time(send_time, utc_offset)
+            except (ValueError, IndexError):
+                return "Invalid time format. Use HH:MM (e.g. 12:00, 14:30)."
 
-    # Background task — runs every 30 minutes to handle retries naturally
-    @tasks.loop(minutes=30)
+            # Register this channel (preserve last_sent_date if re-enabling)
+            channel_config = state["channels"].get(channel_id, {})
+            channel_config["send_hour_utc"] = hour_utc
+            channel_config["send_minute_utc"] = minute_utc
+            channel_config.pop("disabled", None)
+            state["channels"][channel_id] = channel_config
+            _save_state(state)
+
+            # Check if we missed today's update for this channel
+            today = _today_cst_str()
+            already_sent = channel_config.get("last_sent_date") == today
+
+            if not already_sent and _is_past_send_time_utc(hour_utc, minute_utc):
+                try:
+                    await _send_update_to_channel(self.bot, interaction.channel_id)
+                    state["channels"][channel_id]["last_sent_date"] = today
+                    _save_state(state)
+                    local_time = _format_utc_to_local(hour_utc, minute_utc, utc_offset)
+                    return f"Daily updates **enabled** for this channel. Sent missed update for {_yesterday_cst_str()}."
+                except Exception as e:
+                    return f"Daily updates **enabled**, but failed to send catch-up update: {e}"
+
+            local_time = _format_utc_to_local(hour_utc, minute_utc, utc_offset)
+            return f"Daily updates **enabled** for this channel. Reports will be sent daily at {local_time} (UTC{utc_offset:+d})."
+        else:
+            # Mark channel as disabled but preserve last_sent_date to prevent
+            # re-sending if toggled back on the same day
+            config = state["channels"].get(channel_id, {})
+            state["channels"][channel_id] = {
+                "disabled": True,
+                "last_sent_date": config.get("last_sent_date"),
+            }
+            _save_state(state)
+            return "Daily updates **disabled** for this channel."
+
+    # Background task — runs every 10 minutes to check all registered channels
+    @tasks.loop(minutes=10)
     async def daily_update_task(self):
         state = _load_state()
-        if not state.get("enabled"):
-            return
-
-        if not _is_past_send_time():
+        if not state["channels"]:
             return
 
         today = _today_cst_str()
-        if state.get("last_sent_date") == today:
-            return
+        changed = False
 
-        channel = self.bot.get_channel(DAILY_UPDATE_CHANNEL_ID)
-        if not channel:
-            print(f"Daily update: channel {DAILY_UPDATE_CHANNEL_ID} not found")
-            return
+        for channel_id, config in list(state["channels"].items()):
+            # Skip disabled channels
+            if config.get("disabled"):
+                continue
 
-        try:
-            stats = _fetch_daily_stats()
-            embeds = _build_update_embeds(stats)
-            for embed in embeds:
-                await channel.send(embed=embed)
-            state["last_sent_date"] = today
+            # Skip if already sent today
+            if config.get("last_sent_date") == today:
+                continue
+
+            # Skip if not past this channel's send time
+            hour_utc = config.get("send_hour_utc", 18)
+            minute_utc = config.get("send_minute_utc", 0)
+            if not _is_past_send_time_utc(hour_utc, minute_utc):
+                continue
+
+            try:
+                success = await _send_update_to_channel(self.bot, int(channel_id))
+                if success:
+                    config["last_sent_date"] = today
+                    changed = True
+                    print(f"Daily update sent to channel {channel_id} for {_yesterday_cst_str()}")
+            except Exception as e:
+                print(f"Daily update failed for channel {channel_id}, will retry: {e}")
+
+        if changed:
             _save_state(state)
-            print(f"Daily update sent for {_yesterday_cst_str()}")
-        except Exception as e:
-            print(f"Daily update failed, will retry in 30 minutes: {e}")
 
-    # Startup check for missed updates
-    async def _check_missed_update(self):
+    # Startup check for missed updates across all channels
+    async def _check_missed_updates(self):
         await self.bot.wait_until_ready()
         state = _load_state()
-        if not state.get("enabled"):
+        if not state["channels"]:
             return
 
         today = _today_cst_str()
-        if state.get("last_sent_date") == today:
-            return
+        changed = False
 
-        if not _is_past_send_time():
-            return
+        for channel_id, config in list(state["channels"].items()):
+            if config.get("disabled"):
+                continue
 
-        channel = self.bot.get_channel(DAILY_UPDATE_CHANNEL_ID)
-        if not channel:
-            return
+            if config.get("last_sent_date") == today:
+                continue
 
-        try:
-            stats = _fetch_daily_stats()
-            embeds = _build_update_embeds(stats)
-            for embed in embeds:
-                await channel.send(embed=embed)
-            state["last_sent_date"] = today
+            hour_utc = config.get("send_hour_utc", 18)
+            minute_utc = config.get("send_minute_utc", 0)
+            if not _is_past_send_time_utc(hour_utc, minute_utc):
+                continue
+
+            try:
+                success = await _send_update_to_channel(self.bot, int(channel_id))
+                if success:
+                    config["last_sent_date"] = today
+                    changed = True
+                    print(f"Daily update (startup catch-up) sent to channel {channel_id}")
+            except Exception as e:
+                print(f"Daily update startup catch-up failed for channel {channel_id}: {e}")
+
+        if changed:
             _save_state(state)
-            print(f"Daily update (startup catch-up) sent for {_yesterday_cst_str()}")
-        except Exception as e:
-            print(f"Daily update startup catch-up failed: {e}")
 
-    # Override cog_load to start the task
+    # Override cog init to start the task
     original_init = cls.__init__
 
     def new_init(self, bot):
         original_init(self, bot)
         self._daily_update_task = daily_update_task
         self._daily_update_task.start(self)
-        bot.loop.create_task(_check_missed_update(self))
+        bot.loop.create_task(_check_missed_updates(self))
 
     cls.__init__ = new_init
 
     cls.daily_update_cmd = daily_update_cmd
     cls._daily_update_task_func = daily_update_task
-    cls._check_missed_update = _check_missed_update
+    cls._check_missed_updates = _check_missed_updates
