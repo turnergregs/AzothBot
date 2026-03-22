@@ -7,7 +7,7 @@ from nextcord import SlashOption, Interaction
 from azoth_commands.helpers import safe_interaction, record_to_json, to_snake_case
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID
-from supabase_helpers import fetch_all, update_record
+from supabase_helpers import fetch_all, update_record, create_record
 
 
 def add_misc_commands(cls):
@@ -73,3 +73,51 @@ def add_misc_commands(cls):
 
 
 	cls.bulk_update_cmd = bulk_update_cmd
+
+
+	@nextcord.slash_command(name="bulk_insert", description="Bulk insert new records using a JSON file.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=60, error_message="❌ Failed to bulk insert.", require_authorized=True)
+	async def bulk_insert_cmd(
+	    self,
+	    interaction: Interaction,
+	    json_file: nextcord.Attachment = SlashOption(description="Upload a JSON file", required=True)
+	):
+	    # Download the uploaded JSON file
+	    async with aiohttp.ClientSession() as session:
+	        async with session.get(json_file.url) as resp:
+	            try:
+	                payload = await resp.json()
+	            except Exception:
+	                return "❌ Uploaded file is not valid JSON."
+
+	    if not isinstance(payload, dict):
+	        return "❌ JSON must be an object with table names as keys."
+
+	    summary = []
+	    total_inserts = 0
+
+	    for table, records in payload.items():
+	        if not isinstance(records, list):
+	            summary.append(f"⚠️ Skipped `{table}` (not a list).")
+	            continue
+
+	        table_inserts = 0
+	        for entry in records:
+	            if not isinstance(entry, dict) or not entry:
+	                continue
+
+	            result = create_record(table, entry)
+	            if result:
+	                table_inserts += 1
+
+	        if table_inserts > 0:
+	            summary.append(f"✅ Inserted {table_inserts} record(s) into `{table}`.")
+	            total_inserts += table_inserts
+
+	    if total_inserts == 0:
+	        return "❌ No records were inserted."
+
+	    return "\n".join(summary)
+
+
+	cls.bulk_insert_cmd = bulk_insert_cmd
