@@ -61,15 +61,19 @@ def add_misc_commands(cls):
 	            result = update_record(table, record["id"], update_data)
 	            if result:
 	                table_updates += 1
+	            else:
+	                summary.append(f"⚠️ `{table}`: Update failed for `{original_name}` (check bot logs for Supabase error).")
 
 	        if table_updates > 0:
 	            summary.append(f"✅ Updated {table_updates} record(s) in `{table}`.")
 	            total_updates += table_updates
 
+	    message = "\n".join(summary) if summary else ""
 	    if total_updates == 0:
-	        return "❌ No records were updated."
+	        header = "❌ No records were updated."
+	        return f"{header}\n{message}" if message else header
 
-	    return "\n".join(summary)
+	    return message
 
 
 	cls.bulk_update_cmd = bulk_update_cmd
