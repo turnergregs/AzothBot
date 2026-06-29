@@ -81,6 +81,44 @@ def get_display_name(obj, type):
 		return obj.get("name")
 
 
+import re
+
+# Content types that participate in decks. Order is the legacy
+# first-match priority used only for raw (manually-typed) names.
+DECK_CONTENT_TYPES = ["card", "aspect", "event", "ritual", "consumable"]
+_ITEM_REF_RE = re.compile(r"^(card|aspect|event|ritual|consumable):(\d+)$")
+
+
+def name_column_for(content_type: str) -> str:
+	"""The column holding a content type's display name."""
+	return "challenge_name" if content_type == "ritual" else "name"
+
+
+def encode_item_ref(content_type: str, item_id) -> str:
+	"""Encode a content type + id into the value Discord sends back, e.g. 'card:447'."""
+	return f"{content_type}:{item_id}"
+
+
+def parse_item_ref(value: str):
+	"""Parse an encoded ref like 'card:447'.
+
+	Returns (content_type, id) on success, or (None, None) when the value is a
+	raw name (user typed free text instead of picking an autocomplete choice).
+	"""
+	if not value:
+		return None, None
+	match = _ITEM_REF_RE.match(value.strip())
+	if not match:
+		return None, None
+	return match.group(1), int(match.group(2))
+
+
+def make_item_label(name: str, content_type: str, item_id) -> str:
+	"""Human-readable autocomplete label, e.g. 'Diversity (Card #447)'."""
+	return f"{name} ({content_type.capitalize()} #{item_id})"
+
+
+
 def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict | str] | str]:
 	deck_id = deck.get("id")
 	if not deck_id:
@@ -127,63 +165,81 @@ def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict |
 	return True, results
 
 
-def add_to_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, str]:
+def add_to_deck_by_ref(deck: dict, content_type: str, content_id, quantity: int = 1) -> tuple[bool, str]:
+	"""Add an exact item (resolved by id) to a deck."""
 	deck_id = deck.get("id")
 	if not deck_id:
 		return False, "Deck missing ID."
 
-	# Check all supported content tables
-	for content_type in ["card", "aspect", "event", "ritual", "consumable"]:
-		name_column = "challenge_name" if content_type == "ritual" else "name"
-		table_name = f"{content_type}s"
+	table_name = f"{content_type}s"
+	records = fetch_all(table_name, filters={"id": content_id})
+	if not records:
+		return False, f"❌ No {content_type} found with id {content_id}."
 
-		records = fetch_all(table_name, filters={name_column: item_name})
-		if not records:
-			continue
+	item_name = get_display_name(records[0], content_type) or str(content_id)
 
-		content_id = records[0]["id"]
-
-		for _ in range(quantity):
-			create_record("deck_contents", {
-				"deck_id": deck_id,
-				"content_id": content_id,
-				"content_type": content_type
-			})
-
-		return True, f"✅ Added {quantity}x **{item_name}** to deck **{deck['name']}**."
-
-	return False, f"❌ No matching item found named '{item_name}'."
-
-
-def remove_from_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, str]:
-	deck_id = deck.get("id")
-	if not deck_id:
-		return False, "Deck missing ID."
-
-	for content_type in ["card", "aspect", "event", "ritual", "consumable"]:
-		name_column = "challenge_name" if content_type == "ritual" else "name"
-		table_name = f"{content_type}s"
-
-		records = fetch_all(table_name, filters={name_column: item_name})
-		if not records:
-			continue
-
-		content_id = records[0]["id"]
-		print("deck_id: " + str(deck_id))
-		print("content_id: " + str(content_id))
-		print("content_type: " + content_type)
-		join_rows = fetch_all("deck_contents", filters={
+	for _ in range(quantity):
+		create_record("deck_contents", {
 			"deck_id": deck_id,
 			"content_id": content_id,
 			"content_type": content_type
 		})
-		if not join_rows:
-			return False, f"❌ No copies of '{item_name}' found in this deck."
 
-		to_delete = join_rows[:quantity]
-		for row in to_delete:
-			delete_record("deck_contents", row["id"])
+	return True, f"✅ Added {quantity}x **{item_name}** to deck **{deck['name']}**."
 
-		return True, f"🗑️ Removed {len(to_delete)}x **{item_name}** from **{deck['name']}**."
 
-	return False, f"❌ No matching item found named '{item_name}'."
+def remove_from_deck_by_ref(deck: dict, content_type: str, content_id, quantity: int = 1) -> tuple[bool, str]:
+	"""Remove an exact item (resolved by id) from a deck."""
+	deck_id = deck.get("id")
+	if not deck_id:
+		return False, "Deck missing ID."
+
+	table_name = f"{content_type}s"
+	records = fetch_all(table_name, filters={"id": content_id})
+	item_name = get_display_name(records[0], content_type) if records else str(content_id)
+
+	join_rows = fetch_all("deck_contents", filters={
+		"deck_id": deck_id,
+		"content_id": content_id,
+		"content_type": content_type
+	})
+	if not join_rows:
+		return False, f"❌ No copies of '{item_name}' found in this deck."
+
+	to_delete = join_rows[:quantity]
+	for row in to_delete:
+		delete_record("deck_contents", row["id"])
+
+	return True, f"🗑️ Removed {len(to_delete)}x **{item_name}** from **{deck['name']}**."
+
+
+def _resolve_name_to_ref(item_name: str):
+	"""Legacy fallback for raw (non-encoded) names: first match by type priority.
+
+	Returns (content_type, content_id) or (None, None) if nothing matches."""
+	for content_type in DECK_CONTENT_TYPES:
+		name_column = name_column_for(content_type)
+		records = fetch_all(f"{content_type}s", filters={name_column: item_name})
+		if records:
+			return content_type, records[0]["id"]
+	return None, None
+
+
+def add_to_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, str]:
+	"""Add an item to a deck. item_name may be an encoded ref ('card:447') or a raw name."""
+	content_type, content_id = parse_item_ref(item_name)
+	if not content_type:
+		content_type, content_id = _resolve_name_to_ref(item_name)
+	if not content_type:
+		return False, f"❌ No matching item found named '{item_name}'."
+	return add_to_deck_by_ref(deck, content_type, content_id, quantity)
+
+
+def remove_from_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, str]:
+	"""Remove an item from a deck. item_name may be an encoded ref ('card:447') or a raw name."""
+	content_type, content_id = parse_item_ref(item_name)
+	if not content_type:
+		content_type, content_id = _resolve_name_to_ref(item_name)
+	if not content_type:
+		return False, f"❌ No matching item found named '{item_name}'."
+	return remove_from_deck_by_ref(deck, content_type, content_id, quantity)

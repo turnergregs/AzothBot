@@ -290,7 +290,15 @@ def add_deck_commands(cls):
 		interaction: Interaction,
 		item_name: str = SlashOption(description="Item to postpone", autocomplete=True),
 	):
-		from supabase_helpers import remove_from_deck, add_to_deck
+		from supabase_helpers import remove_from_deck, add_to_deck, parse_item_ref, get_display_name
+
+		# Resolve the encoded item ref (falls back to the raw name for typed input)
+		ref_type, ref_id = parse_item_ref(item_name)
+		display_name = item_name
+		if ref_type:
+			recs = fetch_all(f"{ref_type}s", filters={"id": ref_id})
+			if recs:
+				display_name = get_display_name(recs[0], ref_type)
 
 		# 1️⃣ Find all active base draft decks
 		decks = fetch_all(
@@ -318,7 +326,11 @@ def add_deck_commands(cls):
 			# Count how many copies are in this deck
 			matching_items = []
 			for item in contents:
-				if item.get("name") == item_name:
+				if ref_type:
+					is_match = item["id"] == ref_id and item["item_type"] == ref_type
+				else:
+					is_match = item.get("name") == item_name
+				if is_match:
 					matching_items.append(item)
 					item_content_type = item["item_type"]
 
@@ -328,14 +340,14 @@ def add_deck_commands(cls):
 			quantity = len(matching_items)
 			success, result = remove_from_deck(deck, item_name, quantity)
 			if not success:
-				return f"❌ Failed to remove `{item_name}` from `{deck['name']}`:\n{result}"
+				return f"❌ Failed to remove `{display_name}` from `{deck['name']}`:\n{result}"
 
 			update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
 			total_removed += quantity
 			source_decks.append(deck["name"])
 
 		if total_removed == 0:
-			return f"❌ `{item_name}` was not found in any active draft deck."
+			return f"❌ `{display_name}` was not found in any active draft deck."
 
 		# 3️⃣ Decide destination deck
 		if item_content_type == "aspect":
@@ -360,7 +372,7 @@ def add_deck_commands(cls):
 		update_record(TABLE_NAME, target_deck["id"], {"updated_at": "now()"})
 
 		return (
-			f"⏸️ Postponed `{item_name}` ×{total_removed}\n"
+			f"⏸️ Postponed `{display_name}` ×{total_removed}\n"
 			f"• Removed from: {', '.join(source_decks)}\n"
 			f"• Added to `{target_deck['name']}`"
 		)
@@ -376,9 +388,17 @@ def add_deck_commands(cls):
 		interaction: Interaction,
 		item_name: str = SlashOption(description="Item to stage", autocomplete=True),
 	):
-		from supabase_helpers import remove_from_deck, add_to_deck
+		from supabase_helpers import remove_from_deck, add_to_deck, parse_item_ref, get_display_name
 
 		STAGING_DECK_ID = 21
+
+		# Resolve the encoded item ref (falls back to the raw name for typed input)
+		ref_type, ref_id = parse_item_ref(item_name)
+		display_name = item_name
+		if ref_type:
+			recs = fetch_all(f"{ref_type}s", filters={"id": ref_id})
+			if recs:
+				display_name = get_display_name(recs[0], ref_type)
 
 		# 1️⃣ Find all active base draft decks
 		decks = fetch_all(
@@ -388,7 +408,7 @@ def add_deck_commands(cls):
 				"type": "base",
 				"usage_type": "draft",
 			},
-		)		
+		)
 
 		if not decks:
 			return "❌ No active base draft decks found."
@@ -402,14 +422,17 @@ def add_deck_commands(cls):
 			if not success or not contents:
 				continue
 
-			matching = [item for item in contents if item.get("name") == item_name]
+			if ref_type:
+				matching = [it for it in contents if it["id"] == ref_id and it["item_type"] == ref_type]
+			else:
+				matching = [it for it in contents if it.get("name") == item_name]
 			if not matching:
 				continue
 
 			quantity = len(matching)
 			success, result = remove_from_deck(deck, item_name, quantity)
 			if not success:
-				return f"❌ Failed to remove `{item_name}` from `{deck['name']}`:\n{result}"
+				return f"❌ Failed to remove `{display_name}` from `{deck['name']}`:\n{result}"
 
 			update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
 			total_removed += quantity
@@ -428,7 +451,7 @@ def add_deck_commands(cls):
 		success, result = add_to_deck(staging_deck, item_name, add_quantity)
 		if not success:
 			return (
-				f"❌ Failed to add `{item_name}` ×{add_quantity} "
+				f"❌ Failed to add `{display_name}` ×{add_quantity} "
 				f"to `{staging_deck['name']}`:\n{result}"
 			)
 
@@ -437,13 +460,13 @@ def add_deck_commands(cls):
 		# 5️⃣ Response
 		if total_removed > 0:
 			return (
-				f"⏸️ Staged `{item_name}` ×{total_removed}\n"
+				f"⏸️ Staged `{display_name}` ×{total_removed}\n"
 				f"• Removed from: {', '.join(source_decks)}\n"
 				f"• Added to `{staging_deck['name']}`"
 			)
 		else:
 			return (
-				f"⏸️ Staged `{item_name}`\n"
+				f"⏸️ Staged `{display_name}`\n"
 				f"• Item was not present in live draft decks\n"
 				f"• Added 1 copy to `{staging_deck['name']}`"
 			)
@@ -455,13 +478,13 @@ def add_deck_commands(cls):
 		self,
 		interaction: Interaction,
 	):
-		from supabase_helpers import remove_from_deck, add_to_deck
+		from supabase_helpers import remove_from_deck_by_ref, add_to_deck_by_ref, get_display_name
 
 		STAGING_DECK_ID = 21
 
 		# Destination decks
 		ASPECT_DECK_ID = 22
-		COMBO_CARD_DECK_ID = 20
+		COMBO_CARD_DECK_ID = 20  # cards with null valence and null element are combo cards
 		DEFAULT_CARD_DECK_ID = 3
 
 		# 1️⃣ Load staging deck
@@ -478,46 +501,40 @@ def add_deck_commands(cls):
 		if not contents:
 			return "ℹ️ Staging deck is empty."
 
-		# 2️⃣ Bucket items by destination
+		# 2️⃣ Bucket items by destination deck, keyed by (content_type, content_id)
 		move_plan = {
 			ASPECT_DECK_ID: {},
 			COMBO_CARD_DECK_ID: {},
 			DEFAULT_CARD_DECK_ID: {},
 		}
+		display_names = {}
 
 		for item in contents:
-			name = item.get("name")
-			if not name:
-				continue
+			content_type = item["item_type"]
+			content_id = item["id"]
+			key = (content_type, content_id)
+			display_names[key] = get_display_name(item, content_type)
 
-			if item["item_type"] == "aspect":
+			if content_type == "aspect":
 				target_deck_id = ASPECT_DECK_ID
-
 			elif (
-				item["item_type"] == "card"
+				content_type == "card"
 				and item.get("valence") is None
 				and item.get("element") is None
 			):
-				target_deck_id = NULL_CARD_DECK_ID
-
+				target_deck_id = COMBO_CARD_DECK_ID
 			else:
 				target_deck_id = DEFAULT_CARD_DECK_ID
 
-			move_plan[target_deck_id][name] = move_plan[target_deck_id].get(name, 0) + 1
+			move_plan[target_deck_id][key] = move_plan[target_deck_id].get(key, 0) + 1
 
 		# 3️⃣ Remove EVERYTHING from staging
-		for name, qty in {
-			name: sum(
-				bucket.get(name, 0)
-				for bucket in move_plan.values()
-			)
-			for name in {
-				item["name"] for item in contents if item.get("name")
-			}
-		}.items():
-			success, result = remove_from_deck(staging_deck, name, qty)
-			if not success:
-				return f"❌ Failed to remove `{name}` ×{qty} from staging:\n{result}"
+		for bucket in move_plan.values():
+			for (content_type, content_id), qty in bucket.items():
+				success, result = remove_from_deck_by_ref(staging_deck, content_type, content_id, qty)
+				if not success:
+					name = display_names.get((content_type, content_id), content_id)
+					return f"❌ Failed to remove `{name}` ×{qty} from staging:\n{result}"
 
 		update_record(TABLE_NAME, staging_deck["id"], {"updated_at": "now()"})
 
@@ -534,8 +551,9 @@ def add_deck_commands(cls):
 
 			deck = matches[0]
 
-			for name, qty in items.items():
-				success, result = add_to_deck(deck, name, qty)
+			for (content_type, content_id), qty in items.items():
+				success, result = add_to_deck_by_ref(deck, content_type, content_id, qty)
+				name = display_names.get((content_type, content_id), content_id)
 				if not success:
 					return (
 						f"❌ Failed to add `{name}` ×{qty} to "
@@ -592,59 +610,59 @@ def add_deck_commands(cls):
 
 
 	@remove_from_deck_cmd.on_autocomplete("item_name")
-	async def autocomplete_item_name(self, interaction: Interaction, input: str):
+	async def autocomplete_remove_item_name(self, interaction: Interaction, input: str):
+		from supabase_helpers import encode_item_ref, make_item_label, get_display_name
 
-	    deck_name = interaction.data["options"][0]["value"]
-	    matches = fetch_all(TABLE_NAME, filters={"name": deck_name})
-	    if len(matches) == 0:
-	        await interaction.response.send_autocomplete([])
-	        return
+		deck_name = interaction.data["options"][0]["value"]
+		matches = fetch_all(TABLE_NAME, filters={"name": deck_name})
+		if len(matches) == 0:
+			await interaction.response.send_autocomplete([])
+			return
 
-	    deck = matches[0]
-	    matches = []
+		deck = matches[0]
+		success, items = get_deck_contents(deck, full=True)
+		if not success or not items:
+			await interaction.response.send_autocomplete([])
+			return
 
-	    success, items = get_deck_contents(deck, full=False)
-        if not success or not items:
-            await interaction.response.send_autocomplete([])
-            return
-        matches = [name for name in items if input.lower() in name.lower()]
+		input_lower = input.lower()
+		choices = {}
+		for item in items:
+			content_type = item["item_type"]
+			name = get_display_name(item, content_type)
+			if name and input_lower in name.lower():
+				label = make_item_label(name, content_type, item["id"])
+				choices[label] = encode_item_ref(content_type, item["id"])
 
-	    # 🔑 Sort matches alphabetically (case-insensitive) before slicing
-	    matches = sorted(matches, key=lambda s: s.lower())
-
-	    await interaction.response.send_autocomplete(matches[:25])
+		sorted_items = sorted(choices.items(), key=lambda kv: kv[0].lower())[:25]
+		await interaction.response.send_autocomplete(dict(sorted_items))
 
 
 	@add_to_deck_cmd.on_autocomplete("item_name")
 	@stage_cmd.on_autocomplete("item_name")
 	async def autocomplete_item_name(self, interaction: Interaction, input: str):
-	    input_lower = input.lower()
-	    matches = []
+		from supabase_helpers import encode_item_ref, make_item_label
 
-	    tables = ["cards", "aspects", "events"]
+		input_lower = input.lower()
+		choices = {}
 
-	    for table in tables:
-	        records = fetch_all(table, columns=["name"])
+		tables = [("cards", "card"), ("aspects", "aspect"), ("events", "event")]
+		for table, content_type in tables:
+			records = fetch_all(table, columns=["id", "name"])
+			for r in records:
+				name = r.get("name")
+				if name and input_lower in name.lower():
+					label = make_item_label(name, content_type, r["id"])
+					choices[label] = encode_item_ref(content_type, r["id"])
 
-	        for r in records:
-	            name = r["name"]
-	            if input_lower in name.lower():
-	                matches.append(name)
-
-	        if len(matches) >= 25:
-	            break
-
-	    # Remove duplicates
-	    matches = list(set(matches))
-
-	    # Sort once
-	    matches = sorted(matches, key=lambda s: s.lower())
-
-	    await interaction.response.send_autocomplete(matches[:25])
+		# Sort by label (case-insensitive) and cap at Discord's 25-choice limit
+		sorted_items = sorted(choices.items(), key=lambda kv: kv[0].lower())[:25]
+		await interaction.response.send_autocomplete(dict(sorted_items))
 
 
 	@postpone_cmd.on_autocomplete("item_name")
 	async def autocomplete_postpone_item(self, interaction: Interaction, input: str):
+		from supabase_helpers import encode_item_ref, make_item_label, get_display_name
 		decks = fetch_all(
 			TABLE_NAME,
 			filters={
@@ -658,25 +676,21 @@ def add_deck_commands(cls):
 			await interaction.response.send_autocomplete([])
 			return
 
-		item_names = set()
-
+		input_lower = input.lower()
+		choices = {}
 		for deck in decks:
 			success, contents = get_deck_contents(deck, full=True)
 			if not success or not contents:
 				continue
-
 			for item in contents:
-				if item.get("name"):
-					item_names.add(name)
+				content_type = item["item_type"]
+				name = get_display_name(item, content_type)
+				if name and input_lower in name.lower():
+					label = make_item_label(name, content_type, item["id"])
+					choices[label] = encode_item_ref(content_type, item["id"])
 
-		# Filter + sort
-		matches = [
-			name for name in item_names
-			if input.lower() in name.lower()
-		]
-		matches = sorted(matches, key=lambda s: s.lower())
-
-		await interaction.response.send_autocomplete(matches[:25])
+		sorted_items = sorted(choices.items(), key=lambda kv: kv[0].lower())[:25]
+		await interaction.response.send_autocomplete(dict(sorted_items))
 
 
 	cls.create_deck_cmd = create_deck_cmd
