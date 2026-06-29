@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import nextcord
 from datetime import datetime, time, timedelta, timezone
 from nextcord import Interaction, SlashOption
@@ -36,8 +37,21 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
+    # Atomic write: dump to a temp file in the same dir, then os.replace() (atomic
+    # on the same filesystem). Prevents a crash mid-write from truncating/corrupting
+    # the state file, which _load_state would otherwise silently reset to empty.
+    dir_ = os.path.dirname(STATE_FILE) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=dir_, prefix=".daily_update_state.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp_path, STATE_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _yesterday_range_utc():
@@ -433,17 +447,41 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
 # Sending helper
 # ---------------------------------------------------------------------------
 
-async def _send_update_to_channel(bot, channel_id: int) -> bool:
-    """Fetch stats, build embeds, and send to a channel. Returns True on success."""
-    channel = bot.get_channel(channel_id)
+async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today: str) -> bool:
+    """Send the daily report to a channel, claiming the day BEFORE sending.
+
+    The dedup field (last_sent_date) is persisted *before* the first channel.send,
+    so a partial or failed send can never cause the next loop/startup pass to
+    re-send the report (the cause of the duplicate-message flood). Trade-off: a
+    genuine send failure means that day's report is skipped rather than retried —
+    a safe failure mode for a single-instance bot.
+
+    Returns True if a send was attempted (channel was available), False if the
+    channel could not be resolved (no claim made, safe to retry next cycle).
+    """
+    channel = bot.get_channel(int(channel_id))
     if not channel:
-        print(f"Daily update: channel {channel_id} not found")
+        print(f"Daily update: channel {channel_id} not found; will retry next cycle")
         return False
 
+    # Build the report first so a data/build error doesn't consume the day's claim.
     stats = _fetch_daily_stats()
     embeds = _build_update_embeds(stats)
-    for embed in embeds:
-        await channel.send(embed=embed)
+
+    # Claim the day and persist it before sending anything.
+    config["last_sent_date"] = today
+    state["channels"][channel_id] = config
+    _save_state(state)
+
+    try:
+        for embed in embeds:
+            await channel.send(embed=embed)
+        print(f"Daily update sent to channel {channel_id} for {_yesterday_cst_str()}")
+    except Exception as e:
+        print(
+            f"Daily update send FAILED for channel {channel_id} after claiming {today}; "
+            f"will NOT retry today to avoid duplicate spam: {e}"
+        )
     return True
 
 
@@ -495,14 +533,9 @@ def add_daily_update_commands(cls):
             already_sent = channel_config.get("last_sent_date") == today
 
             if not already_sent and _is_past_send_time_utc(hour_utc, minute_utc):
-                try:
-                    await _send_update_to_channel(self.bot, interaction.channel_id)
-                    state["channels"][channel_id]["last_sent_date"] = today
-                    _save_state(state)
-                    local_time = _format_utc_to_local(hour_utc, minute_utc, utc_offset)
-                    return f"Daily updates **enabled** for this channel. Sent missed update for {_yesterday_cst_str()}."
-                except Exception as e:
-                    return f"Daily updates **enabled**, but failed to send catch-up update: {e}"
+                attempted = await _claim_and_send(self.bot, state, channel_id, channel_config, today)
+                if attempted:
+                    return f"Daily updates **enabled** for this channel. Sent catch-up update for {_yesterday_cst_str()}."
 
             local_time = _format_utc_to_local(hour_utc, minute_utc, utc_offset)
             return f"Daily updates **enabled** for this channel. Reports will be sent daily at {local_time} (UTC{utc_offset:+d})."
@@ -525,7 +558,6 @@ def add_daily_update_commands(cls):
             return
 
         today = _today_cst_str()
-        changed = False
 
         for channel_id, config in list(state["channels"].items()):
             # Skip disabled channels
@@ -542,17 +574,9 @@ def add_daily_update_commands(cls):
             if not _is_past_send_time_utc(hour_utc, minute_utc):
                 continue
 
-            try:
-                success = await _send_update_to_channel(self.bot, int(channel_id))
-                if success:
-                    config["last_sent_date"] = today
-                    changed = True
-                    print(f"Daily update sent to channel {channel_id} for {_yesterday_cst_str()}")
-            except Exception as e:
-                print(f"Daily update failed for channel {channel_id}, will retry: {e}")
-
-        if changed:
-            _save_state(state)
+            # Claims today (persisted) before sending, so a failed/partial send
+            # can never re-fire on the next cycle.
+            await _claim_and_send(self.bot, state, channel_id, config, today)
 
     # Startup check for missed updates across all channels
     async def _check_missed_updates(self):
@@ -562,7 +586,6 @@ def add_daily_update_commands(cls):
             return
 
         today = _today_cst_str()
-        changed = False
 
         for channel_id, config in list(state["channels"].items()):
             if config.get("disabled"):
@@ -576,17 +599,8 @@ def add_daily_update_commands(cls):
             if not _is_past_send_time_utc(hour_utc, minute_utc):
                 continue
 
-            try:
-                success = await _send_update_to_channel(self.bot, int(channel_id))
-                if success:
-                    config["last_sent_date"] = today
-                    changed = True
-                    print(f"Daily update (startup catch-up) sent to channel {channel_id}")
-            except Exception as e:
-                print(f"Daily update startup catch-up failed for channel {channel_id}: {e}")
-
-        if changed:
-            _save_state(state)
+            # Claims today (persisted) before sending; see _claim_and_send.
+            await _claim_and_send(self.bot, state, channel_id, config, today)
 
     # Override cog init to start the task
     original_init = cls.__init__

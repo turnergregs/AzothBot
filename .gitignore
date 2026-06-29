@@ -25,6 +25,7 @@ venv/
 # *.egg
 
 # Logs and local state
+daily_update_state.json
 # *.log
 # *.pid
 # *.seed
