@@ -33,10 +33,23 @@ ANON_INSERT_ONLY = frozenset({
 	"turns", "turn_nodes", "levelups", "reports",
 })
 
+# These are all slated for deletion (2026-08-26): the `rituals` table held the
+# precursor to Aspects and is dead; the `*_types` tables populated slash-command
+# dropdowns that no longer exist. Once dropped, reads return PGRST205 ("table not
+# found") rather than an empty set, which is already a loud failure -- remove the
+# entry here at that point.
 ANON_NO_POLICY = frozenset({
+	# Retired content types. Kept in the database on purpose -- they still hold
+	# data worth referencing -- but nothing reads them at runtime.
 	"rituals", "consumables",
+	# These populate slash-command dropdowns in cards.py / decks.py. Still wired
+	# up, so leave them here: without the guard an anon key makes the dropdown
+	# look empty rather than unreadable.
 	"card_attributes", "card_elements", "card_types",
-	"deck_types", "deck_content_types", "deck_usage_types", "fate_types",
+	"deck_types", "deck_content_types", "deck_usage_types",
+	# `fate_types` was DROPPED 2026-08-26 and is deliberately absent: a missing
+	# table already fails loudly with PGRST205, and listing it here would report
+	# a permissions problem for what is really a gone table.
 })
 
 ANON_UNREADABLE = ANON_INSERT_ONLY | ANON_NO_POLICY
@@ -171,25 +184,32 @@ def soft_delete_record(table_name: str, record_id):
 	)
 
 
-""" Handler for obj types with special cases for names """
-def get_display_name(obj, type):
-	if type == "ritual":
-		return obj.get("challenge_name")
-	else:
-		return obj.get("name")
+def get_display_name(obj, type=None):
+	"""The display name of a content record.
+
+	Every content type uses `name`. Rituals used `challenge_name` and were the
+	one exception; that table is dead as of 2026-08-26. `type` is kept so the
+	many call sites don't all need editing, and is ignored.
+	"""
+	return obj.get("name")
 
 
 import re
 
-# Content types that participate in decks. Order is the legacy
-# first-match priority used only for raw (manually-typed) names.
-DECK_CONTENT_TYPES = ["card", "aspect", "event", "ritual", "consumable"]
-_ITEM_REF_RE = re.compile(r"^(card|aspect|event|ritual|consumable):(\d+)$")
+# Content types that participate in decks. Order is the legacy first-match
+# priority used only for raw (manually-typed) names.
+# `ritual` and `consumable` were removed 2026-08-26 -- both concepts are retired.
+DECK_CONTENT_TYPES = ["card", "aspect", "event"]
+_ITEM_REF_RE = re.compile(r"^(card|aspect|event):(\d+)$")
 
 
 def name_column_for(content_type: str) -> str:
-	"""The column holding a content type's display name."""
-	return "challenge_name" if content_type == "ritual" else "name"
+	"""The column holding a content type's display name.
+
+	Uniformly `name` since the ritual table was retired (2026-08-26). Kept as a
+	function so a future exception has one place to live.
+	"""
+	return "name"
 
 
 def encode_item_ref(content_type: str, item_id) -> str:
@@ -235,7 +255,6 @@ def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict |
 
 	for content_type, ids in grouped.items():
 		table_name = f"{content_type}s"  # e.g. 'cards', 'aspects', 'events'
-		sort_key = "challenge_name" if content_type == "ritual" else "name"
 
 		records = fetch_all(table_name, filters={"id": ids}, sort=["name"])
 		if not records:

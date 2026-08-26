@@ -42,8 +42,9 @@ no error channel — **check the console when an autocomplete is empty**.
 
 **3. A command can exist in the source and not exist at runtime.** Commands are
 attached to the cog by `add_*_commands(cls)` functions called from
-`azoth_commands/__init__.py`. `rituals.py` and `consumables.py` are complete,
-import cleanly, and are **never registered** — 10 commands that do not exist.
+`azoth_commands/__init__.py`. A module whose attacher is never called is dead
+code that still imports cleanly — `rituals.py` and `consumables.py` sat that way
+for months before being deleted. Check `__init__.py`, not just the file.
 
 ## Project Structure
 
@@ -59,7 +60,6 @@ azoth_commands/
   helpers.py              safe_interaction decorator, image helpers, JSON formatting
   autocomplete.py         Generic table-backed autocomplete
   cards.py aspects.py heroes.py events.py decks.py
-  consumables.py rituals.py    NOT REGISTERED
   misc.py                 bulk_insert / bulk_update
   stats.py                /stats subcommands
   daily_update.py         Scheduled reports + background task
@@ -68,9 +68,8 @@ azoth_logic/
   image_generator.py          Facade over the eigenfunction generator
   eigenfunction_generator.py  Loads .npy eigenfunction data, produces art
   card_renderer.py            Composites card images
-  ritual_renderer.py          Composites ritual (challenge/reward) images
+  fate_renderer.py            Composites aspect / event images
 
-utils/interaction_helpers.py  Dead duplicate of helpers.safe_interaction
 eigenfunctions/               .npy / .npz art source data
 assets/                       fonts, icons, renders, downloaded images
 docs/                         All documentation
@@ -132,7 +131,7 @@ without it is an open door to production content. Verify this on every review.
 
 - **Indentation is inconsistent across the repo.** Tabs: `bot.py`,
   `supabase_helpers.py`, `cards.py`, `aspects.py`, `heroes.py`, `events.py`,
-  `decks.py`, `consumables.py`, `rituals.py`. Four spaces: `constants.py`,
+  `decks.py`. Four spaces: `constants.py`,
   `stats.py`, `daily_update.py`, everything in `azoth_logic/`. `misc.py` is
   **mixed** — tab-indented outer function, space-indented command bodies. Match
   the block you are editing; never reformat a whole file.
@@ -162,11 +161,23 @@ ones that bite most often:
 
 ## Testing
 
-**There is no test suite, no linter config, and no CI.** Verification is manual:
-run the bot against the dev guild and exercise the command.
+**pytest, 109 tests, all offline.** See `docs/TESTING.md`.
 
-If you add tests, note that nearly everything reaches Supabase through the
-module-level client in `supabase_client.py`, so that is the seam to mock.
+```bash
+.venv/bin/python -m pytest
+```
+
+Most are regression tests for specific production bugs, named at each site. The
+suite is **mutation-tested** — every fixed bug was reintroduced to confirm the
+tests catch it. Do that again when you fix something worth a test; a test of a
+helper is not a test of the code that calls it, and that gap let one mutant
+through on the first pass.
+
+`tests/conftest.py` stubs the environment before any project module imports and
+points `SUPABASE_URL` at a fake host, so nothing reaches the live database.
+
+Still uncovered: the nextcord command layer, the renderers, and the turn-grain
+queries against real `turns` data. There is no CI.
 
 ## What NOT to Do
 

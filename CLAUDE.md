@@ -26,8 +26,9 @@ an error. Check the key before concluding a table is empty.
 when an autocomplete comes back empty.
 
 **3. Code existing ≠ command existing.** Commands are attached to the cog by
-`add_*_commands(cls)` calls in `azoth_commands/__init__.py`. `rituals.py` and
-`consumables.py` are complete and never registered — 10 phantom commands.
+`add_*_commands(cls)` calls in `azoth_commands/__init__.py`. A module whose
+attacher is never called is dead code that still imports cleanly — that is how
+`rituals.py` and `consumables.py` went unnoticed for months.
 
 ## Documentation
 
@@ -81,9 +82,16 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**There is no test suite, no linter config, and no CI.** Verification is manual:
-run the bot against the dev guild and exercise the command. If you add tests,
-`supabase_client.py`'s module-level client is the seam to mock.
+**pytest, 109 tests, all offline** (`docs/TESTING.md`):
+
+```bash
+.venv/bin/python -m pytest
+```
+
+Mostly regression tests for real production bugs, each naming its incident. The
+suite is mutation-tested — reintroduce a bug and confirm the tests go red before
+trusting them. Uncovered: the nextcord command layer, the renderers, and the
+turn-grain queries against live data. No CI.
 
 ## Writing Queries
 

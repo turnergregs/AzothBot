@@ -9,8 +9,8 @@ from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUC
 from supabase_helpers import fetch_all, update_record
 from supabase_storage import download_image
 
-from azoth_logic.ritual_renderer import RitualRenderer
-renderer = RitualRenderer()
+from azoth_logic.fate_renderer import FateRenderer
+renderer = FateRenderer()
 
 TABLE_NAME = "aspects"
 MODEL_NAME = "aspect"

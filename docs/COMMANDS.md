@@ -7,7 +7,7 @@ Every slash command AzothBot registers. All are scoped to the dev guild
 the deployed bot uses a service-role key, these write directly to production with
 no database-level guard. See [ARCHITECTURE.md § safe_interaction](ARCHITECTURE.md#safe_interaction).
 
-**⚠️ = registered but broken, or not registered at all.** Details in the notes.
+**⚠️ = registered but broken.** Details in the notes.
 
 ---
 
@@ -67,34 +67,6 @@ out.
 | `/render_hero` | — | `name` |
 
 `r`/`g`/`b` are 0–255 and set the hero's colour.
-
-## Consumables ⚠️ NOT REGISTERED
-
-`consumables.py` is complete but its attacher is never called from
-`azoth_commands/__init__.py`, so **none of these commands exist at runtime**.
-
-| Command | Access | Parameters |
-|---|---|---|
-| `/create_consumable` | 🔒 | `name`, `text`, `foresight`, `deck?`*, `quantity?` |
-| `/update_consumable` | 🔒 | `name`*, `new_name?`, `text?`, `foresight?`, `regenerate_image?` |
-| `/get_consumable` | — | `name` |
-| `/delete_consumable` | 🔒 | `name` |
-| `/render_consumable` | — | `name`* |
-
-## Rituals ⚠️ NOT REGISTERED
-
-Same situation as consumables — `rituals.py` is complete and unregistered.
-
-| Command | Access | Parameters |
-|---|---|---|
-| `/create_ritual` | 🔒 | `challenge_name`, `challenge_text`, `difficulty`*, `reward_name`, `reward_text`, `foresight`, `deck?`*, `quantity?` |
-| `/update_ritual` | 🔒 | `name`*, `new_challenge_name?`, `challenge_text?`, `difficulty?`*, `reward_name?`, `reward_text?`, `text?`, `foresight?`, `regenerate_image?` |
-| `/get_ritual` | — | `name` |
-| `/delete_ritual` | 🔒 | `name` |
-| `/render_ritual` | — | `name` |
-
-Rituals are a challenge/reward pair and are identified by `challenge_name`, not
-`name` — `ritual_to_json` strips six fields rather than three.
 
 ---
 
@@ -192,6 +164,11 @@ They are open to anyone in the guild.
 with its own send time, and the report covers the previous day (CST). Disabling
 preserves the dedup date so re-enabling the same day doesn't re-send.
 
+The report reads the turn-grain tables for links-per-turn, boss outcomes and
+level-up pick rates. Those are **service-role only** — on an anon key those
+sections say "unavailable" rather than silently reporting zero. See
+[ANALYTICS.md](ANALYTICS.md#the-daily-report).
+
 ---
 
 ## Quick index
@@ -201,5 +178,8 @@ preserves the dedup date so re-enabling the same day doesn't re-send.
 **Authorized users only:** every `create_*`, `update_*`, `delete_*`, all deck
 mutation, `/bulk_insert`, `/bulk_update`, `/daily_update`.
 
-**Do not exist despite having code:** all 10 ritual and consumable commands, and
-`/render_aspect`.
+**Removed 2026-08-26:** all 10 ritual and consumable commands, along with their
+modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).
+
+**Does not exist despite having code:** `/render_aspect`, commented out at
+`aspects.py:201`.

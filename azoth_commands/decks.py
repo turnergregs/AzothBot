@@ -10,7 +10,7 @@ from supabase_helpers import fetch_all, update_record, get_deck_contents
 from supabase_storage import download_image
 
 from azoth_logic.card_renderer import CardRenderer
-from azoth_logic.ritual_renderer import RitualRenderer
+from azoth_logic.fate_renderer import FateRenderer
 
 bucket = ASSET_BUCKET_NAMES["card"]
 render_dir = ASSET_RENDER_PATHS["card"]
@@ -160,7 +160,7 @@ def add_deck_commands(cls):
 		output_path = os.path.join(render_dir, filename)
 
 		renderer = CardRenderer()
-		# TODO support for RitualRenderer
+		# TODO support for FateRenderer
 		renderer.create_card_grid(content_result, output_path)
 
 		with open(output_path, "rb") as f:
@@ -199,7 +199,7 @@ def add_deck_commands(cls):
 		output_path = os.path.join(render_dir, filename)
 
 		renderer = CardRenderer()
-		# TODO support for RitualRenderer
+		# TODO support for FateRenderer
 		renderer.create_sample_hand(content_result, output_path, hand_size)
 
 		with open(output_path, "rb") as f:
@@ -211,13 +211,13 @@ def add_deck_commands(cls):
 		await interaction.followup.send(f"✋ Hand from `{name}`", file=file)
 
 
-	@nextcord.slash_command(name="add_to_deck", description="Add a card or fate to a deck.", guild_ids=[DEV_GUILD_ID])
+	@nextcord.slash_command(name="add_to_deck", description="Add a card, aspect, or event to a deck.", guild_ids=[DEV_GUILD_ID])
 	@safe_interaction(timeout=5, error_message="❌ Failed to add to deck.", require_authorized=True)
 	async def add_to_deck_cmd(
 		self,
 		interaction: Interaction,
 		deck_name: str = SlashOption(description="Deck name", autocomplete=True),
-		item_name: str = SlashOption(description="Card or Fate", autocomplete=True),
+		item_name: str = SlashOption(description="Card, Aspect, or Event", autocomplete=True),
 		quantity: int = SlashOption(description="How many to add (Default 1)", default=1)
 	):
 		from supabase_helpers import add_to_deck
@@ -234,13 +234,13 @@ def add_deck_commands(cls):
 		return result
 
 
-	@nextcord.slash_command(name="remove_from_deck", description="Remove a card or ritual from a deck.", guild_ids=[DEV_GUILD_ID])
+	@nextcord.slash_command(name="remove_from_deck", description="Remove a card, aspect, or event from a deck.", guild_ids=[DEV_GUILD_ID])
 	@safe_interaction(timeout=5, error_message="❌ Failed to remove from deck.", require_authorized=True)
 	async def remove_from_deck_cmd(
 		self,
 		interaction: Interaction,
 		deck_name: str = SlashOption(description="Deck name", autocomplete=True),
-		item_name: str = SlashOption(description="Card or Ritual", autocomplete=True),
+		item_name: str = SlashOption(description="Card, Aspect, or Event", autocomplete=True),
 		quantity: int = SlashOption(description="How many to remove", default=1)
 	):
 		from supabase_helpers import remove_from_deck
@@ -269,17 +269,11 @@ def add_deck_commands(cls):
 			item_type = item["item_type"]
 			download_dir = ASSET_DOWNLOAD_PATHS[item_type]
 			bucket = ASSET_BUCKET_NAMES[item_type]
-			if item_type == "ritual":
-				image_success, image_result = download_image(item["challenge_image"], bucket, download_dir)
-				if not image_success:
-					return False, f"⚠️ Could not load image for `{item['challenge_name']}`:\n{image_result}"
-				image_success, image_result = download_image(item["reward_image"], bucket, download_dir)
-				if not image_success:
-					return False, f"⚠️ Could not load image for `{item['reward_name']}`:\n{image_result}"
-			else:
-				image_success, image_result = download_image(item["image"], bucket, download_dir)
-				if not image_success:
-					return False, f"⚠️ Could not load image for `{item['name']}`:\n{image_result}"
+			# Rituals used to need a second download here for their reward side;
+			# that content type was retired 2026-08-26.
+			image_success, image_result = download_image(item["image"], bucket, download_dir)
+			if not image_success:
+				return False, f"⚠️ Could not load image for `{item['name']}`:\n{image_result}"
 		return True, contents
 
 

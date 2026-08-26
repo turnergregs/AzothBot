@@ -8,7 +8,7 @@ print resolution (900 PPI, 8.5 mm bleed):
 | Renderer | Handles | Size |
 |---|---|---|
 | `CardRenderer` (`card_renderer.py`) | Cards, and the multi-card layouts | 1,176 lines |
-| `RitualRenderer` (`ritual_renderer.py`) | Rituals — two-sided challenge/reward cards | 1,526 lines |
+| `FateRenderer` (`fate_renderer.py`) | Aspects and events — two-sided cards | 1,526 lines |
 
 These are the best-documented modules in the repo (~40 docstrings, ~540 comment
 lines between them). Read the code for detail; this page covers how the pieces fit
@@ -79,8 +79,9 @@ Three path maps in `constants.py`, keyed by content type:
 | `ASSET_DOWNLOAD_PATHS` | Local cache of images pulled from Supabase | `assets/downloaded_images/cards` |
 | `ASSET_BUCKET_NAMES` | Supabase Storage bucket | `cardimages` |
 
-Buckets: `cardimages`, `aspectimages`, `ritualimages`, `eventimages`,
-`consumableimages`, `heroimages`.
+Buckets: `cardimages`, `aspectimages`, `eventimages`, `heroimages`.
+(`ritualimages` and `consumableimages` were dropped from the maps on 2026-08-26;
+the buckets themselves may still exist in Storage.)
 
 `ASSET_RENDER_PATHS` also has `deck` and `hand` entries, which have no bucket —
 multi-card layouts are rendered and posted to Discord, never stored.
@@ -153,6 +154,8 @@ bytes → upload, and takes an optional `ritual_side` to pick
   cannot respond to anything else while a deck renders.
 - **`/render_aspect` is commented out** (`aspects.py:201`), and aspects take an
   existing image name rather than generating art.
-- **Rituals render two sides.** `RitualRenderer.render_card_sides` and
-  `render_ritual_card` handle the challenge/reward pair — and ⚠️ all ritual
-  commands are currently unregistered, so this code is unreachable at runtime.
+- **The fate renderer's name is historical.** It was `RitualRenderer` until
+  2026-08-26. Rituals were the precursor to Aspects; the content type is retired
+  but this renderer was never ritual-specific — `aspects.py` and `events.py` have
+  always used it. Its `render_card_sides` / `render_ritual_card` methods still
+  carry the old vocabulary internally.

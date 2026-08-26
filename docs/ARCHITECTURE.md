@@ -28,7 +28,6 @@ azoth_commands/
   helpers.py                safe_interaction decorator, image helpers, JSON formatting
   autocomplete.py           Generic table-backed autocomplete
   cards.py  aspects.py  heroes.py  events.py  decks.py
-  consumables.py  rituals.py        <-- NOT REGISTERED, see Known issues
   misc.py                   bulk_insert / bulk_update
   stats.py                  /stats subcommands
   daily_update.py           Scheduled analytics reports + its background task
@@ -37,9 +36,7 @@ azoth_logic/
   image_generator.py        Thin facade over the eigenfunction generator
   eigenfunction_generator.py  Loads .npy eigenfunction data, produces art
   card_renderer.py          Composites a full card image
-  ritual_renderer.py        Composites ritual (challenge/reward) images
-
-utils/interaction_helpers.py   Dead duplicate of helpers.safe_interaction
+  fate_renderer.py          Composites aspect / event images (was ritual_renderer.py)
 
 eigenfunctions/             .npy / .npz source data for procedural art
 assets/                     fonts, icons, renders, downloaded images
@@ -78,8 +75,9 @@ Two consequences that bite:
 1. **A command that isn't assigned onto `cls` does not exist.** The decorator
    alone is not enough.
 2. **A module whose attacher isn't called in `__init__.py` does not exist**, even
-   though the file is complete and imports cleanly. This is the current state of
-   `rituals.py` and `consumables.py`.
+   though the file is complete and imports cleanly. `rituals.py` and
+   `consumables.py` sat in exactly that state for months before being removed
+   entirely on 2026-08-26.
 
 ### Adding a command
 
@@ -189,18 +187,17 @@ Discord autocomplete has no error channel, so a raised exception would just yiel
 no suggestions with nothing to explain why. **If an autocomplete is silently
 empty, check the bot console.**
 
-### Ritual naming
+### Display names
 
-Rituals use `challenge_name` as their display name; everything else uses `name`.
-Two helpers exist for this and should be used rather than re-deriving it:
-
-- `get_display_name(obj, type)`
-- `name_column_for(content_type)`
+Every content type uses `name`. Rituals were the one exception
+(`challenge_name`) and that table is retired, so `get_display_name(obj, type)`
+and `name_column_for(content_type)` are now trivial — kept so a future exception
+has one place to live rather than being re-derived at 60 call sites.
 
 ### Deck membership
 
 `deck_contents` is a universal join table — `(deck_id, content_type, content_id)`
-— so one deck can hold cards, aspects, events, rituals and consumables together.
+— so one deck can hold cards, aspects and events together.
 
 ⚠️ It also has **`position` and `weight`** columns, which the bot never writes.
 `add_to_deck_by_ref` inserts only the three keys above, so every bot-added entry
@@ -256,8 +253,8 @@ Documented so they aren't rediscovered. None are fixed as of this writing.
 
 | Issue | Location | Effect |
 |---|---|---|
-| `rituals.py` and `consumables.py` are never registered | `azoth_commands/__init__.py` | 10 commands silently don't exist |
-| `safe_interaction` duplicated verbatim | `utils/interaction_helpers.py` vs `azoth_commands/helpers.py` | Only the second is imported; the first is dead |
+| ~~`safe_interaction` duplicated verbatim~~ | — | **Fixed 2026-08-26** — `utils/interaction_helpers.py` deleted |
+| ~~`rituals.py` / `consumables.py` never registered~~ | — | **Fixed 2026-08-26** — both retired and deleted |
 | ~~`fetch_all` returns `[]` on any error~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — failures now raise |
 | ~~`soft_delete_record` always returned `None`~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — `/delete_deck` and `/delete_hero` reported failure on every success |
 | `game_stats` table does not exist | `stats.py` version autocomplete | Autocomplete always returns nothing. Now logs the reason to the console |

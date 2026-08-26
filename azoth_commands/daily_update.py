@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import tempfile
 import nextcord
@@ -7,7 +8,7 @@ from nextcord import Interaction, SlashOption
 from nextcord.ext import tasks
 from azoth_commands.helpers import safe_interaction, AUTHORIZED_USER_IDS
 from constants import DEV_GUILD_ID
-from supabase_client import supabase
+from supabase_client import supabase, SUPABASE_ROLE
 
 # State file stores per-channel config:
 # {
@@ -213,9 +214,23 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
         key=lambda x: (x[1]["rate"], -x[1]["offered"])
     )[:5]
 
-    # Performance correlation: for each picked item, compute average game score
-    # Score = level_reached + highest_combo (simple composite metric)
-    item_game_scores = {}  # name -> list of scores
+    # Performance correlation: for each picked item, the typical combo of the
+    # games it appeared in.
+    #
+    # This was `level_reached + highest_combo`, which added a linear quantity to
+    # an exponential one -- combo is a BigNum growing exponentially, so it
+    # swamped the level term completely and the "score" was combo with noise.
+    # (Same class of error as the avg_combo the analytics views used to report;
+    # see docs/ANALYTICS.md.)
+    #
+    # Now log10(combo), averaged in log space, i.e. a geometric mean. Read it as
+    # an order of magnitude. Level is dropped rather than rescaled: the two
+    # aren't commensurable and combining them needed a justification nobody had.
+    #
+    # This remains a CORRELATION, not an effect. An item's combo is mostly the
+    # run it landed in, and good players draft differently -- it says "appeared
+    # in high-combo games", never "causes high combos".
+    item_game_scores = {}  # name -> list of log10(combo)
     for item in all_items:
         if not item.get("picked"):
             continue
@@ -228,16 +243,18 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
         game = game_by_uuid.get(game_uuid)
         if not game:
             continue
-        score = _to_number(game.get("level_reached")) + _to_number(game.get("highest_combo"))
-        item_game_scores.setdefault(name, []).append(score)
+        combo = _to_number(game.get("highest_combo"))
+        if combo <= 0:
+            continue
+        item_game_scores.setdefault(name, []).append(math.log10(combo))
 
     # Items that appear in at least 2 games for meaningful averages
     performance = {}
     for name, scores in item_game_scores.items():
         if len(scores) >= 2:
-            performance[name] = {"avg_score": sum(scores) / len(scores), "games": len(scores)}
+            performance[name] = {"avg_combo_log10": sum(scores) / len(scores), "games": len(scores)}
 
-    top_performers = sorted(performance.items(), key=lambda x: -x[1]["avg_score"])[:5]
+    top_performers = sorted(performance.items(), key=lambda x: -x[1]["avg_combo_log10"])[:5]
 
     return {
         "total_drafts": len(all_drafts),
@@ -248,6 +265,116 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     }
 
 
+def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
+    """Turn-grain aggregates for a set of games: boss outcomes, links per turn,
+    and level-up reward pick rates.
+
+    Returns a dict with an "error" key set when the data could not be read, so
+    callers can say "unavailable" instead of printing a zero. That distinction
+    matters here: `turns` is INSERT-only for anon, so PostgREST answers a blocked
+    read with HTTP 200 and an empty array -- identical in shape to "nothing
+    happened yesterday". Reporting 0 for an unreadable table is the exact bug
+    that made the frozen `boss_fights` look fine for weeks.
+
+    Correctness notes, all from docs/DB_SCHEMA.md:
+
+    * Regular and boss turns are counted SEPARATELY. A boss fight IS one turn and
+      runs until someone dies, so it holds many times the nodes of a regular turn
+      -- pooling them makes both averages meaningless (caveat 8).
+    * Turns with ZERO nodes are in the denominator. That is the whole reason the
+      `turns` table exists; counting only turns that produced nodes reintroduces
+      the bias it was built to remove.
+    * A node is a link OR a skip, so "links played" and "nodes consumed" differ.
+      Only `kind = 'link'` counts here.
+    * Callers pass SOLO uuids only. Co-op records one row per participant, which
+      would multiply every turn-grain row (caveat 9).
+    * `result` is deliberately NOT filtered. An abandoned or restarted run's
+      completed turns are perfectly good data; only its outcome is unknown.
+    """
+    if SUPABASE_ROLE != "service_role":
+        return {"error": f"needs the service-role key (loaded key is `{SUPABASE_ROLE}`)"}
+    if not solo_game_uuids:
+        return {}
+
+    try:
+        turns = []
+        for i in range(0, len(solo_game_uuids), 50):
+            chunk = solo_game_uuids[i:i + 50]
+            turns.extend((
+                supabase.table("turns")
+                .select("uuid, game_uuid, boss_id, boss_result")
+                .in_("game_uuid", chunk)
+                .execute()
+            ).data or [])
+
+        turn_uuids = [t["uuid"] for t in turns if t.get("uuid")]
+
+        nodes = []
+        for i in range(0, len(turn_uuids), 50):
+            chunk = turn_uuids[i:i + 50]
+            nodes.extend((
+                supabase.table("turn_nodes")
+                .select("turn_uuid, kind")
+                .in_("turn_uuid", chunk)
+                .execute()
+            ).data or [])
+
+        levelups = []
+        for i in range(0, len(turn_uuids), 50):
+            chunk = turn_uuids[i:i + 50]
+            levelups.extend((
+                supabase.table("levelups")
+                .select("turn_uuid, options, chosen")
+                .in_("turn_uuid", chunk)
+                .execute()
+            ).data or [])
+    except Exception as e:
+        return {"error": str(e)}
+
+    # Seed every turn at zero so no-node turns stay in the denominator.
+    links_by_turn = {t["uuid"]: 0 for t in turns if t.get("uuid")}
+    for n in nodes:
+        if n.get("kind") == "link" and n["turn_uuid"] in links_by_turn:
+            links_by_turn[n["turn_uuid"]] += 1
+
+    regular = [links_by_turn[t["uuid"]] for t in turns
+               if t.get("uuid") and t.get("boss_id") is None]
+    boss = [links_by_turn[t["uuid"]] for t in turns
+            if t.get("uuid") and t.get("boss_id") is not None]
+
+    boss_rows = [t for t in turns if t.get("boss_id") is not None]
+
+    # Level-up rewards. `options` is the denominator -- raw pick counts are
+    # uninterpretable without it, because common rewards are simply offered more.
+    offered, taken = {}, {}
+    for lu in levelups:
+        for reward in (lu.get("options") or []):
+            offered[reward] = offered.get(reward, 0) + 1
+        for reward in (lu.get("chosen") or []):
+            taken[reward] = taken.get(reward, 0) + 1
+
+    reward_rates = {
+        name: {"taken": taken.get(name, 0), "offered": count,
+               "rate": taken.get(name, 0) / count}
+        for name, count in offered.items() if count > 0
+    }
+    top_rewards = sorted(
+        reward_rates.items(), key=lambda kv: (-kv[1]["rate"], -kv[1]["offered"])
+    )[:5]
+
+    return {
+        "boss_turns": len(boss_rows),
+        "boss_wins": sum(1 for t in boss_rows if t.get("boss_result") == "win"),
+        "boss_losses": sum(1 for t in boss_rows if t.get("boss_result") == "loss"),
+        "regular_turns": len(regular),
+        "avg_links_regular": (sum(regular) / len(regular)) if regular else 0,
+        "boss_turn_count": len(boss),
+        "avg_links_boss": (sum(boss) / len(boss)) if boss else 0,
+        "levelup_packs": len(levelups),
+        "top_rewards": top_rewards,
+    }
+
+
 def _fetch_daily_stats():
     """Query supabase for yesterday's game activity stats."""
     start, end = _yesterday_range_utc()
@@ -255,7 +382,7 @@ def _fetch_daily_stats():
     # Games finished yesterday
     games = (
         supabase.table("games")
-        .select("id, uuid, player_uuid, level_reached, highest_combo, turns_played, elapsed_sec, result, act_reached")
+        .select("id, uuid, player_uuid, level_reached, highest_combo, turns_played, elapsed_sec, result, act_reached, game_type, version")
         .gte("finished_at", start)
         .lt("finished_at", end)
         .execute()
@@ -270,14 +397,16 @@ def _fetch_daily_stats():
         .execute()
     ).data or []
 
-    # Boss fights from yesterday
-    boss_fights = (
-        supabase.table("boss_fights")
-        .select("id, result, damage_dealt, damage_received")
-        .gte("created_at", start)
-        .lt("created_at", end)
-        .execute()
-    ).data or []
+    # Turn-grain data: boss outcomes, links per turn, level-up rewards.
+    #
+    # `boss_fights` was FROZEN 2026-08-25, so the old boss section here reported
+    # zero every single day. Boss data now comes from `turns` -- a boss fight IS
+    # one turn, flagged by turns.boss_id with the outcome in turns.boss_result.
+    #
+    # Solo uuids only: co-op records one row per participant and would multiply
+    # every turn-grain row (docs/DB_SCHEMA.md caveat 9).
+    solo_uuids = [g["uuid"] for g in games if g.get("uuid") and g.get("game_type") == "solo"]
+    turn_grain = _fetch_turn_grain_stats(solo_uuids)
 
     # Draft data for yesterday's games
     game_uuids = [g["uuid"] for g in games if g.get("uuid")]
@@ -288,25 +417,40 @@ def _fetch_daily_stats():
     unique_players = len({g["player_uuid"] for g in games})
     new_player_count = len(new_players)
 
-    max_level = max((_to_number(g.get("level_reached")) for g in games), default=0)
-    max_combo = max((_to_number(g.get("highest_combo")) for g in games), default=0)
-    max_act = max((_to_number(g.get("act_reached")) for g in games), default=0)
+    # COUNTS stay inclusive -- a restart is still someone playing, and this is an
+    # activity report. AVERAGES do not: a restart is usually a few seconds and
+    # one turn, so pooling them drags every mean toward zero. Same reasoning for
+    # co-op, which records one row per participant (docs/DB_SCHEMA.md caveat 9).
+    # The embed labels which population each number describes.
+    measured = [
+        g for g in games
+        if g.get("result") != "restart" and g.get("game_type") == "solo"
+    ]
+    restarts = sum(1 for g in games if g.get("result") == "restart")
+    coop_rows = sum(1 for g in games if g.get("game_type") != "solo")
 
-    durations = [_to_number(g["elapsed_sec"]) for g in games if g.get("elapsed_sec")]
+    max_level = max((_to_number(g.get("level_reached")) for g in measured), default=0)
+    max_combo = max((_to_number(g.get("highest_combo")) for g in measured), default=0)
+    max_act = max((_to_number(g.get("act_reached")) for g in measured), default=0)
+
+    durations = [_to_number(g["elapsed_sec"]) for g in measured if g.get("elapsed_sec")]
     avg_duration = sum(durations) / len(durations) if durations else 0
-    total_playtime = sum(durations)
+    total_playtime = sum(_to_number(g.get("elapsed_sec")) for g in games)
 
-    turns = [_to_number(g["turns_played"]) for g in games if g.get("turns_played")]
+    turns = [_to_number(g["turns_played"]) for g in measured if g.get("turns_played")]
     avg_turns = sum(turns) / len(turns) if turns else 0
 
+    # NULL result on a 0.8.0+ row means the run was abandoned or is still in
+    # progress -- it is real data, not a gap. "unknown" implied a defect.
     results = {}
     for g in games:
-        r = g.get("result") or "unknown"
+        r = g.get("result") or "abandoned / in progress"
         results[r] = results.get(r, 0) + 1
 
-    total_boss_fights = len(boss_fights)
-    boss_wins = sum(1 for b in boss_fights if b.get("result") == "win")
-    boss_losses = sum(1 for b in boss_fights if b.get("result") == "loss")
+    boss_error = turn_grain.get("error")
+    total_boss_fights = turn_grain.get("boss_turns", 0)
+    boss_wins = turn_grain.get("boss_wins", 0)
+    boss_losses = turn_grain.get("boss_losses", 0)
 
     return {
         "total_games": total_games,
@@ -319,6 +463,11 @@ def _fetch_daily_stats():
         "total_playtime_sec": total_playtime,
         "avg_turns": avg_turns,
         "game_results": results,
+        "measured_games": len(measured),
+        "restarts": restarts,
+        "coop_rows": coop_rows,
+        "boss_error": boss_error,
+        "turn_grain": turn_grain,
         "total_boss_fights": total_boss_fights,
         "boss_wins": boss_wins,
         "boss_losses": boss_losses,
@@ -372,12 +521,19 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
     # Collect all fields as (name, value, inline) tuples
     fields = []
 
-    # Player activity
+    # Player activity. Counts are inclusive; restarts/co-op are called out so the
+    # averages below can be read against the right denominator.
     player_lines = [
         f"**{stats['unique_players']}** unique players",
         f"**{stats['new_players']}** new players",
-        f"**{stats['total_games']}** games played",
+        f"**{stats['total_games']}** games started",
     ]
+    if stats.get("restarts"):
+        player_lines.append(f"— of which **{stats['restarts']}** were restarts")
+    if stats.get("coop_rows"):
+        player_lines.append(
+            f"— **{stats['coop_rows']}** co-op rows (one per participant, not per session)"
+        )
     fields.append(("Players & Games", "\n".join(player_lines), False))
 
     # Game highlights
@@ -389,25 +545,64 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
     fields.append(("Highlights", "\n".join(highlight_lines), False))
 
     # Time stats
+    measured = stats.get("measured_games", stats["total_games"])
+    tg = stats.get("turn_grain") or {}
     time_lines = [
         f"Avg game duration: **{_format_duration(stats['avg_duration_sec'])}**",
         f"Avg turns per game: **{stats['avg_turns']:.1f}**",
         f"Total playtime: **{_format_duration(stats['total_playtime_sec'])}**",
     ]
-    fields.append(("Session Stats", "\n".join(time_lines), False))
+    # Links per turn, regular and boss kept apart -- a boss fight is one turn and
+    # runs until someone dies, so pooling the two makes both numbers meaningless.
+    # The turn count is shown because with a handful of runs the average is noise.
+    if tg.get("error"):
+        time_lines.append(f"Links per turn: *unavailable — {tg['error']}*")
+    else:
+        if tg.get("regular_turns"):
+            time_lines.append(
+                f"Avg links per regular turn: **{tg['avg_links_regular']:.1f}** "
+                f"({tg['regular_turns']} turns)"
+            )
+        if tg.get("boss_turn_count"):
+            time_lines.append(
+                f"Avg links per boss turn: **{tg['avg_links_boss']:.1f}** "
+                f"({tg['boss_turn_count']} fights)"
+            )
+    fields.append((
+        f"Session Stats (averages over {measured} completed solo run"
+        f"{'' if measured == 1 else 's'})",
+        "\n".join(time_lines), False))
 
     # Game results breakdown
     if stats["game_results"]:
         result_lines = [f"{k}: **{v}**" for k, v in sorted(stats["game_results"].items())]
         fields.append(("Game Results", "\n".join(result_lines), True))
 
-    # Boss fights
-    if stats["total_boss_fights"] > 0:
+    # Boss fights, from turn-grain data (boss_fights was frozen 2026-08-25).
+    if stats.get("boss_error"):
+        fields.append((
+            "Boss Fights",
+            "⚠️ Unavailable — could not read `turns`. The turn-grain tables need "
+            "the service-role key; see docs/DB_SCHEMA.md.",
+            True))
+    elif stats["total_boss_fights"] > 0:
         boss_lines = [
-            f"**{stats['total_boss_fights']}** total fights",
+            f"**{stats['total_boss_fights']}** boss turns",
             f"**{stats['boss_wins']}** wins / **{stats['boss_losses']}** losses",
         ]
         fields.append(("Boss Fights", "\n".join(boss_lines), True))
+
+    # Level-up rewards. `options` is the denominator: raw pick counts are
+    # uninterpretable on their own, because common rewards get offered far more
+    # often than rare ones and would top any list by volume alone.
+    if tg.get("top_rewards"):
+        lines = [
+            f"**{name}** — {r['rate'] * 100:.0f}% ({r['taken']}/{r['offered']})"
+            for name, r in tg["top_rewards"]
+        ]
+        fields.append((
+            f"Most Picked Level-Up Rewards ({tg.get('levelup_packs', 0)} packs)",
+            "\n".join(lines), False))
 
     # Draft analytics
     draft = stats.get("draft")
@@ -430,10 +625,11 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
             fields.append(("Least Drafted", "\n".join(lines), True))
 
         if draft.get("top_performers"):
+            # Correlation, not effect -- see _fetch_draft_stats.
             lines = []
             for name, s in draft["top_performers"]:
-                lines.append(f"**{name}** — avg score {s['avg_score']:.1f} ({s['games']} games)")
-            fields.append(("Top Performing Picks", "\n".join(lines), False))
+                lines.append(f"**{name}** — typical combo ~10^{s['avg_combo_log10']:.1f} ({s['games']} games)")
+            fields.append(("Picks Seen in High-Combo Games", "\n".join(lines), False))
 
     # Pack fields into embeds, splitting at 5800 chars (buffer under 6000 limit)
     MAX_EMBED_CHARS = 5800
@@ -488,6 +684,16 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
         return False
 
     # Build the report first so a data/build error doesn't consume the day's claim.
+    #
+    # ⚠️ _fetch_daily_stats() is SYNCHRONOUS, and that is load-bearing. It blocks
+    # the event loop, so nothing can interleave between a caller's _load_state()
+    # and the _save_state() below. That is what stops daily_update_task and
+    # _check_missed_updates -- which both run at startup and each load their own
+    # copy of the state -- from claiming the same day and double-sending.
+    #
+    # If this is ever made async (natural enough; it is a dozen blocking HTTP
+    # calls), that window opens and the claim must be moved behind a real lock,
+    # e.g. an asyncio.Lock held across load -> claim -> save.
     stats = _fetch_daily_stats()
     embeds = _build_update_embeds(stats)
 

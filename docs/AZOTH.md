@@ -56,15 +56,30 @@ These map one-to-one onto database tables and onto this bot's CRUD commands.
 | **Card** | `cards` | The primary object. Element (`blood`/`sol`/`anima`/`default`), valence 1–6, rules text, actions, triggers, properties, subtypes |
 | **Aspect** | `aspects` | A permanent effect the player draws on. Lives in an **ordered** zone — order sets trigger firing order. Has `attunement` rather than element/valence |
 | **Event** | `events` | A one-shot effect the player holds and spends later. Has `foresight`. Capacity-capped in the events zone |
-| **Consumable** | `consumables` | Like an event; a separate table and command set |
-| **Ritual** | `rituals` | A challenge/reward pair. Uses `challenge_name` as its display name — **not** `name`, which is why so much helper code special-cases rituals |
 | **Hero** | `heroes` | Chosen at run start. Has a clickable ability costing life, and an RGB colour |
 | **Boss** | `bosses` | HP, damage, a cycling attack **timeline**, and triggers |
 | **Deck** | `decks` + `deck_contents` | A named collection. `deck_contents` is a universal join table carrying `content_type` + `content_id` |
 
 "Fate" appears in the deck taxonomy (`content_type = 'fates'`) as the umbrella
-for aspects, events, consumables and rituals — the non-card content that goes
-into draft packs.
+for aspects and events — the non-card content that goes into draft packs. It is
+why the renderer for those is `azoth_logic/fate_renderer.py`.
+
+### "Ritual" means two different things — one of them is dead
+
+This has caused real confusion, so be precise:
+
+| | Meaning | Status |
+|---|---|---|
+| **Ritual (old)** | A challenge/reward content pair, keyed by `challenge_name`. The **precursor to Aspects** | ☠️ **Retired.** The `rituals` table and all its bot commands were removed 2026-08-26 |
+| **Ritual (current)** | The game's **difficulty level** — a run-wide setting, stored as `games.ritual` (bigint) | ✅ Live and important |
+
+The current meaning is the one that matters for analytics. **Ritual 5+ injects
+Ascender's Bane**, which gates act 4 → 5 — see below. The game loads ritual
+definitions from a local file (`assets/game_data/rituals/rituals.json` via
+`RitualManager`), *not* from the database, so the dead table was never its
+source.
+
+`consumables` was retired at the same time and for the same reason.
 
 ## Patterns, and Ascender's Bane
 

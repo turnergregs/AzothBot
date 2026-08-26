@@ -175,7 +175,7 @@ from pg_stat_user_tables order by pg_total_relation_size(relid) desc;
 ## Not captured here
 
 - **Postgres functions.** At least one exists and the game depends on it: `get_player_uuid_from_id`, called via `rpc/`. The introspection queries only cover tables.
-- **Content table columns.** `custom_actions`, `custom_properties`, `decks`, `deck_contents`, `deck_types`, `deck_content_types`, `deck_usage_types`, `events`, `fate_types`, `heroes`, `macros`, `reports`, `rituals` exist with PKs and `created_by → players(id)` FKs, but their columns haven't been pulled. Fill in when needed. **This is the gap that matters most for AzothBot**, since the content CRUD commands write to exactly these tables.
+- **Content table columns.** `custom_actions`, `custom_properties`, `decks`, `deck_types`, `deck_content_types`, `deck_usage_types`, `events`, `fate_types`, `heroes`, `macros`, `reports`, `rituals` exist with PKs and `created_by → players(id)` FKs, but their columns haven't been pulled. Fill in when needed. **This is the gap that matters most for AzothBot**, since the content CRUD commands write to exactly these tables.
 
 ---
 
@@ -596,6 +596,28 @@ above, and each stage fires only on the previous one's success.
   No PATCH-vs-POST branching, and an offline run start can't orphan the run.
 
 ---
+
+### `deck_contents.position` and `deck_contents.weight`
+
+Two columns that surface only through `decks_with_contents`, verified 2026-08-26.
+
+| Column | State |
+|---|---|
+| `position` | Set on **11 of 379** rows. Written by the Codex editor's reorder UI (`codex.gd`); nothing else reads it |
+| `weight` | Set on **14 of 379** rows, all in deck 32 "Reactants" — which is archived. Values 0.01–2.0 |
+
+**Neither is consumed by gameplay.** `Utils.pick_random_weighted()` is the only
+weight-aware picker and it has no callers. AzothBot's `add_to_deck()` does not
+write either column, which is therefore *not* currently a bug — but it would
+become one the moment weight is wired into drafting, because 365 of 379 rows are
+NULL.
+
+A trap if that happens: `decks_with_contents` always emits a `weight` key, so
+`item.get("weight", 1)` returns **null**, not the default — the key exists. In
+Godot 4.6 `float(null)` then raises *"Invalid call. Nonexistent 'float'
+constructor."* `Utils._entry_weight()` handles the missing-key and present-NULL
+cases separately for exactly this reason; covered by
+`tests/unit/autoloads/test_utils_weighted_pick.gd`.
 
 ## RLS posture
 

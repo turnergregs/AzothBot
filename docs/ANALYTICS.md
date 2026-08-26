@@ -203,34 +203,87 @@ channel's config.
 
 ### What the report contains
 
-Built from `games`, `players`, `boss_fights`, `drafts` and `draft_items` for the
-previous CST day:
+Built from `games`, `players`, `drafts`, `draft_items` and the turn-grain tables
+(`turns`, `turn_nodes`, `levelups`) for the previous CST day:
 
-- Unique players, new players, games played
-- Highest level / act / combo
-- Average duration, average turns, total playtime
-- Game result breakdown
-- Boss fight wins and losses
-- Draft analytics: most and least picked items, and "top performing picks"
+| Section | Contents |
+|---|---|
+| Players & Games | Unique players, new players, games started, restarts, co-op rows |
+| Highlights | Highest level / act / combo |
+| Session Stats | Avg duration, avg turns, total playtime, **avg links per regular turn**, **avg links per boss turn** |
+| Game Results | Outcome breakdown; NULL shows as `abandoned / in progress` |
+| Boss Fights | Boss turns, wins and losses — from `turns.boss_result` |
+| Most Picked Level-Up Rewards | Pick rate as `taken/offered`, from `levelups.chosen` vs `levelups.options` |
+| Draft Activity | Most / least drafted, and picks seen in high-combo games |
+
+**Regular and boss turns are reported separately and must stay that way.** A boss
+fight *is* one turn and runs until someone dies, so it holds many times the nodes
+of a regular turn — pooling them makes both averages meaningless
+([caveat 8](DB_SCHEMA.md#query-caveats)). On a sample day the two were 2.4 and
+7.9 links; a pooled figure would describe neither.
+
+Two denominators are load-bearing:
+
+- **Turns with zero nodes stay in the link average.** That is the entire reason
+  the `turns` table exists; counting only turns that produced nodes reintroduces
+  the bias it was built to remove.
+- **Level-up rewards divide by `options`, not by pick count.** Common rewards are
+  offered far more often than rare ones and would top any raw-count list on
+  volume alone. On the sample, `Life` was offered 38 times and taken 9 (24%)
+  while `Hero` was offered 11 and taken 9 (82%) — opposite conclusions from the
+  same data depending on the denominator.
+
+Only solo games feed the turn-grain section: co-op records one row per
+participant and would multiply every row
+([caveat 9](DB_SCHEMA.md#query-caveats)). `result` is deliberately *not* filtered
+there — an abandoned run's completed turns are perfectly good data.
 
 Embeds split automatically at 5,800 characters (Discord's limit is 6,000) and
 field values truncate at 1,024.
+
+### Two bugs, both fixed
+
+**June 30 — `unsupported operand type(s) for +: 'int' and 'str'`.** The draft
+score was `level_reached + highest_combo`. `level_reached` is `bigint` → `int`;
+`highest_combo` is **`text`** → `str`. Fixed by `_to_number`, which coerces both.
+
+**June 19 — ~30 duplicate messages.** The old code persisted `last_sent_date`
+only *after* a successful send. If `channel.send` raised partway through the
+embed list, the messages already sent stayed out, nothing was claimed, and the
+10-minute loop retried forever. `_claim_and_send` now persists the claim
+**before** sending. Simulated over six cycles with every send failing: 1 message,
+then five skips. The old logic gave 6 and climbing.
+
+The trade-off is deliberate: a genuinely failed send means that day is **skipped,
+not retried**. For a single-instance bot, skipping beats spamming.
+
+### Fixed 2026-08-26
+
+| Was | Now |
+|---|---|
+| Boss section read `boss_fights`, frozen since 2026-08-25 — reported zero every day | Reads `turns` where `boss_id is not null`, using `turns.boss_result`. **A boss fight is one turn** |
+| "Top performing picks" scored `level_reached + highest_combo` — linear plus exponential, so combo swamped it | `avg(log10(combo))`, relabelled **"Picks Seen in High-Combo Games"** — it is a correlation, and the name now says so |
+| Averages pooled restarts and co-op rows | Counts stay inclusive (a restart is still activity); averages use completed solo runs only, and the field label states the denominator |
+| NULL `result` displayed as `unknown` | `abandoned / in progress` — on 0.8.0+ that is real data, not a gap |
+| `game_type` was never selected | Added, along with `version` |
 
 ### Caveats specific to the report
 
 - **`_to_number` exists because PostgREST returns large numerics as strings.**
   `highest_combo`, and sometimes `elapsed_sec` and `turns_played`, arrive as
-  `str`. It coerces and falls back to a default rather than crashing — so a
-  serialized BigNum silently contributes **0**, not its real value.
-- **"Top performing picks" uses `level_reached + highest_combo` as a score.**
-  Adding an exponential quantity to a linear one means the combo term dominates
-  completely; the level contributes nothing in practice. Treat this ranking as
-  "picks that appeared in high-combo games", not as a performance measure.
-- **It reads `boss_fights`, which is frozen.** No rows have been written since
-  2026-08-25, so the boss section of the report will report zero from here on.
-- **No version filter**, same as the views.
-- **Draft batching is capped at 50 ids per request** to keep URLs short. That's
-  correct, but it means a very heavy day makes many round trips.
+  `str`. It falls back to a default rather than crashing — so a value it cannot
+  parse silently contributes **0**, not its real value.
+- **The boss section needs the service-role key.** `turns` is INSERT-only for
+  anon. The report checks `SUPABASE_ROLE` and prints an explicit "unavailable"
+  rather than reporting zero, which is what the frozen-table bug looked like.
+- **No version filter.** Deliberate — a daily activity report covers whatever was
+  played yesterday, and yesterday's builds are current by definition.
+- **Draft batching is capped at 50 ids per request** to keep URLs short, so a
+  heavy day makes many round trips.
+- **The claim-before-send window depends on `_fetch_daily_stats` being
+  synchronous.** It blocks the event loop, which is what stops the startup task
+  and the catch-up pass from both claiming the same day. Making it async without
+  adding a lock reintroduces a double-send.
 
 ---
 

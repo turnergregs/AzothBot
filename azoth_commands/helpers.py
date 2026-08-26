@@ -69,11 +69,11 @@ def get_local_image_path(supabase_image_name: str, download_dir: str = "assets/d
 	return os.path.join(download_dir, local_filename)
 
 
-def generate_and_upload_image(obj_data: dict, bucket: str, ritual_side: str = "") -> tuple[bool, str | bytes]:
+def generate_and_upload_image(obj_data: dict, bucket: str) -> tuple[bool, str | bytes]:
 	from azoth_logic.image_generator import generate_image
 	from supabase_storage import upload_image
 	"""
-	Generates and uploads an image for any supported game object type (card, ritual, event, etc.)
+	Generates and uploads an image for any supported game object type (card, event, etc.)
 	Returns (success: bool, file_path or error string)
 	"""
 
@@ -86,10 +86,7 @@ def generate_and_upload_image(obj_data: dict, bucket: str, ritual_side: str = ""
 		with open(image_path, "rb") as f:
 			image_bytes = f.read()
 
-		if ritual_side != "":
-			return upload_image(obj_data[f"{ritual_side}_name"], image_bytes, bucket)
-		else:
-			return upload_image(obj_data["name"], image_bytes, bucket)
+		return upload_image(obj_data["name"], image_bytes, bucket)
 
 	except Exception as e:
 		return False, f"❌ Failed to upload image: {e}"
@@ -97,12 +94,6 @@ def generate_and_upload_image(obj_data: dict, bucket: str, ritual_side: str = ""
 
 def record_to_json(record: dict):
 	excluded_fields = ["actions", "triggers", "properties"]
-	filtered_record = {k: v for k, v in record.items() if k not in excluded_fields}
-	return json.dumps(filtered_record, indent=2)
-
-
-def ritual_to_json(record: dict):
-	excluded_fields = ["challenge_actions", "challenge_triggers", "challenge_properties", "reward_actions", "reward_triggers", "reward_properties"]
 	filtered_record = {k: v for k, v in record.items() if k not in excluded_fields}
 	return json.dumps(filtered_record, indent=2)
 
