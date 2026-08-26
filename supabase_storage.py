@@ -14,8 +14,11 @@ def generate_local_filename(name: str) -> str:
 
 
 def download_image(image_name: str, bucket: str, download_dir: str = "assets/downloaded_images") -> tuple[bool, str]:
-	"""
-	Downloads an image like 'test_new_9.png' and saves it with a timestamped filename.
+	"""Download an image from a Storage bucket into `download_dir`.
+
+	The saved name is FLAT, not timestamped: any `_<version>` suffix is stripped,
+	so 'catalyst_of_anima_2.png' lands as 'catalyst_of_anima.png'. An existing
+	local file with that name is deleted first.
 	"""
 	os.makedirs(download_dir, exist_ok=True)
 
@@ -36,8 +39,11 @@ def download_image(image_name: str, bucket: str, download_dir: str = "assets/dow
 
 
 def upload_image(name: str, image_bytes: bytes, bucket: str) -> tuple[bool, str]:
-	"""
-	Uploads an image using a flat name like 'new_card.png', overwriting any existing file.
+	"""Upload an image under a flat, slugged name, e.g. 'new_card.png'.
+
+	Uses `x-upsert: true`, so this OVERWRITES any existing file with that name.
+	There is no image history -- regenerating art destroys the previous version,
+	and *.png is gitignored, so it is not recoverable locally either.
 	"""
 	safe_name = re.sub(r"\W+", "_", name.lower()).strip("_")
 	file_name = f"{safe_name}.png"

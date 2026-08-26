@@ -1,0 +1,133 @@
+# AzothBot — Project Context for AI Agents
+
+AzothBot is a **Discord bot** (Python 3.11 + `nextcord`) that is the two-person
+team's interface to the Supabase database behind **Azoth**, a roguelike
+deckbuilder built in Godot 4.6. It handles content CRUD, bulk ingest, procedural
+card-art rendering, and analytics reporting.
+
+The game lives in a separate repo (`azoth`), usually available as an additional
+working directory. Its `docs/` is the authority on game systems.
+
+## Read This First
+
+Three things cause more wrong conclusions here than anything else.
+
+**1. Which Supabase key is loaded changes what you can see — silently.**
+The deployed bot uses the **service-role** key: full read/write, RLS bypassed.
+A local `.env` may hold the **anon** key, which cannot read `turns`,
+`turn_nodes`, `levelups`, `rituals`, `consumables`, `macros`, `reports`, or the
+`deck_*` taxonomy tables. PostgREST returns **HTTP 200 with an empty array**, not
+an error. Check the key before concluding a table is empty.
+
+**2. Supabase failures raise; `[]` now means genuinely empty.** Fixed
+2026-08-26. `fetch_all` raises `SupabaseQueryError` on failure, and
+`SupabaseUnreadableError` *before* querying a table the loaded key can't read.
+`autocomplete_from_table` is the only caller that catches — check the console
+when an autocomplete comes back empty.
+
+**3. Code existing ≠ command existing.** Commands are attached to the cog by
+`add_*_commands(cls)` calls in `azoth_commands/__init__.py`. `rituals.py` and
+`consumables.py` are complete and never registered — 10 phantom commands.
+
+## Documentation
+
+All docs live in `docs/`. Read before changing a system.
+
+| Doc | Covers |
+|-----|--------|
+| `AZOTH.md` | What the game is — vocabulary for the schema and content commands |
+| `ARCHITECTURE.md` | Cog-attachment pattern, `safe_interaction`, Supabase helpers, known structural issues |
+| `COMMANDS.md` | Every slash command, parameters, what it writes, what's broken |
+| `DB_SCHEMA.md` | **Full schema mirror.** Read the query caveats before writing ANY query |
+| `ANALYTICS.md` | `/stats` views, the daily report, and their defects |
+| `CONTENT_PIPELINE.md` | Idea → JSON → database row |
+| `RENDERING.md` | Eigenfunction art generation, card compositing, Storage buckets |
+| `DEPLOYMENT.md` | Where it runs, config, security posture |
+
+## Key Architecture Decisions
+
+- **Cog attachment, not cog methods.** `AzothCommands` defines no commands. Each
+  module's `add_*_commands(cls)` defines closures and assigns them onto the class.
+  Both the assignment *and* the call from `__init__.py` are required.
+- **`safe_interaction` is the security boundary.** With a service-role key, RLS
+  protects nothing. `require_authorized=True` checked against
+  `AUTHORIZED_USER_IDS` is the only guard on production writes. Every mutating
+  command must set it.
+- **Guild-scoped commands only.** Every command passes `guild_ids=[DEV_GUILD_ID]`
+  and `bot.py` syncs to that guild. The global sync is commented out.
+- **Commands return strings.** The decorator posts the return value as a followup.
+  Commands sending their own files or embeds return `None`.
+- **`deck_contents` is a universal join table** — `(deck_id, content_type,
+  content_id)`. Because names collide across types, autocomplete encodes refs
+  (`"card:447"`); use `encode_item_ref` / `parse_item_ref`.
+- **Rituals use `challenge_name`, not `name`.** Use `get_display_name(obj, type)`
+  and `name_column_for(content_type)`.
+- **Art generation is random and destructive.** Uploads are flat-named and
+  upserting, so regenerating destroys the previous image. No history, no seed.
+
+## Running the Bot
+
+```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                 # then fill it in
+python bot.py
+```
+
+Success is **two** lines — logged in, *and* commands synced to the dev guild.
+
+Deployment is a teammate's Windows machine, started by hand, not reliably
+always-on. See `docs/DEPLOYMENT.md`.
+
+## Testing
+
+**There is no test suite, no linter config, and no CI.** Verification is manual:
+run the bot against the dev guild and exercise the command. If you add tests,
+`supabase_client.py`'s module-level client is the seam to mock.
+
+## Writing Queries
+
+**Read `docs/DB_SCHEMA.md` § Query caveats first.** The ones that bite most:
+
+- Filter `version >= '0.8.2'`. Earlier rows are a different dataset — no turn
+  rows, `result` NULL on most, dominated by developer testing.
+- **Never `avg()` a combo.** Exponentially growing BigNum stored as `text`. Use
+  `turn_nodes.combo_log10`.
+- `no_boss_key` counts as a **win**, with `victory`.
+- Boss turns aren't comparable to regular turns — filter `turns.boss_id is null`.
+- `left join turn_nodes`, never inner — inner drops zero-node turns.
+- Add `game_type = 'solo'` unless you want co-op, which records one row per
+  participant.
+- Report censored metrics as two numbers: "cleared in 2.3 links, 78% of the time".
+
+Note the trustworthy dataset is currently ~2 games (`version >= '0.8.2'`). Almost
+everything `/stats` reports comes from data the cutoff exists to exclude.
+
+## Authoring Content
+
+**`assets/game_data/` in the game repo is not authoritative.** It's a fallback
+snapshot exported from Supabase. The database is the source of truth, and this bot
+is how content gets into it.
+
+For anything with real mechanics (`actions`, `triggers`, `properties` — all
+`jsonb`), the `create_*` slash commands are insufficient. Produce a bulk-insert
+JSON per the game repo's `skills/content-creation/` contract and upload it with
+`/bulk_insert`. To change existing rows use `/bulk_update` — different rules
+(matched by `name`, never send `id`, partial fields, rename via `new_name`).
+See `docs/CONTENT_PIPELINE.md`.
+
+## What NOT to Do
+
+- Don't add a write command without `require_authorized=True`
+- Don't assume a command exists because the code does — check `__init__.py`
+- Don't trust an empty result — check which Supabase key is loaded
+- Don't quote a `/stats` number as fact — see `docs/ANALYTICS.md` for why
+- Don't write content into the game repo's `assets/game_data/` — hand over a
+  bulk_insert JSON instead
+- Don't undo the daily-update safeguards — claim-before-send and the atomic state
+  write each fix a real bug, both commented at the site
+- Don't reformat whole files over tabs vs spaces; indentation is inconsistent by
+  file and history matters more
+- Don't change the schema from here — it originates in the game repo's
+  `db/migrations/`
+- Don't commit `.env`

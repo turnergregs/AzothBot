@@ -1,13 +1,94 @@
 # azothbot/supabase_helpers.py
-from supabase_client import supabase
+from supabase_client import supabase, SUPABASE_ROLE
 
 
-"""
-	Fetch records from a Supabase table.
-	- columns: list of column names to select (defaults to '*')
-	- filters: dict of field → value pairs to filter by
-"""
-def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, sort: list[str] = None) -> list[dict]:
+class SupabaseError(RuntimeError):
+	"""Base class for Supabase access failures raised by this module."""
+
+
+class SupabaseQueryError(SupabaseError):
+	"""A query reached Supabase and failed."""
+
+
+class SupabaseUnreadableError(SupabaseError):
+	"""The current API key provably cannot read this table.
+
+	Raised BEFORE the query, because the failure is otherwise invisible:
+	PostgREST answers an RLS-denied SELECT with HTTP 200 and an empty array,
+	which is indistinguishable from an empty table.
+	"""
+
+
+# Tables the anon key cannot SELECT. Verified against pg_policies and
+# pg_class.relrowsecurity on 2026-08-26; see docs/DB_SCHEMA.md § RLS posture.
+#
+# Two different causes, same symptom (a silent empty result):
+#
+#   INSERT-only policy      the game writes these, nobody reads them back
+#   RLS on with NO policy   deny-all; not empty tables, invisible ones
+#
+# Keep in sync with docs/DB_SCHEMA.md. A table added here that is actually
+# readable only costs a confusing error; one omitted costs silent wrong answers.
+ANON_INSERT_ONLY = frozenset({
+	"turns", "turn_nodes", "levelups", "reports",
+})
+
+ANON_NO_POLICY = frozenset({
+	"rituals", "consumables",
+	"card_attributes", "card_elements", "card_types",
+	"deck_types", "deck_content_types", "deck_usage_types", "fate_types",
+})
+
+ANON_UNREADABLE = ANON_INSERT_ONLY | ANON_NO_POLICY
+
+
+def _assert_readable(table_name: str):
+	"""Fail loudly when the loaded key cannot read this table.
+
+	Only the service-role key can read everything. 'unknown' is treated as
+	not-proven and gets the same guard, so a key format we don't recognise
+	fails visibly rather than silently returning nothing.
+	"""
+	if SUPABASE_ROLE == "service_role":
+		return
+	if table_name not in ANON_UNREADABLE:
+		return
+
+	reason = (
+		"it is INSERT-only for anon (the game writes it; nothing reads it back)"
+		if table_name in ANON_INSERT_ONLY
+		else "RLS is enabled on it with no SELECT policy (deny-all)"
+	)
+	raise SupabaseUnreadableError(
+		f"Cannot read `{table_name}` with a `{SUPABASE_ROLE}` key: {reason}. "
+		f"PostgREST would return an empty result with HTTP 200, which looks "
+		f"exactly like an empty table. Use the service-role key. "
+		f"See docs/DB_SCHEMA.md \u00a7 Which key you are holding."
+	)
+
+
+def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, sort: list[str] = None, limit: int = None) -> list[dict]:
+	"""Fetch records from a Supabase table.
+
+	- columns: column names to select (defaults to '*')
+	- filters: field -> value. None becomes `is null`, a list becomes `in`,
+	  anything else becomes `eq`
+	- sort: e.g. ["-created_at", "name"]; a leading '-' means descending
+	- limit: pushed to PostgREST. WITHOUT it, PostgREST caps the response at
+	  1000 rows, so slicing the result in Python silently reads a truncated
+	  page of a larger table. Pass a limit whenever you only need the top N.
+
+	Returns [] ONLY when the query genuinely matched no rows. Every failure
+	raises: this function used to swallow exceptions and return [], which made
+	a missing table, an RLS denial and an empty result indistinguishable to
+	callers -- all of which render as "not found" at the call sites.
+
+	Raises:
+		SupabaseUnreadableError: the loaded key cannot read this table
+		SupabaseQueryError: the query failed
+	"""
+	_assert_readable(table_name)
+
 	selector = ",".join(columns) if columns else "*"
 	query = supabase.table(table_name).select(selector)
 
@@ -27,51 +108,68 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 			else:
 				query = query.order(s)
 
+	if limit is not None:
+		query = query.limit(limit)
+
 	try:
 		response = query.execute()
-		return response.data or []
 	except Exception as e:
-		print(f"Supabase fetch_all error: {e}")
-		return []
+		raise SupabaseQueryError(f"select on `{table_name}` failed: {e}") from e
 
-"""Create a new record."""
-def create_record(table_name, data):
+	return response.data or []
+
+
+def create_record(table_name: str, data: dict):
+	"""Insert a record. Raises SupabaseQueryError on failure."""
 	try:
 		response = supabase.table(table_name).insert(data).execute()
-		return response.data
 	except Exception as e:
-		print(f"Supabase create_record error: {e}")
-		return None
+		raise SupabaseQueryError(f"insert into `{table_name}` failed: {e}") from e
+	return response.data
 
-"""Update a record by ID."""
-def update_record(table_name, record_id, data):
+
+def update_record(table_name: str, record_id, data: dict):
+	"""Update a record by id, stamping `updated_at`.
+
+	Returns the updated rows (a list). An empty list means no row matched
+	`record_id` -- distinct from a failure, which raises.
+	"""
 	from datetime import datetime, timezone
 
 	try:
 		data["updated_at"] = datetime.now(timezone.utc).isoformat()
 		response = supabase.table(table_name).update(data).eq("id", record_id).execute()
-		return response.data
 	except Exception as e:
-		print(f"Supabase update_record error: {e}")
-		return None
+		raise SupabaseQueryError(f"update on `{table_name}` id={record_id} failed: {e}") from e
+	return response.data
 
-"""Delete a record by ID."""
-def delete_record(table_name, record_id):
+
+def delete_record(table_name: str, record_id):
+	"""Hard-delete a record by id. Raises SupabaseQueryError on failure."""
 	try:
 		response = supabase.table(table_name).delete().eq("id", record_id).execute()
-		return response.data
 	except Exception as e:
-		print(f"Supabase delete_record error: {e}")
-		return None
+		raise SupabaseQueryError(f"delete on `{table_name}` id={record_id} failed: {e}") from e
+	return response.data
 
-"""Sofr delete a record by ID."""
-def soft_delete_record(table_name, record_id):
-	from datetime import datetime
-	try:
-		response = update_record(table_name, record_id, {"archived_at": datetime.utcnow().isoformat()})
-		return response.data
-	except Exception as e:
-		return None
+
+def soft_delete_record(table_name: str, record_id):
+	"""Archive a record by setting `archived_at`.
+
+	Returns the updated rows, matching update_record/delete_record.
+
+	Previously this did `response.data` on update_record's return value -- which
+	is already a list -- so it raised AttributeError on EVERY call, swallowed it,
+	and returned None. /delete_deck and /delete_hero therefore always reported
+	"Failed to delete" even when the archive succeeded.
+	"""
+	from datetime import datetime, timezone
+
+	return update_record(
+		table_name, record_id,
+		{"archived_at": datetime.now(timezone.utc).isoformat()},
+	)
+
 
 """ Handler for obj types with special cases for names """
 def get_display_name(obj, type):

@@ -1,0 +1,263 @@
+# Analytics
+
+What AzothBot reports, where those numbers come from, and which of them you can
+currently trust.
+
+**This is the *read* side.** For the schema, the columns and the caveats that make
+a query right or wrong, see [DB_SCHEMA.md](DB_SCHEMA.md). For how the game
+*writes* this data, see `docs/ANALYTICS.md` in the game repo.
+
+---
+
+## Read this first
+
+Three facts govern everything below.
+
+**1. The key in your `.env` decides what you can see.** The turn-grain tables
+return zero rows with an HTTP 200 under an anon key — not an error. See
+[DB_SCHEMA.md § Which key you are holding](DB_SCHEMA.md#azothbot-which-key-you-are-holding).
+
+**2. `0.8.2` is the analytics cutoff**, and as of the 2026-08-26 rebuild every
+game-facing view enforces it via `analytics_cutoff()`. Bump that one function to
+move the cutoff; don't edit WHERE clauses.
+
+**3. The trustworthy dataset is currently tiny.** As of 2026-08-26 there are
+roughly **2 games** at `version >= '0.8.2'`, out of ~6,500 total. Any `/stats`
+number that looks substantial is drawn almost entirely from data the cutoff exists
+to exclude.
+
+---
+
+## The `/stats` commands
+
+Each subcommand fetches one view and dumps it as JSON into a code block. There is
+no aggregation, formatting or filtering in Python beyond a `limit` slice.
+
+| Command | View | Purpose |
+|---|---|---|
+| `/stats leaderboard` | `leaderboard_view` | Top combos, optionally by player / hero / version |
+| `/stats player` | `player_info_view` | One player's aggregates |
+| `/stats active_players` | `player_activity_view` | Play counts and hours |
+| `/stats hero` | `hero_info_view` | Per-hero aggregates |
+| `/stats version` | `version_info_view` | Per-version aggregates |
+| `/stats draft_deck` | `draft_deck_view` | Draft deck composition |
+| `/stats draft_rates` | `draft_rates_view` | Global pick rates |
+
+Autocomplete sources: `active_players_view` for players, `heroes` for heroes, and
+`game_stats` for versions — ⚠️ **`game_stats` does not exist**, so the version
+autocomplete silently returns nothing on every keystroke.
+
+### Rebuilt 2026-08-26
+
+`db/migrations/2026-08-26_rebuild_analytics_views.sql` in the game repo fixes the
+defects the capture migration documented. **Breaking changes for anyone reading
+these views by column name:**
+
+| Change | Detail |
+|---|---|
+| `avg_combo` → **`avg_combo_log10`** | Renamed on purpose so stale readers break loudly instead of quietly reporting a meaningless number |
+| `draft_rates_view` reshaped | One row **per item** with numerator and denominator, not one row of comma-joined strings |
+| `draft_deck_view` loses `7v`–`10v` | Valence is 1–6; those columns were permanently zero |
+| `leaderboard_view` gains `combo_numeric`, `result` | An explicitly sortable combo column |
+| Row counts drop everywhere | Cutoff moved `0.6.7` → `0.8.2`; `restart` runs and co-op duplicates excluded |
+
+Three helper functions now carry the rules:
+
+| Function | Purpose |
+|---|---|
+| `version_key(text)` | Numeric sort key — `0.8.2` → `8002`. Returns NULL on anything unparseable instead of raising, which is what the old inline `split_part(...)::integer` did on a two-component version string |
+| `analytics_cutoff()` | The cutoff, in one place. Was duplicated across seven WHERE clauses, which is why it went stale |
+| `combo_numeric(text)` | `highest_combo` as numeric, or NULL if malformed — so one bad row can't take down every combo view |
+
+#### The combo fix
+
+This is the substantive change. The views reported
+`round(avg(highest_combo::numeric), 2)` — a linear-space mean of an exponentially
+growing BigNum, which is dominated entirely by the largest observation.
+`hero_info_view` was reporting an "average" of `1.9e30`.
+
+It is now `avg(log10(combo))` — a mean in log space, i.e. the geometric mean.
+**Read it as an order of magnitude:** `4.2` means "typically around 10^4.2".
+`max_combo` stays linear, since a maximum isn't distorted by the distribution.
+
+`docs/DB_SCHEMA.md` names `turn_nodes.combo_log10` as the canonical source. The
+rebuild computes log10 from `games` instead, because turn-grain data starts at
+`0.8.0` and is ~2 runs deep — sourcing it there would make these views empty
+today. Same quantity; revisit when turn rows are plentiful.
+
+### Still open
+
+| Issue | Detail |
+|---|---|
+| `hero_info_view` returns one row | The data, not the SQL — see below |
+| `draft_deck_view.combo` definition | Counts cards with NULL element; AzothBot's `merge_staging` uses NULL element **and** NULL valence. The two disagree, and which is right is a content question |
+| `most_drafted` has no denominator | Still a comma-joined label on `player_info_view`. Per-item numbers live in `draft_rates_view` now |
+| The trustworthy dataset is ~2 games | Nothing to do but wait for play at `0.8.2`+ |
+
+### A note on `hero_info_view`
+
+It returns exactly **one row** — Lumis, ~1,836 games. That one is the *data*, not
+the SQL: every sampled game has `starting_hero = 7`. There are 20 heroes in the
+`heroes` table and essentially no diversity in recorded play. Don't build hero
+comparisons until that changes.
+
+### The view definitions are in version control (2026-08-26)
+
+Captured as-found in the game repo at
+`db/migrations/2026-08-26_capture_existing_views.sql` — nine views, recorded
+verbatim from `pg_get_viewdef()` with their defects annotated but **not** fixed,
+so the file is a trustworthy restore point. Fixes go in a later migration.
+
+The capture turned up a ninth view nobody was tracking: **`decks_with_contents`**,
+which inlines deck contents as JSON and is consumed by the game / Codex editor,
+not by AzothBot. It is also the only place `deck_contents.position` and
+`deck_contents.weight` appear — two columns documented nowhere, and which
+AzothBot's `add_to_deck()` never sets.
+
+Re-run the capture query after any view change:
+
+```sql
+select c.relname, pg_get_viewdef(c.oid, true)
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public' and c.relkind in ('v','m') order by 1;
+```
+
+### None of the views set `security_invoker`
+
+`reloptions` is NULL on all nine, so each runs with its **owner's** privileges and
+bypasses RLS on the tables beneath it. This cuts both ways:
+
+- It is exactly the mechanism needed to serve aggregates to a restricted role
+  without exposing rows — so the option we wanted is already available.
+- It also means **a view placed over `turns`, `turn_nodes`, `levelups` or
+  `reports` would silently become anon-readable**, defeating the INSERT-only
+  policy on those tables. Set `security_invoker = true` on any new view over
+  them unless anon exposure is intended.
+
+---
+
+## What the bot does not use yet
+
+The game gained three turn-grain tables in `0.8.0` — `turns`, `turn_nodes` and
+`levelups`. **No AzothBot command reads any of them.** With the service-role key
+the deployed bot can, so this is unbuilt surface rather than a blocker.
+
+What they make answerable, none of which the current views can express:
+
+| Question | Source |
+|---|---|
+| Links per regular turn, with variance | `turns` left-joined to `turn_nodes` — the `turns` table is the honest denominator, including zero-node turns |
+| Nodes until patterns cleared | `turn_nodes.patterns_after = 0`, reported as a pair — "cleared in 2.3 nodes, 78% of the time" |
+| Level-up reward pick rates | `levelups.options` vs `levelups.chosen`. Raw pick counts are uninterpretable without the offer denominator |
+| When the act 4→5 gate opens | `turn_nodes.banes_purged` against `games.ascenders_bane_count` |
+| Combo growth over a run | `turn_nodes.combo_log10` — **in log space**, the only correct way to aggregate combo |
+| Boss fight pacing | `turns.boss_id` / `boss_result` plus the boss columns on `turn_nodes` |
+
+Worked SQL for several of these is in
+[DB_SCHEMA.md § Worked examples](DB_SCHEMA.md#worked-examples).
+
+**Before writing any of them, walk the checklist** in
+[DB_SCHEMA.md § Writing a query: start here](DB_SCHEMA.md#writing-a-query-start-here).
+It covers the mistakes that produce a query which runs cleanly and answers the
+wrong question.
+
+---
+
+## The daily report
+
+`/daily_update enabled:True` registers the current channel for a scheduled report
+covering the previous day (CST). It is **per-channel** — each channel carries its
+own send time and its own dedup date.
+
+### Scheduling
+
+- A `tasks.loop(minutes=10)` checks every registered channel.
+- A channel fires when the current UTC time is past its `send_hour_utc` /
+  `send_minute_utc` and it hasn't already sent today.
+- A startup pass catches up on reports missed while the bot was down — which
+  matters, because [the bot is not reliably always-on](DEPLOYMENT.md).
+- Disabling preserves `last_sent_date`, so toggling off and on the same day
+  doesn't re-send.
+
+State lives in `daily_update_state.json` at the repo root (gitignored):
+
+```json
+{"channels": {"<channel_id>": {
+  "send_hour_utc": 18, "send_minute_utc": 0, "last_sent_date": "2026-08-25"
+}}}
+```
+
+### Two deliberate design decisions
+
+Both fix real bugs. Don't undo them without understanding why they're there.
+
+**The day is claimed *before* the send.** `_claim_and_send` writes
+`last_sent_date` and persists it, then sends. A failed or partial send therefore
+skips that day rather than retrying — the trade-off that stopped a duplicate
+message flood. For a single-instance bot, skipping beats spamming.
+
+**The state file is written atomically** — `mkstemp` in the same directory, then
+`os.replace`. A crash mid-write would otherwise truncate the file, which
+`_load_state` silently reads back as "no channels registered", losing every
+channel's config.
+
+### What the report contains
+
+Built from `games`, `players`, `boss_fights`, `drafts` and `draft_items` for the
+previous CST day:
+
+- Unique players, new players, games played
+- Highest level / act / combo
+- Average duration, average turns, total playtime
+- Game result breakdown
+- Boss fight wins and losses
+- Draft analytics: most and least picked items, and "top performing picks"
+
+Embeds split automatically at 5,800 characters (Discord's limit is 6,000) and
+field values truncate at 1,024.
+
+### Caveats specific to the report
+
+- **`_to_number` exists because PostgREST returns large numerics as strings.**
+  `highest_combo`, and sometimes `elapsed_sec` and `turns_played`, arrive as
+  `str`. It coerces and falls back to a default rather than crashing — so a
+  serialized BigNum silently contributes **0**, not its real value.
+- **"Top performing picks" uses `level_reached + highest_combo` as a score.**
+  Adding an exponential quantity to a linear one means the combo term dominates
+  completely; the level contributes nothing in practice. Treat this ranking as
+  "picks that appeared in high-combo games", not as a performance measure.
+- **It reads `boss_fights`, which is frozen.** No rows have been written since
+  2026-08-25, so the boss section of the report will report zero from here on.
+- **No version filter**, same as the views.
+- **Draft batching is capped at 50 ids per request** to keep URLs short. That's
+  correct, but it means a very heavy day makes many round trips.
+
+---
+
+## If you're fixing this
+
+A rough order, cheapest and most valuable first:
+
+1. ~~**Dump the view definitions into `db/migrations/`.**~~ Done 2026-08-26 —
+   `2026-08-26_capture_existing_views.sql`, nine views.
+2. ~~**Make `fetch_all` distinguish failure from emptiness.**~~ Done 2026-08-26 —
+   failures raise, and a pre-flight guard rejects reads the loaded key can't
+   perform. See [ARCHITECTURE.md § The Supabase layer](ARCHITECTURE.md#the-supabase-layer).
+3. **Fix the version autocomplete** — point it at `games`, not the nonexistent
+   `game_stats`.
+4. **Rebuild the views on the caveats.** Smaller than it first looked — the
+   version-filter machinery already exists and just has a stale threshold:
+
+   | Change | Where |
+   |---|---|
+   | Bump the threshold `6007` → `8002` | 5 views |
+   | Add a version filter | `active_players_view` (has none) |
+   | Guard `split_part(...)::integer` against a 2-component version, which raises | all 5 filtered views |
+   | Replace `avg(highest_combo::numeric)` with `turn_nodes.combo_log10` | `hero_info_view`, `player_info_view`, `version_info_view`, `player_activity_view` |
+   | Exclude `result = 'restart'` | all game-facing views |
+   | Add `game_type = 'solo'` | all game-facing views |
+   | Emit numerator/denominator instead of `string_agg` | `draft_rates_view` — a rewrite, not a patch |
+   | Version-filter the `most_drafted` LATERAL, which is currently unfiltered while its own row is | `player_info_view` |
+   | Drop the permanently-zero `7v`–`10v` columns (valence is 1–6) | `draft_deck_view` |
+5. **Add turn-grain commands** once there's enough post-cutoff data to be worth
+   querying.

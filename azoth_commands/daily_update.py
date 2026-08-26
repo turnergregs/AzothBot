@@ -104,6 +104,29 @@ def _format_utc_to_local(hour_utc: int, minute_utc: int, utc_offset: int) -> str
 # Supabase data fetching
 # ---------------------------------------------------------------------------
 
+def _to_number(value, default=0):
+    """Coerce a possibly-stringified numeric DB value to int/float.
+
+    PostgREST returns large numeric columns (e.g. the BigNum-backed
+    `highest_combo`, and sometimes `elapsed_sec` / `turns_played`) as strings,
+    which breaks arithmetic like sum()/+/max(). Falls back to `default` for
+    non-numeric values (e.g. a serialized BigNum object) so stats never crash.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+
 def _resolve_item_names(items: list[dict]) -> dict[tuple[str, int], str]:
     """Given draft_items rows, resolve (item_type, item_id) -> display name."""
     grouped = {}
@@ -205,7 +228,7 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
         game = game_by_uuid.get(game_uuid)
         if not game:
             continue
-        score = (game.get("level_reached") or 0) + (game.get("highest_combo") or 0)
+        score = _to_number(game.get("level_reached")) + _to_number(game.get("highest_combo"))
         item_game_scores.setdefault(name, []).append(score)
 
     # Items that appear in at least 2 games for meaningful averages
@@ -265,15 +288,15 @@ def _fetch_daily_stats():
     unique_players = len({g["player_uuid"] for g in games})
     new_player_count = len(new_players)
 
-    max_level = max((g.get("level_reached") or 0 for g in games), default=0)
-    max_combo = max((g.get("highest_combo") or 0 for g in games), default=0)
-    max_act = max((g.get("act_reached") or 0 for g in games), default=0)
+    max_level = max((_to_number(g.get("level_reached")) for g in games), default=0)
+    max_combo = max((_to_number(g.get("highest_combo")) for g in games), default=0)
+    max_act = max((_to_number(g.get("act_reached")) for g in games), default=0)
 
-    durations = [g["elapsed_sec"] for g in games if g.get("elapsed_sec")]
+    durations = [_to_number(g["elapsed_sec"]) for g in games if g.get("elapsed_sec")]
     avg_duration = sum(durations) / len(durations) if durations else 0
     total_playtime = sum(durations)
 
-    turns = [g["turns_played"] for g in games if g.get("turns_played")]
+    turns = [_to_number(g["turns_played"]) for g in games if g.get("turns_played")]
     avg_turns = sum(turns) / len(turns) if turns else 0
 
     results = {}

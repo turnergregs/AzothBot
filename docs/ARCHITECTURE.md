@@ -1,0 +1,269 @@
+# Architecture
+
+How AzothBot is put together, and the non-obvious patterns you need to know
+before adding a command.
+
+## Stack
+
+| Piece | Choice | Notes |
+|---|---|---|
+| Discord library | `nextcord` 2.6.0 | A `discord.py` fork. Slash commands only — there is no message-command prefix |
+| Database | `supabase` 1.0.3 (PostgREST) | No ORM, no migrations from this side |
+| Imaging | `Pillow`, `numpy`, `matplotlib` | Procedural card art — see [RENDERING.md](RENDERING.md) |
+| Config | `python-dotenv` | Everything comes from `.env` |
+
+Python 3.11 (`.python-version`).
+
+## Layout
+
+```
+bot.py                      Entry point: intents, login, command sync, cog registration
+constants.py                Env-derived constants and asset path maps
+supabase_client.py          The single shared `supabase` client instance
+supabase_helpers.py         Generic CRUD + all deck-membership logic
+supabase_storage.py         Image upload/download against Storage buckets
+
+azoth_commands/
+  __init__.py               Builds the AzothCommands cog by attaching command modules
+  helpers.py                safe_interaction decorator, image helpers, JSON formatting
+  autocomplete.py           Generic table-backed autocomplete
+  cards.py  aspects.py  heroes.py  events.py  decks.py
+  consumables.py  rituals.py        <-- NOT REGISTERED, see Known issues
+  misc.py                   bulk_insert / bulk_update
+  stats.py                  /stats subcommands
+  daily_update.py           Scheduled analytics reports + its background task
+
+azoth_logic/
+  image_generator.py        Thin facade over the eigenfunction generator
+  eigenfunction_generator.py  Loads .npy eigenfunction data, produces art
+  card_renderer.py          Composites a full card image
+  ritual_renderer.py        Composites ritual (challenge/reward) images
+
+utils/interaction_helpers.py   Dead duplicate of helpers.safe_interaction
+
+eigenfunctions/             .npy / .npz source data for procedural art
+assets/                     fonts, icons, renders, downloaded images
+combinations/               Generated art samples (not used at runtime)
+```
+
+## The cog-attachment pattern
+
+This is the least obvious thing in the codebase.
+
+`AzothCommands` is a normal `commands.Cog` subclass, but **no commands are
+defined on it**. Each module exposes `add_<area>_commands(cls)`, which defines
+its commands as closures and then assigns them onto the class:
+
+```python
+# azoth_commands/cards.py
+def add_card_commands(cls):
+    @nextcord.slash_command(name="create_card", ..., guild_ids=[DEV_GUILD_ID])
+    @safe_interaction(timeout=15, require_authorized=True)
+    async def create_card_cmd(self, interaction, ...):
+        ...
+
+    cls.create_card_cmd = create_card_cmd   # <-- registration happens HERE
+```
+
+`__init__.py` then calls each attacher at import time:
+
+```python
+add_deck_commands(AzothCommands)
+add_card_commands(AzothCommands)
+...
+```
+
+Two consequences that bite:
+
+1. **A command that isn't assigned onto `cls` does not exist.** The decorator
+   alone is not enough.
+2. **A module whose attacher isn't called in `__init__.py` does not exist**, even
+   though the file is complete and imports cleanly. This is the current state of
+   `rituals.py` and `consumables.py`.
+
+### Adding a command
+
+1. Define it inside the relevant `add_*_commands(cls)` function.
+2. Decorate with `@nextcord.slash_command(..., guild_ids=[DEV_GUILD_ID])`.
+3. Decorate with `@safe_interaction(...)` — set `require_authorized=True` if it
+   writes anything.
+4. Assign it: `cls.my_command = my_command`.
+5. If the module is new, call its attacher from `__init__.py`.
+6. Document it in [COMMANDS.md](COMMANDS.md).
+
+## Command registration and scope
+
+Every command passes `guild_ids=[DEV_GUILD_ID]`, and `bot.py` syncs to that guild
+on ready:
+
+```python
+await bot.sync_application_commands(guild_id=dev_guild_id)
+```
+
+Guild-scoped commands appear within seconds; global commands would take up to an
+hour. The global sync call is present but commented out. **The bot is not
+designed to be used from more than one server.**
+
+## `safe_interaction`
+
+Every command wraps in this decorator (`azoth_commands/helpers.py`). It does four
+things:
+
+| Concern | Behaviour |
+|---|---|
+| **Authorization** | If `require_authorized=True`, rejects any user not in `AUTHORIZED_USER_IDS` with an ephemeral message |
+| **Deferral** | Calls `interaction.response.defer()` — Discord's 3-second ack window is short and Supabase round-trips are not |
+| **Timeout** | Wraps the body in `asyncio.wait_for(timeout=…)` |
+| **Error capture** | Catches everything and posts the exception in a code block |
+
+A command **returns a string** rather than sending it; the decorator posts it as
+a followup. Commands that send their own files or embeds return `None`.
+
+> **`require_authorized` is the security boundary.** The deployed bot holds a
+> service-role Supabase key, so RLS provides no protection whatsoever — this
+> decorator is the only thing standing between a guild member and the production
+> content tables. Every mutating command currently sets it; keep it that way.
+> Read commands, including all of `/stats`, are open to anyone in the guild.
+
+## The Supabase layer
+
+`supabase_client.py` creates one module-level client from `SUPABASE_URL` /
+`SUPABASE_KEY` and raises at import if either is missing.
+
+`supabase_helpers.py` wraps it in generic CRUD:
+
+| Function | Notes |
+|---|---|
+| `fetch_all(table, columns, filters, sort)` | `filters` values dispatch by type: `None` → `is null`, `list` → `in_`, else `eq`. `sort` takes `["-col"]` for descending |
+| `create_record(table, data)` | |
+| `update_record(table, id, data)` | Stamps `updated_at`. Returns the updated rows; `[]` means no row matched |
+| `delete_record(table, id)` | Hard delete |
+| `soft_delete_record(table, id)` | Sets `archived_at`; delegates to `update_record` |
+
+### Failures raise; only genuine emptiness returns `[]`
+
+**Fixed 2026-08-26.** These helpers used to catch every exception and return
+`[]` / `None`, so a missing table, an RLS denial, a network failure and an empty
+result were indistinguishable — and every call site renders `[]` as "not found".
+
+They now raise:
+
+| Exception | Meaning |
+|---|---|
+| `SupabaseUnreadableError` | The loaded key **provably cannot read** this table. Raised *before* the query |
+| `SupabaseQueryError` | The query reached Supabase and failed |
+| `SupabaseError` | Base class; catch this to handle either |
+
+`safe_interaction` already catches everything and posts the exception to Discord,
+so errors reach the user with no per-command work.
+
+#### The pre-flight guard
+
+RLS denial is **not an exception** — PostgREST answers a blocked SELECT with HTTP
+200 and an empty array. No amount of exception handling catches it. So
+`fetch_all` checks the table against a verified list before querying:
+
+```python
+ANON_INSERT_ONLY = {"turns", "turn_nodes", "levelups", "reports"}
+ANON_NO_POLICY   = {"rituals", "consumables", "card_attributes", "card_elements",
+                    "card_types", "deck_types", "deck_content_types",
+                    "deck_usage_types", "fate_types"}
+```
+
+If `SUPABASE_ROLE` is anything other than `service_role` — including `unknown`,
+which is treated as not-proven — reading one of these raises with the reason.
+
+`SUPABASE_ROLE` comes from `supabase_client.py`, which reads the `role` claim
+from the key's JWT payload (and recognises the newer `sb_secret_` /
+`sb_publishable_` formats). `bot.py` prints it at startup.
+
+**Keep the two sets in sync with
+[DB_SCHEMA.md § RLS posture](DB_SCHEMA.md#rls-posture).** A table listed here that
+is actually readable only costs a confusing error; one omitted costs silent wrong
+answers.
+
+#### The one place that still catches
+
+`autocomplete_from_table` catches `SupabaseError`, logs it, and returns `[]` —
+Discord autocomplete has no error channel, so a raised exception would just yield
+no suggestions with nothing to explain why. **If an autocomplete is silently
+empty, check the bot console.**
+
+### Ritual naming
+
+Rituals use `challenge_name` as their display name; everything else uses `name`.
+Two helpers exist for this and should be used rather than re-deriving it:
+
+- `get_display_name(obj, type)`
+- `name_column_for(content_type)`
+
+### Deck membership
+
+`deck_contents` is a universal join table — `(deck_id, content_type, content_id)`
+— so one deck can hold cards, aspects, events, rituals and consumables together.
+
+⚠️ It also has **`position` and `weight`** columns, which the bot never writes.
+`add_to_deck_by_ref` inserts only the three keys above, so every bot-added entry
+takes the column defaults. Both columns are read by the `decks_with_contents`
+view that the game / Codex editor consumes, and `weight` looks like draft
+probability — so this may be silently affecting how bot-added content is drawn.
+Confirm the intended defaults before adding more content this way.
+
+Because names collide across content types, autocomplete encodes an explicit
+reference rather than a bare name:
+
+```
+"Diversity (Card #447)"   ← what the user sees
+"card:447"                ← what Discord sends back
+```
+
+`encode_item_ref` / `parse_item_ref` / `make_item_label` handle this.
+`add_to_deck` and `remove_from_deck` accept either form; a raw typed name falls
+back to `_resolve_name_to_ref`, which takes the **first match** in the priority
+order `card, aspect, event, ritual, consumable`. That fallback is legacy and can
+pick the wrong item — always select from autocomplete.
+
+## Autocomplete
+
+`autocomplete_from_table(table, input, column, filters)` fetches the table and
+filters in Python. Simple, and fine at current content volumes (~400 cards), but
+it is a full table read on **every keystroke** and it inherits `fetch_all`'s
+silent-empty behaviour: a broken autocomplete looks like "no matches".
+
+## The daily-update background task
+
+`daily_update.py` is the only module that touches the cog's lifecycle. It
+monkey-patches `cls.__init__` to start a `tasks.loop(minutes=10)` and a
+startup catch-up pass:
+
+```python
+original_init = cls.__init__
+def new_init(self, bot):
+    original_init(self, bot)
+    self._daily_update_task.start(self)
+    bot.loop.create_task(_check_missed_updates(self))
+cls.__init__ = new_init
+```
+
+State lives in `daily_update_state.json` at the repo root (gitignored), written
+atomically via `mkstemp` + `os.replace`. See [ANALYTICS.md](ANALYTICS.md#the-daily-report)
+for the scheduling and deduplication rules — several of the comments there record
+real bugs that were fixed and should not be reintroduced.
+
+## Known structural issues
+
+Documented so they aren't rediscovered. None are fixed as of this writing.
+
+| Issue | Location | Effect |
+|---|---|---|
+| `rituals.py` and `consumables.py` are never registered | `azoth_commands/__init__.py` | 10 commands silently don't exist |
+| `safe_interaction` duplicated verbatim | `utils/interaction_helpers.py` vs `azoth_commands/helpers.py` | Only the second is imported; the first is dead |
+| ~~`fetch_all` returns `[]` on any error~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — failures now raise |
+| ~~`soft_delete_record` always returned `None`~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — `/delete_deck` and `/delete_hero` reported failure on every success |
+| `game_stats` table does not exist | `stats.py` version autocomplete | Autocomplete always returns nothing. Now logs the reason to the console |
+| Leaderboard sorts client-side after a capped fetch | `stats.py` | Hits PostgREST's 1000-row default against a larger view |
+| Hardcoded deck IDs | `decks.py` `stage` / `merge_staging` | IDs 20/21/22/3; deck 21 ("Staging") and 22 ("Testing Fates", named `ASPECT_DECK_ID`) look stale |
+| Six pseudo-docstrings placed above `def` | `supabase_helpers.py` | Not real docstrings; `help()` shows nothing |
+| Stale comment | `supabase_storage.py` `download_image` | Says "timestamped filename"; it writes a flat name |
+| `add_to_deck` never sets `position` or `weight` | `supabase_helpers.py` | Bot-added deck entries take column defaults; `weight` appears to be draft probability |
+| No tests, no linter config | repo-wide | |

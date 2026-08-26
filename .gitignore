@@ -41,6 +41,7 @@ daily_update_state.json
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # Jupyter notebooks (if used for debugging)
 # .ipynb_checkpoints/
