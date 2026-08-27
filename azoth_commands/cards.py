@@ -177,22 +177,40 @@ def add_card_commands(cls):
 		return f"✅ Updated `{name}`:\n```json\n{record_to_json(result[0])}\n```"
 
 
-	@nextcord.slash_command(name="delete_card", description="Delete a card.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to delete card.", require_authorized=True)
-	async def delete_card_cmd(self, interaction: Interaction, name: str):
-		from supabase_helpers import delete_record
+	# ------------------------------------------------------------------
+	# REMOVED 2026-08-27: /delete_card.
+	#
+	# Commented out rather than deleted. `cards` has no `archived_at` column, so this was a real
+	# DELETE with no undo -- and the game's `prune_content_dirs()` treats a
+	# missing row as the deletion signal, so it also tore the item out of
+	# the offline snapshot (game repo, docs/CONTENT_LOADING.md).
+	#
+	# All four /delete_* commands went at once: they were never part of the
+	# working routine, and an accidental invocation is unrecoverable for
+	# content. Content is retired by pulling it from the draft decks, not by
+	# deleting the row.
+	#
+	# The body must stay commented, not merely unattached:
+	# tests/test_command_registration.py fails a command that a module
+	# defines but never assigns onto the cog.
+	# ------------------------------------------------------------------
 
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ No {MODEL_NAME} found with name `{name}`."
+	# @nextcord.slash_command(name="delete_card", description="Delete a card.", guild_ids=[DEV_GUILD_ID])
+	# @safe_interaction(timeout=5, error_message="❌ Failed to delete card.", require_authorized=True)
+	# async def delete_card_cmd(self, interaction: Interaction, name: str):
+		# from supabase_helpers import delete_record
 
-		record = matches[0]
-		success = delete_record(TABLE_NAME, record["id"])
-		content_index.invalidate()
-		if not success:
-			return f"❌ Failed to delete {MODEL_NAME} `{name}`."
+		# matches = fetch_all(TABLE_NAME, filters={"name": name})
+		# if len(matches) == 0:
+			# return f"❌ No {MODEL_NAME} found with name `{name}`."
 
-		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
+		# record = matches[0]
+		# success = delete_record(TABLE_NAME, record["id"])
+		# content_index.invalidate()
+		# if not success:
+			# return f"❌ Failed to delete {MODEL_NAME} `{name}`."
+
+		# return f"🗑️ Deleted {MODEL_NAME} `{name}`."
 
 
 	# Autocomplete Helpers
@@ -228,7 +246,7 @@ def add_card_commands(cls):
 
 
 	@update_card_cmd.on_autocomplete("name")
-	@delete_card_cmd.on_autocomplete("name")
+	# @delete_card_cmd.on_autocomplete("name")
 	async def autocomplete_card_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
@@ -251,4 +269,4 @@ def add_card_commands(cls):
 
 	cls.create_card_cmd = create_card_cmd
 	cls.update_card_cmd = update_card_cmd
-	cls.delete_card_cmd = delete_card_cmd
+	# cls.delete_card_cmd = delete_card_cmd

@@ -69,7 +69,7 @@ All docs live in `docs/`. Read before changing a system.
   upserting, so regenerating destroys the previous image. No history, no seed.
   Because the name does not change, `art_cache.forget_art()` must be called at
   every upload site or the bot keeps drawing the old art for up to 7 days.
-- **Two commands cover all content lookup.** `/get` and `/render` dispatch on an
+- **Two commands cover all content lookup.** `/show` and `/render` dispatch on an
   encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
   `/render_*` commands were retired 2026-08-26.
 - **The render cache evicts on write, not on a timer.** Size-capped LRU
@@ -98,7 +98,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 399 tests, all offline** (`docs/TESTING.md`):
+**pytest, 438 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest
@@ -164,6 +164,12 @@ See `docs/CONTENT_PIPELINE.md`.
   file and history matters more
 - Don't change the schema from here — it originates in the game repo's
   `db/migrations/`
+- Don't re-add a `/delete_*` command. All four were removed 2026-08-27 —
+  `cards`/`aspects`/`events` have no `archived_at`, so those deletes were
+  unrecoverable and also pruned the game's offline snapshot. Retire content
+  with `/remove_from_deck` instead; see `docs/COMMANDS.md` § Deletion
+- Don't uncomment `/stage`, `/postpone` or `/merge_staging` without first
+  fixing their hardcoded deck IDs (21 is archived, 22 is not the aspect deck)
 - Don't commit `.env`
 - Don't add a command without assigning it onto the cog — `test_command_registration.py`
   will fail, and that is the point

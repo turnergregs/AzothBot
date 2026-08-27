@@ -104,12 +104,12 @@ def add_stats_commands(cls):
         return f"```json\n{json.dumps(records, indent=2)}\n```"
 
     # --- Draft Deck Data ---
-    @stats_cmd.subcommand(name="draft_deck", description="Draft deck composition data")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft deck data.")
-    async def stats_draft_deck(self, interaction: Interaction):
+    @stats_cmd.subcommand(name="draft_pool", description="Draft pool composition data")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft pool data.")
+    async def stats_draft_pool(self, interaction: Interaction):
         records = fetch_all("draft_deck_view")
         if not records:
-            return "❌ No draft deck data available."
+            return "❌ No draft pool data available."
         return f"```json\n{json.dumps(records, indent=2)}\n```"
 
     # --- Draft Rate Data ---
@@ -186,5 +186,5 @@ def add_stats_commands(cls):
     cls.stats_player = stats_player
     cls.stats_hero = stats_hero
     cls.stats_version = stats_version
-    cls.stats_draft_deck = stats_draft_deck
+    cls.stats_draft_pool = stats_draft_pool
     cls.stats_draft_rates = stats_draft_rates

@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 399 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 438 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -22,7 +22,7 @@ Added 2026-08-26. Before that there was no suite at all.
 | `tests/test_bulk_report.py` | 24 | Bulk diffs: changed-fields-only, jsonb shape not contents, announced truncation |
 | `tests/test_command_registration.py` | 22 | **What the cog actually exposes**, and that no name in it is undefined at runtime |
 | `tests/test_art_cache.py` | 21 | Both caches: content-hash render keys, art TTL, invalidation after a re-upload |
-| `tests/test_content_get.py` | 20 | The `/get` embed: which fields show, which are deliberately omitted |
+| `tests/test_content_get.py` | 20 | The `/show` embed: which fields show, which are deliberately omitted |
 | `tests/test_content_index.py` | 18 | The autocomplete index: TTL, explicit invalidation, ref encoding, match ranking |
 | `tests/test_deck_render.py` | 17 | Grid and hand layout, art deduplication, per-kind bucket routing |
 | `tests/test_sync_assets.py` | 8 | The vendored-asset sync, and the shader-exported backgrounds it deliberately cannot sync |

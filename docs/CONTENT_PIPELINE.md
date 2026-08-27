@@ -138,7 +138,7 @@ broken renderer rather than as "no art yet". The per-row summary flags `no art`
 instead, and the footer says why.
 
 Both invalidate the content index, so new or renamed items are selectable in
-`/get`, `/render` and `/search` immediately.
+`/show`, `/render` and `/search` immediately.
 
 ### Bulk gotchas
 
@@ -207,7 +207,7 @@ fallback snapshot knows about it.
 3. Upload via `/bulk_insert` or `/bulk_update`.
 4. **Read the reply.** Partial success is normal; the summary is the only place
    per-row failures appear.
-5. Verify with `/get` — note it omits `actions`,
+5. Verify with `/show` — note it omits `actions`,
    `triggers` and `properties`, so check those in the database directly.
 6. Add to a deck if it should be draftable — `/add_to_deck`, or the `deck`
    parameter on a `create_*` command. **Content not in a deck never appears in

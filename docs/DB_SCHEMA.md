@@ -93,7 +93,7 @@ verbatim with their defects annotated but not fixed.
 | `active_players_view` | ~184 | `name` (autocomplete source) |
 | `hero_info_view` | 1 | `hero_name`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |
 | `version_info_view` | 5 | `version`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |
-| `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, `events`, element and valence breakdowns, `combo` |
+| `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, `events`, element and valence breakdowns, `combo`. Covers base, non-archived decks with `usage_type in ('draft', 'rite')` — the rite half added 2026-08-27, before which `events` was always 0. Surfaced by `/stats draft_pool` |
 | `draft_rates_view` | 1 | Pre-formatted comma-joined strings of most/least picked items |
 | `decks_with_contents` | — | **Not used by AzothBot.** Deck rows with contents inlined as JSON; consumed by the game / Codex editor |
 
@@ -698,8 +698,9 @@ Every restriction in this section — INSERT-only turn-grain tables, no UPDATE, 
 DELETE — is invisible to it. The bot can read, rewrite and delete anything.
 
 That is what makes `require_authorized` in `safe_interaction` the real access
-control, and it is why a stray `/delete_card` from an authorized user has no
-database-level backstop. See [ARCHITECTURE.md](ARCHITECTURE.md#safe_interaction).
+control: a stray write from an authorized user has no database-level backstop.
+It is also why the four `/delete_*` commands were removed on 2026-08-27 rather
+than guarded — the guard was already the only thing there. See [ARCHITECTURE.md](ARCHITECTURE.md#safe_interaction).
 
 **New analytics tables must be INSERT-only for anon and must not grant SELECT.**
 The `games`/`drafts` pattern is the one to avoid, not the one to copy.

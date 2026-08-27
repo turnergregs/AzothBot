@@ -130,13 +130,16 @@ Two things stand between a Discord user and the production database:
 
 Consequences to keep in mind:
 
-- **Anyone in the guild can read.** `/get`, `/render`, `/search`, the deck
+- **Anyone in the guild can read.** `/show`, `/render`, `/search`, the deck
   read/render commands and all of `/stats` are unrestricted. `/stats` exposes
   player names and full run history.
-- **Anyone on `AUTHORIZED_USER_IDS` can destroy content.** `/delete_card` has no
-  confirmation step and no database-level backstop.
-- **There are no backups configured from this repo.** Deletions rely on whatever
-  Supabase's own retention provides.
+- **No command deletes content any more.** All four `/delete_*` commands were
+  removed 2026-08-27 precisely because an authorized user had no confirmation
+  step and no database-level backstop. `/bulk_update` and the `create_*` /
+  `update_*` commands can still overwrite content, and art upload is
+  destructive by design (flat, upserting filenames).
+- **There are still no backups configured from this repo.** Anything that does
+  overwrite relies on whatever Supabase's own retention provides.
 - **A new command that writes and forgets `require_authorized=True` is an open
   door.** Check it during review.
 

@@ -15,7 +15,7 @@ no database-level guard. See [ARCHITECTURE.md § safe_interaction](ARCHITECTURE.
 
 | Command | Access | Parameters |
 |---|---|---|
-| `/get` | — | `name`* — any card, aspect or rite |
+| `/show` | — | `name`* — any card, aspect or rite |
 | `/render` | — | `name`* — any card, aspect or rite |
 
 **One command each, across all content types.** Replaced the six typed
@@ -33,10 +33,10 @@ ref still encodes `event:82`, matching the naming boundary.
 Autocomplete is served from an in-process index
 (`azoth_logic/content_index.py`) with a 60s TTL — Discord fires it on every
 keystroke and reading the three tables live costs 0.85–2.3s. `create_*` and
-`delete_*` invalidate it, so new content is selectable immediately; the TTL is
+`update_*` invalidate it, so new content is selectable immediately; the TTL is
 the backstop for edits made in the Codex or by direct SQL.
 
-`/get` returns a **detail embed**, accented in the item's own colour: rules text
+`/show` returns a **detail embed**, accented in the item's own colour: rules text
 as the body, and only the attributes that define the thing — element, valence,
 subtypes, split face, attunement or foresight, whichever apply. Empty and null
 values are dropped rather than printed.
@@ -62,7 +62,6 @@ element reads as **Colourless** rather than blank, which is what 64 cards have.
 |---|---|---|
 | `/create_card` | 🔒 | `name`, `type`*, `valence`, `element`*, `text`, `attributes?`, `subtypes?`, `deck?`*, `quantity?` |
 | `/update_card` | 🔒 | `name`*, `new_name?`, `type?`*, `valence?`, `element?`*, `text?`, `subtypes?`, `attributes?`, `regenerate_image?` |
-| `/delete_card` | 🔒 | `name` |
 
 `*` = autocompleted. `?` = optional.
 
@@ -74,9 +73,9 @@ element reads as **Colourless** rather than blank, which is what 64 cards have.
   the render cache first — Storage names are flat and upserting, so the same
   filename now holds different bytes.
 - `create_card` and `update_card` (with `regenerate_image`) reply with the
-  rendered card. To look one up without touching it, use `/get` or `/render`.
+  rendered card. To look one up without touching it, use `/show` or `/render`.
 - To read `actions`, `triggers` or `properties`, query the database directly.
-  `/get` omits them on purpose — each is past Discord's 2000-char limit on its
+  `/show` omits them on purpose — each is past Discord's 2000-char limit on its
   own. `/search` does reach inside them.
 
 ## Aspects
@@ -85,7 +84,6 @@ element reads as **Colourless** rather than blank, which is what 64 cards have.
 |---|---|---|
 | `/create_aspect` | 🔒 | `name`, `text`, `attunement`, `image?`, `deck?`*, `quantity?` |
 | `/update_aspect` | 🔒 | `name`*, `new_name?`, `text?`, `attunement?`, `image?` |
-| `/delete_aspect` | 🔒 | `name` |
 
 Aspects take an existing image name in the `aspectimages` bucket rather than
 generating art. `update_aspect` has its `regenerate_image` parameter commented
@@ -102,7 +100,6 @@ out. Render one with `/render`.
 |---|---|---|
 | `/create_rite` | 🔒 | `name`, `text`, `foresight`, `deck?`*, `quantity?` |
 | `/update_rite` | 🔒 | `name`*, `new_name?`, `text?`, `foresight?`, `regenerate_image?` |
-| `/delete_rite` | 🔒 | `name` |
 
 ## Heroes ⚠️ RETIRED
 
@@ -112,6 +109,32 @@ still exists but its attacher is **deliberately** not called from
 an oversight to fix. Hero cards were also never ported to the new renderer, so
 `/render_hero` would draw the wrong frame.
 
+## Deletion — removed 2026-08-27
+
+**There is no longer any command that deletes content.** `/delete_card`,
+`/delete_aspect`, `/delete_rite` and `/delete_deck` are all commented out in
+their modules, and `tests/test_command_registration.py` asserts they stay off the
+cog.
+
+Three of the four hard-deleted. `cards`, `aspects` and `events` have **no
+`archived_at` column** — the row was gone, with no undo and no backups configured
+from this repo. Worse, the game's `prune_content_dirs()` reads a missing row as
+the deletion signal, so one misclick also tore the item out of the offline
+snapshot in `assets/game_data/` (game repo,
+[CONTENT_LOADING.md](../../azoth/docs/CONTENT_LOADING.md) § Archive-based deletion).
+
+`/delete_deck` was the safe member of the set — it set `archived_at` via
+`soft_delete_record` — and went with the others for consistency. **Archiving a
+deck is still possible:** `/update_deck` takes an `archived` parameter.
+
+**To retire content, pull it from the draft decks** with `/remove_from_deck`.
+That is what the balance workflow was for; it leaves the row intact and
+recoverable. Restoring a delete command means deciding what "delete" should mean
+first: the honest version adds `archived_at` to the three content tables,
+switches the commands to `soft_delete_record`, filters archived rows out of
+`content_index` / `/search`, and teaches the game's `prune_content_dirs()` to
+read the column instead of inferring deletion from a missing row.
+
 ---
 
 ## Decks
@@ -120,8 +143,7 @@ an oversight to fix. Hero cards were also never ported to the new renderer, so
 |---|---|---|
 | `/create_deck` | 🔒 | `name`, `description`, `type`*, `content_type`*, `usage_type`* |
 | `/update_deck` | 🔒 | `name`*, `new_name?`, `description?`, `type?`*, `usage_type?`*, `archived?` |
-| `/delete_deck` | 🔒 | `name`* — hard delete if empty, soft delete if in use |
-| `/get_deck` | — | `name`* — details plus contents |
+| `/show_deck` | — | `name`* — details plus contents |
 | `/render_deck` | — | `name`* — every card, tiled, static (120s timeout) |
 | `/render_hand` | — | `name`*, `hand_size?` (default 6) — a fanned sample draw, static |
 
@@ -136,29 +158,34 @@ autocomplete.
 |---|---|---|
 | `/add_to_deck` | 🔒 | `deck_name`*, `item_name`*, `quantity?` |
 | `/remove_from_deck` | 🔒 | `deck_name`*, `item_name`*, `quantity?` |
-| `/stage` | 🔒 | `item_name`* |
-| `/postpone` | 🔒 | `item_name`* |
-| `/merge_staging` | 🔒 | — |
-
-These three are a **balance workflow** for pulling content out of the live draft
-pool and putting it back:
-
-- **`/postpone`** — removes every copy of an item from all active base draft decks
-  and moves them into the "Removed" decks. Use when benching content.
-- **`/stage`** — moves every copy from live draft decks into the Staging deck (or
-  adds it if missing). A holding area for content being reworked.
-- **`/merge_staging`** — empties Staging back into live draft decks, routing each
-  item by type: aspects → the aspect deck, cards with null valence *and* null
-  element → Combo Cards, everything else → Base Draft Deck.
-
-⚠️ **`/stage` and `/merge_staging` use hardcoded deck IDs** (`21` Staging, `22`,
-`20` Combo Cards, `3` Base Draft Deck). In the current database deck 21 is
-archived and deck 22 is named "Testing Fates" despite the constant being called
-`ASPECT_DECK_ID`. Verify these before relying on either command.
 
 **Always pick items from autocomplete.** Typed names fall back to a first-match
 lookup across content types and can resolve to the wrong item — see
 [ARCHITECTURE.md § Deck membership](ARCHITECTURE.md#deck-membership).
+
+### Hidden 2026-08-27: `/stage`, `/postpone`, `/merge_staging`
+
+The **balance workflow** — pulling content out of the live draft pool and putting
+it back — is commented out in `azoth_commands/decks.py`, not deleted. What it did:
+
+- **`/postpone`** — removed every copy of an item from all active base draft decks
+  and moved them into the "Removed" decks. Used when benching content.
+- **`/stage`** — moved every copy from live draft decks into the Staging deck (or
+  added it if missing). A holding area for content being reworked.
+- **`/merge_staging`** — emptied Staging back into live draft decks, routing each
+  item by type: aspects → the aspect deck, cards with null valence *and* null
+  element → Combo Cards, everything else → Base Draft Deck.
+
+⚠️ **Do not simply uncomment them.** `/stage` and `/merge_staging` hardcode deck
+IDs (`21` Staging, `22`, `20` Combo Cards, `3` Base Draft Deck) and the database
+has moved: deck 21 is **archived** and deck 22 is named "Testing Fates" despite
+the constant being called `ASPECT_DECK_ID`. Fix the IDs — ideally by deriving the
+decks from `type`/`usage_type` the way `draft_deck_view` does — before restoring.
+
+The bodies must stay **commented**, not merely unattached:
+`tests/test_command_registration.py` fails a command that a module defines but
+never assigns onto the cog, and a separate test asserts these three names stay
+off the cog.
 
 ---
 
@@ -242,12 +269,20 @@ what you would want to force. Full policy:
 | `/stats player` | — | `player`* |
 | `/stats hero` | — | — |
 | `/stats version` | — | — |
-| `/stats draft_deck` | — | — |
+| `/stats draft_pool` | — | — |
 | `/stats draft_rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/event) |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 
 All `/stats` subcommands dump raw JSON from a database **view** into a code block.
 They are open to anyone in the guild.
+
+`/stats draft_pool` was `/stats draft_deck` until 2026-08-27. It still reads
+`draft_deck_view` — the command was renamed, the view was not, so the bot works
+whether or not the migration below has been applied. Its `events` column was
+permanently zero until `db/migrations/2026-08-27_draft_pool_include_rites.sql`
+in the game repo widened the view to `usage_type in ('draft', 'rite')`; the Rites
+deck (id 36, 21 events) is `usage_type = 'rite'` and was excluded by a filter
+that predates that usage type. Until that migration runs, `events` reads 0.
 
 > The views behind `/stats` were rebuilt on 2026-08-26 — cutoff enforced at
 > `0.8.2`, `restart` runs and co-op duplicates excluded, and combo averaged in
@@ -269,14 +304,24 @@ sections say "unavailable" rather than silently reporting zero. See
 
 ## Quick index
 
-**Open to any guild member:** `/get`, `/render`, `/search`, `/get_deck`,
+**Open to any guild member:** `/show`, `/render`, `/search`, `/show_deck`,
 `/render_deck`, `/render_hand`, `/cache status`, and all of `/stats`.
 
-**Authorized users only:** every `create_*`, `update_*`, `delete_*`, all deck
-mutation, `/bulk_insert`, `/bulk_update`, `/daily_update`.
+**Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
+`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`.
 
 **Removed 2026-08-26:** all 10 ritual and consumable commands, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).
+
+**Renamed 2026-08-27:** `/get` → `/show`, `/get_deck` → `/show_deck`,
+`/stats draft_deck` → `/stats draft_pool`. The old names are asserted gone in
+`tests/test_command_registration.py`.
+
+**Removed 2026-08-27:** all four `/delete_*` commands — see
+[Deletion](#deletion--removed-2026-08-27). Nothing deletes content now.
+
+**Hidden 2026-08-27:** `/stage`, `/postpone`, `/merge_staging` — commented out
+in `azoth_commands/decks.py`, see [Deck curation](#hidden-2026-08-27-stage-postpone-merge_staging).
 
 **Retired 2026-08-26:** all `/*_hero` commands. `heroes.py` is deliberately not
 attached in `azoth_commands/__init__.py` — see

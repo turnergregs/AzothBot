@@ -131,18 +131,53 @@ def test_the_cache_maintenance_commands_exist():
 
 
 def test_the_generic_lookup_commands_exist():
-    """`/get`, `/render` and `/search` replaced six typed commands; if the
-    replacements are missing there is no way to inspect content at all."""
+    """`/show`, `/render` and `/search` replaced six typed commands; if the
+    replacements are missing there is no way to inspect content at all.
+
+    `/show` was `/get` until 2026-08-27 (renamed with `/get_deck` -> `/show_deck`)."""
     registered = _registered_command_names()
-    assert {"get", "render", "search"} <= registered
+    assert {"show", "render", "search"} <= registered
 
 
 @pytest.mark.parametrize("gone", ["get_card", "get_aspect", "get_rite", "get_event",
                                   "render_card", "render_aspect", "render_rite",
-                                  "render_event", "create_event", "render_hero"])
+                                  "render_event", "create_event", "render_hero",
+                                  # Renamed 2026-08-27.
+                                  "get", "get_deck", "draft_deck"])
 def test_superseded_commands_are_gone(gone):
-    """Names retired on 2026-08-26. A reappearance means a revert went half-way."""
+    """Names retired on 2026-08-26, plus the 2026-08-27 renames.
+
+    A reappearance means a revert went half-way -- or, for the renames, that
+    someone re-added the old name alongside the new one."""
     assert gone not in _registered_command_names()
+
+
+@pytest.mark.parametrize("gone", ["delete_card", "delete_aspect", "delete_rite",
+                                 "delete_deck"])
+def test_no_command_deletes_content(gone):
+    """All four /delete_* commands were commented out 2026-08-27.
+
+    Three of them (`cards`, `aspects`, `events`) hard-deleted: those tables have
+    no `archived_at` column, so there was no undo, and the game's
+    `prune_content_dirs()` reads a missing row as the deletion signal -- one
+    misclick removed the item from the offline snapshot too. `/delete_deck` was
+    the safe one (it set `archived_at`) and went with them for consistency;
+    `/update_deck archived:True` still covers that case.
+
+    Content is retired by pulling it from the draft decks, not by deleting rows.
+    Restoring any of these means deciding what "delete" should mean first."""
+    assert gone not in _registered_command_names()
+
+
+@pytest.mark.parametrize("hidden", ["stage", "postpone", "merge_staging"])
+def test_the_deck_curation_commands_stay_hidden(hidden):
+    """Commented out 2026-08-27 (azoth_commands/decks.py).
+
+    All three are unsafe as written -- `/stage` and `/merge_staging` hardcode
+    deck ids 21/22/20/3, and deck 21 is archived while deck 22 is "Testing
+    Fates" despite the constant being ASPECT_DECK_ID. Uncommenting them without
+    fixing the ids re-ships that bug, so this is the tripwire."""
+    assert hidden not in _registered_command_names()
 
 
 # ---------------------------------------------------------------------------

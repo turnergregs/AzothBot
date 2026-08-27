@@ -157,7 +157,7 @@ stops being current — drawing a card face is
    then `art_cache.forget_art(bucket, file_path)` — uploads are flat-named and
    upserting, so the cache cannot see that the bytes changed.
 4. Give the type a layout module and a render function, add it to
-   `content_index.TABLES` so `/get` and `/render` can reach it, and to
+   `content_index.TABLES` so `/show` and `/render` can reach it, and to
    `deck_render._bucket_for` / `_still_for` so it can appear in a `/search` grid.
 
 `generate_and_upload_image` in `azoth_commands/helpers.py` wraps generate → read

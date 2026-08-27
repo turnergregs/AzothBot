@@ -60,7 +60,7 @@ azoth_commands/
   helpers.py              safe_interaction decorator, image helpers, JSON formatting
   autocomplete.py         Generic table-backed autocomplete
   cards.py aspects.py rites.py decks.py
-  content.py              /get and /render, across all content types
+  content.py              /show and /render, across all content types
   search.py               /search
   heroes.py               RETIRED -- attacher deliberately not called
   misc.py                 bulk_insert / bulk_update
@@ -80,7 +80,7 @@ azoth_logic/
   fate_render.py              Composites aspect and rite faces
   deck_render.py              Deck grid and fanned sample hand
   art_cache.py                On-disk caches for art and animated renders
-  content_index.py            Cached index behind /get and /render autocomplete
+  content_index.py            Cached index behind /show and /render autocomplete
   content_search.py           The filters behind /search
   bulk_report.py              Diffs and summaries for the bulk commands
 
@@ -198,7 +198,7 @@ ones that bite most often:
 
 ## Testing
 
-**pytest, 399 tests, all offline.** See `docs/TESTING.md`.
+**pytest, 438 tests, all offline.** See `docs/TESTING.md`.
 
 ```bash
 .venv/bin/python -m pytest
@@ -233,6 +233,14 @@ real `turns` data. There is no CI. See `docs/TESTING.md` § Gaps.
 - **Don't write content directly into the game repo's `assets/game_data/`** — that
   is a fallback snapshot. Content goes into Supabase, via `/bulk_insert`.
 - **Don't add a write command without `require_authorized=True`.**
+- **Don't re-add a `/delete_*` command.** All four were removed 2026-08-27.
+  `cards`, `aspects` and `events` have no `archived_at` column, so those deletes
+  were unrecoverable — and the game's `prune_content_dirs()` reads a missing row
+  as the deletion signal, so one misclick also pruned the offline snapshot.
+  Retire content with `/remove_from_deck`; see `docs/COMMANDS.md` § Deletion.
+- **Don't uncomment `/stage`, `/postpone` or `/merge_staging`** without first
+  fixing their hardcoded deck IDs — deck 21 is archived and deck 22 is not the
+  aspect deck.
 - **Don't assume a command exists because the code does** — check
   `azoth_commands/__init__.py`.
 - **Don't trust an empty result** — check which Supabase key is loaded.

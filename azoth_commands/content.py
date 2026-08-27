@@ -79,10 +79,10 @@ def _render_any(kind: str, row: dict):
 
 def add_content_commands(cls):
 
-    @nextcord.slash_command(name="get", description="Get details for a card, aspect or rite.",
+    @nextcord.slash_command(name="show", description="Show details for a card, aspect or rite.",
                             guild_ids=[DEV_GUILD_ID])
-    @safe_interaction(timeout=10, error_message="❌ Failed to get content.")
-    async def get_cmd(
+    @safe_interaction(timeout=10, error_message="❌ Failed to show content.")
+    async def show_cmd(
         self,
         interaction: Interaction,
         name: str = SlashOption(description="Card, aspect or rite", autocomplete=True),
@@ -126,7 +126,7 @@ def add_content_commands(cls):
         await interaction.followup.send(
             file=nextcord.File(io.BytesIO(data), filename=f"{to_snake_case(row['name'])}.{ext}"))
 
-    @get_cmd.on_autocomplete("name")
+    @show_cmd.on_autocomplete("name")
     @render_cmd.on_autocomplete("name")
     async def autocomplete_content(self, interaction: Interaction, input: str):
         # Served from an in-process index (azoth_logic/content_index.py). Reading
@@ -137,5 +137,5 @@ def add_content_commands(cls):
         choices = await asyncio.to_thread(ci.choices, input)
         await interaction.response.send_autocomplete(choices)
 
-    cls.get_cmd = get_cmd
+    cls.show_cmd = show_cmd
     cls.render_cmd = render_cmd

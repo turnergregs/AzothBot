@@ -40,7 +40,7 @@ no aggregation, formatting or filtering in Python beyond a `limit` slice.
 | `/stats active_players` | `player_activity_view` | Play counts and hours |
 | `/stats hero` | `hero_info_view` | Per-hero aggregates |
 | `/stats version` | `version_info_view` | Per-version aggregates |
-| `/stats draft_deck` | `draft_deck_view` | Draft deck composition |
+| `/stats draft_pool` | `draft_deck_view` | Draft pool composition. Command renamed 2026-08-27; **the view kept its old name** |
 | `/stats draft_rates` | `draft_rates_view` | Global pick rates |
 
 Autocomplete sources: `active_players_view` for players, `heroes` for heroes, and
@@ -58,6 +58,7 @@ these views by column name:**
 | `avg_combo` → **`avg_combo_log10`** | Renamed on purpose so stale readers break loudly instead of quietly reporting a meaningless number |
 | `draft_rates_view` reshaped | One row **per item** with numerator and denominator, not one row of comma-joined strings |
 | `draft_deck_view` loses `7v`–`10v` | Valence is 1–6; those columns were permanently zero |
+| `draft_deck_view` gains rites | `events` was permanently zero for the same reason — the view could not see them. Widened to `usage_type in ('draft', 'rite')` on 2026-08-27 (`db/migrations/2026-08-27_draft_pool_include_rites.sql`, game repo) |
 | `leaderboard_view` gains `combo_numeric`, `result` | An explicitly sortable combo column |
 | Row counts drop everywhere | Cutoff moved `0.6.7` → `0.8.2`; `restart` runs and co-op duplicates excluded |
 
@@ -90,7 +91,7 @@ today. Same quantity; revisit when turn rows are plentiful.
 | Issue | Detail |
 |---|---|
 | `hero_info_view` returns one row | The data, not the SQL — see below |
-| `draft_deck_view.combo` definition | Counts cards with NULL element; AzothBot's `merge_staging` uses NULL element **and** NULL valence. The two disagree, and which is right is a content question |
+| `draft_deck_view.combo` definition | Counts cards with NULL element; AzothBot's `merge_staging` used NULL element **and** NULL valence. The two disagree, and which is right is a content question. `/merge_staging` was hidden 2026-08-27, so nothing acts on the second definition today — but it is the one to reconcile against if the command comes back |
 | `most_drafted` has no denominator | Still a comma-joined label on `player_info_view`. Per-item numbers live in `draft_rates_view` now |
 | The trustworthy dataset is ~2 games | Nothing to do but wait for play at `0.8.2`+ |
 

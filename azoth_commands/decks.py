@@ -81,30 +81,48 @@ def add_deck_commands(cls):
 		return f"✅ Updated `{name}`:\n```json\n{json.dumps(result[0], indent=2)}\n```"
 
 
-	@nextcord.slash_command(name="delete_deck", description="Delete a deck. Hard delete if empty, soft delete if in use.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to delete deck.", require_authorized=True)
-	async def delete_deck_cmd(
-		self,
-		interaction: Interaction,
-		name: str = SlashOption(description="Name of the deck to delete", autocomplete=True),
-	):
-		from supabase_helpers import soft_delete_record
+	# ------------------------------------------------------------------
+	# REMOVED 2026-08-27: /delete_deck.
+	#
+	# Commented out rather than deleted. This one was the safe member of the set -- it soft-deletes via
+	# `soft_delete_record`, setting `archived_at` -- but it went with the
+	# others for consistency. `/update_deck` still archives a deck via its
+	# `archived` parameter, so nothing is lost.
+	#
+	# All four /delete_* commands went at once: they were never part of the
+	# working routine, and an accidental invocation is unrecoverable for
+	# content. Content is retired by pulling it from the draft decks, not by
+	# deleting the row.
+	#
+	# The body must stay commented, not merely unattached:
+	# tests/test_command_registration.py fails a command that a module
+	# defines but never assigns onto the cog.
+	# ------------------------------------------------------------------
 
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ No {MODEL_NAME} found with name `{name}`."
+	# @nextcord.slash_command(name="delete_deck", description="Delete a deck. Hard delete if empty, soft delete if in use.", guild_ids=[DEV_GUILD_ID])
+	# @safe_interaction(timeout=5, error_message="❌ Failed to delete deck.", require_authorized=True)
+	# async def delete_deck_cmd(
+		# self,
+		# interaction: Interaction,
+		# name: str = SlashOption(description="Name of the deck to delete", autocomplete=True),
+	# ):
+		# from supabase_helpers import soft_delete_record
 
-		record = matches[0]
-		success = soft_delete_record(TABLE_NAME, record["id"])
-		if not success:
-			return f"❌ Failed to delete {MODEL_NAME} `{name}`."
+		# matches = fetch_all(TABLE_NAME, filters={"name": name})
+		# if len(matches) == 0:
+			# return f"❌ No {MODEL_NAME} found with name `{name}`."
 
-		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
+		# record = matches[0]
+		# success = soft_delete_record(TABLE_NAME, record["id"])
+		# if not success:
+			# return f"❌ Failed to delete {MODEL_NAME} `{name}`."
+
+		# return f"🗑️ Deleted {MODEL_NAME} `{name}`."
 
 
-	@nextcord.slash_command(name="get_deck", description="Get a deck’s details and contents.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to get deck.")
-	async def get_deck_cmd(
+	@nextcord.slash_command(name="show_deck", description="Show a deck’s details and contents.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=5, error_message="❌ Failed to show deck.")
+	async def show_deck_cmd(
 		self,
 		interaction: Interaction,
 		name: str = SlashOption(description="Deck name", autocomplete=True),
@@ -269,291 +287,307 @@ def add_deck_commands(cls):
 		return get_deck_contents(deck, full=True)
 
 
-	@nextcord.slash_command(name="postpone", description="Move all of the copies of the item from live draft decks to Removed decks.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to postpone item.", require_authorized=True)
-	async def postpone_cmd(
-		self,
-		interaction: Interaction,
-		item_name: str = SlashOption(description="Item to postpone", autocomplete=True),
-	):
-		from supabase_helpers import remove_from_deck, add_to_deck, parse_item_ref, get_display_name
+	# ------------------------------------------------------------------
+	# HIDDEN 2026-08-27: /postpone, /stage and /merge_staging.
+	#
+	# Commented out rather than deleted -- the balance workflow they
+	# implement is still wanted, but all three are unsafe as written:
+	# /stage and /merge_staging hardcode deck ids 21/22/20/3, and in the
+	# current database deck 21 (Staging) is ARCHIVED and deck 22 is named
+	# "Testing Fates" despite the constant being ASPECT_DECK_ID. See
+	# docs/COMMANDS.md § Deck curation.
+	#
+	# The bodies must stay commented, not merely unattached:
+	# tests/test_command_registration.py fails a command that a module
+	# defines but never assigns onto the cog. Commenting hides them from
+	# its AST scan, which is the supported way to park a command.
+	# ------------------------------------------------------------------
 
-		# Resolve the encoded item ref (falls back to the raw name for typed input)
-		ref_type, ref_id = parse_item_ref(item_name)
-		display_name = item_name
-		if ref_type:
-			recs = fetch_all(f"{ref_type}s", filters={"id": ref_id})
-			if recs:
-				display_name = get_display_name(recs[0], ref_type)
+	# @nextcord.slash_command(name="postpone", description="Move all of the copies of the item from live draft decks to Removed decks.", guild_ids=[DEV_GUILD_ID])
+	# @safe_interaction(timeout=5, error_message="❌ Failed to postpone item.", require_authorized=True)
+	# async def postpone_cmd(
+		# self,
+		# interaction: Interaction,
+		# item_name: str = SlashOption(description="Item to postpone", autocomplete=True),
+	# ):
+		# from supabase_helpers import remove_from_deck, add_to_deck, parse_item_ref, get_display_name
 
-		# 1️⃣ Find all active base draft decks
-		decks = fetch_all(
-			TABLE_NAME,
-			filters={
-				"archived_at": None,
-				"type": "base",
-				"usage_type": "draft",
-			},
-		)
+		# # Resolve the encoded item ref (falls back to the raw name for typed input)
+		# ref_type, ref_id = parse_item_ref(item_name)
+		# display_name = item_name
+		# if ref_type:
+			# recs = fetch_all(f"{ref_type}s", filters={"id": ref_id})
+			# if recs:
+				# display_name = get_display_name(recs[0], ref_type)
 
-		if not decks:
-			return "❌ No active base draft decks found."
+		# # 1️⃣ Find all active base draft decks
+		# decks = fetch_all(
+			# TABLE_NAME,
+			# filters={
+				# "archived_at": None,
+				# "type": "base",
+				# "usage_type": "draft",
+			# },
+		# )
 
-		total_removed = 0
-		item_content_type = None
-		source_decks = []
+		# if not decks:
+			# return "❌ No active base draft decks found."
 
-		# 2️⃣ Remove ALL copies from ALL matching decks
-		for deck in decks:
-			success, contents = get_deck_contents(deck, full=True)
-			if not success or not contents:
-				continue
+		# total_removed = 0
+		# item_content_type = None
+		# source_decks = []
 
-			# Count how many copies are in this deck
-			matching_items = []
-			for item in contents:
-				if ref_type:
-					is_match = item["id"] == ref_id and item["item_type"] == ref_type
-				else:
-					is_match = item.get("name") == item_name
-				if is_match:
-					matching_items.append(item)
-					item_content_type = item["item_type"]
+		# # 2️⃣ Remove ALL copies from ALL matching decks
+		# for deck in decks:
+			# success, contents = get_deck_contents(deck, full=True)
+			# if not success or not contents:
+				# continue
 
-			if not matching_items:
-				continue
+			# # Count how many copies are in this deck
+			# matching_items = []
+			# for item in contents:
+				# if ref_type:
+					# is_match = item["id"] == ref_id and item["item_type"] == ref_type
+				# else:
+					# is_match = item.get("name") == item_name
+				# if is_match:
+					# matching_items.append(item)
+					# item_content_type = item["item_type"]
 
-			quantity = len(matching_items)
-			success, result = remove_from_deck(deck, item_name, quantity)
-			if not success:
-				return f"❌ Failed to remove `{display_name}` from `{deck['name']}`:\n{result}"
+			# if not matching_items:
+				# continue
 
-			update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
-			total_removed += quantity
-			source_decks.append(deck["name"])
+			# quantity = len(matching_items)
+			# success, result = remove_from_deck(deck, item_name, quantity)
+			# if not success:
+				# return f"❌ Failed to remove `{display_name}` from `{deck['name']}`:\n{result}"
 
-		if total_removed == 0:
-			return f"❌ `{display_name}` was not found in any active draft deck."
+			# update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
+			# total_removed += quantity
+			# source_decks.append(deck["name"])
 
-		# 3️⃣ Decide destination deck
-		if item_content_type == "aspect":
-			target_deck_id = 27  # Removed Aspect Cards
-		else:
-			target_deck_id = 26  # Removed Draft Cards
+		# if total_removed == 0:
+			# return f"❌ `{display_name}` was not found in any active draft deck."
 
-		target_deck_matches = fetch_all(TABLE_NAME, filters={"id": target_deck_id})
-		if not target_deck_matches:
-			return "❌ Target deck not found."
+		# # 3️⃣ Decide destination deck
+		# if item_content_type == "aspect":
+			# target_deck_id = 27  # Removed Aspect Cards
+		# else:
+			# target_deck_id = 26  # Removed Draft Cards
 
-		target_deck = target_deck_matches[0]
+		# target_deck_matches = fetch_all(TABLE_NAME, filters={"id": target_deck_id})
+		# if not target_deck_matches:
+			# return "❌ Target deck not found."
 
-		# 4️⃣ Add all removed copies to destination deck
-		success, result = add_to_deck(target_deck, item_name, total_removed)
-		if not success:
-			return (
-				f"❌ Removed {total_removed} copies, but failed to add to "
-				f"`{target_deck['name']}`:\n{result}"
-			)
+		# target_deck = target_deck_matches[0]
 
-		update_record(TABLE_NAME, target_deck["id"], {"updated_at": "now()"})
+		# # 4️⃣ Add all removed copies to destination deck
+		# success, result = add_to_deck(target_deck, item_name, total_removed)
+		# if not success:
+			# return (
+				# f"❌ Removed {total_removed} copies, but failed to add to "
+				# f"`{target_deck['name']}`:\n{result}"
+			# )
 
-		return (
-			f"⏸️ Postponed `{display_name}` ×{total_removed}\n"
-			f"• Removed from: {', '.join(source_decks)}\n"
-			f"• Added to `{target_deck['name']}`"
-		)
+		# update_record(TABLE_NAME, target_deck["id"], {"updated_at": "now()"})
 
-	@nextcord.slash_command(
-		name="stage",
-		description="Move all copies of an item from live draft decks to Staging (or add it if missing).",
-		guild_ids=[DEV_GUILD_ID]
-	)
-	@safe_interaction(timeout=5, error_message="❌ Failed to stage item.", require_authorized=True)
-	async def stage_cmd(
-		self,
-		interaction: Interaction,
-		item_name: str = SlashOption(description="Item to stage", autocomplete=True),
-	):
-		from supabase_helpers import remove_from_deck, add_to_deck, parse_item_ref, get_display_name
+		# return (
+			# f"⏸️ Postponed `{display_name}` ×{total_removed}\n"
+			# f"• Removed from: {', '.join(source_decks)}\n"
+			# f"• Added to `{target_deck['name']}`"
+		# )
 
-		STAGING_DECK_ID = 21
+	# @nextcord.slash_command(
+		# name="stage",
+		# description="Move all copies of an item from live draft decks to Staging (or add it if missing).",
+		# guild_ids=[DEV_GUILD_ID]
+	# )
+	# @safe_interaction(timeout=5, error_message="❌ Failed to stage item.", require_authorized=True)
+	# async def stage_cmd(
+		# self,
+		# interaction: Interaction,
+		# item_name: str = SlashOption(description="Item to stage", autocomplete=True),
+	# ):
+		# from supabase_helpers import remove_from_deck, add_to_deck, parse_item_ref, get_display_name
 
-		# Resolve the encoded item ref (falls back to the raw name for typed input)
-		ref_type, ref_id = parse_item_ref(item_name)
-		display_name = item_name
-		if ref_type:
-			recs = fetch_all(f"{ref_type}s", filters={"id": ref_id})
-			if recs:
-				display_name = get_display_name(recs[0], ref_type)
+		# STAGING_DECK_ID = 21
 
-		# 1️⃣ Find all active base draft decks
-		decks = fetch_all(
-			TABLE_NAME,
-			filters={
-				"archived_at": None,
-				"type": "base",
-				"usage_type": "draft",
-			},
-		)
+		# # Resolve the encoded item ref (falls back to the raw name for typed input)
+		# ref_type, ref_id = parse_item_ref(item_name)
+		# display_name = item_name
+		# if ref_type:
+			# recs = fetch_all(f"{ref_type}s", filters={"id": ref_id})
+			# if recs:
+				# display_name = get_display_name(recs[0], ref_type)
 
-		if not decks:
-			return "❌ No active base draft decks found."
+		# # 1️⃣ Find all active base draft decks
+		# decks = fetch_all(
+			# TABLE_NAME,
+			# filters={
+				# "archived_at": None,
+				# "type": "base",
+				# "usage_type": "draft",
+			# },
+		# )
 
-		total_removed = 0
-		source_decks = []
+		# if not decks:
+			# return "❌ No active base draft decks found."
 
-		# 2️⃣ Remove ALL copies from ALL matching decks (if present)
-		for deck in decks:
-			success, contents = get_deck_contents(deck, full=True)
-			if not success or not contents:
-				continue
+		# total_removed = 0
+		# source_decks = []
 
-			if ref_type:
-				matching = [it for it in contents if it["id"] == ref_id and it["item_type"] == ref_type]
-			else:
-				matching = [it for it in contents if it.get("name") == item_name]
-			if not matching:
-				continue
+		# # 2️⃣ Remove ALL copies from ALL matching decks (if present)
+		# for deck in decks:
+			# success, contents = get_deck_contents(deck, full=True)
+			# if not success or not contents:
+				# continue
 
-			quantity = len(matching)
-			success, result = remove_from_deck(deck, item_name, quantity)
-			if not success:
-				return f"❌ Failed to remove `{display_name}` from `{deck['name']}`:\n{result}"
+			# if ref_type:
+				# matching = [it for it in contents if it["id"] == ref_id and it["item_type"] == ref_type]
+			# else:
+				# matching = [it for it in contents if it.get("name") == item_name]
+			# if not matching:
+				# continue
 
-			update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
-			total_removed += quantity
-			source_decks.append(deck["name"])
+			# quantity = len(matching)
+			# success, result = remove_from_deck(deck, item_name, quantity)
+			# if not success:
+				# return f"❌ Failed to remove `{display_name}` from `{deck['name']}`:\n{result}"
 
-		# 3️⃣ Load staging deck
-		target_matches = fetch_all(TABLE_NAME, filters={"id": STAGING_DECK_ID})
-		if not target_matches:
-			return "❌ Staging deck not found."
+			# update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
+			# total_removed += quantity
+			# source_decks.append(deck["name"])
 
-		staging_deck = target_matches[0]
+		# # 3️⃣ Load staging deck
+		# target_matches = fetch_all(TABLE_NAME, filters={"id": STAGING_DECK_ID})
+		# if not target_matches:
+			# return "❌ Staging deck not found."
 
-		# 4️⃣ Decide how many to add
-		add_quantity = total_removed if total_removed > 0 else 1
+		# staging_deck = target_matches[0]
 
-		success, result = add_to_deck(staging_deck, item_name, add_quantity)
-		if not success:
-			return (
-				f"❌ Failed to add `{display_name}` ×{add_quantity} "
-				f"to `{staging_deck['name']}`:\n{result}"
-			)
+		# # 4️⃣ Decide how many to add
+		# add_quantity = total_removed if total_removed > 0 else 1
 
-		update_record(TABLE_NAME, staging_deck["id"], {"updated_at": "now()"})
+		# success, result = add_to_deck(staging_deck, item_name, add_quantity)
+		# if not success:
+			# return (
+				# f"❌ Failed to add `{display_name}` ×{add_quantity} "
+				# f"to `{staging_deck['name']}`:\n{result}"
+			# )
 
-		# 5️⃣ Response
-		if total_removed > 0:
-			return (
-				f"⏸️ Staged `{display_name}` ×{total_removed}\n"
-				f"• Removed from: {', '.join(source_decks)}\n"
-				f"• Added to `{staging_deck['name']}`"
-			)
-		else:
-			return (
-				f"⏸️ Staged `{display_name}`\n"
-				f"• Item was not present in live draft decks\n"
-				f"• Added 1 copy to `{staging_deck['name']}`"
-			)
+		# update_record(TABLE_NAME, staging_deck["id"], {"updated_at": "now()"})
+
+		# # 5️⃣ Response
+		# if total_removed > 0:
+			# return (
+				# f"⏸️ Staged `{display_name}` ×{total_removed}\n"
+				# f"• Removed from: {', '.join(source_decks)}\n"
+				# f"• Added to `{staging_deck['name']}`"
+			# )
+		# else:
+			# return (
+				# f"⏸️ Staged `{display_name}`\n"
+				# f"• Item was not present in live draft decks\n"
+				# f"• Added 1 copy to `{staging_deck['name']}`"
+			# )
 
 
-	@nextcord.slash_command(name="merge_staging", description="Move all staged items back into live draft decks.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to merge items.", require_authorized=True)
-	async def merge_staging_cmd(
-		self,
-		interaction: Interaction,
-	):
-		from supabase_helpers import remove_from_deck_by_ref, add_to_deck_by_ref, get_display_name
+	# @nextcord.slash_command(name="merge_staging", description="Move all staged items back into live draft decks.", guild_ids=[DEV_GUILD_ID])
+	# @safe_interaction(timeout=10, error_message="❌ Failed to merge items.", require_authorized=True)
+	# async def merge_staging_cmd(
+		# self,
+		# interaction: Interaction,
+	# ):
+		# from supabase_helpers import remove_from_deck_by_ref, add_to_deck_by_ref, get_display_name
 
-		STAGING_DECK_ID = 21
+		# STAGING_DECK_ID = 21
 
-		# Destination decks
-		ASPECT_DECK_ID = 22
-		COMBO_CARD_DECK_ID = 20  # cards with null valence and null element are combo cards
-		DEFAULT_CARD_DECK_ID = 3
+		# # Destination decks
+		# ASPECT_DECK_ID = 22
+		# COMBO_CARD_DECK_ID = 20  # cards with null valence and null element are combo cards
+		# DEFAULT_CARD_DECK_ID = 3
 
-		# 1️⃣ Load staging deck
-		staging_matches = fetch_all(TABLE_NAME, filters={"id": STAGING_DECK_ID})
-		if not staging_matches:
-			return "❌ Staging deck not found."
+		# # 1️⃣ Load staging deck
+		# staging_matches = fetch_all(TABLE_NAME, filters={"id": STAGING_DECK_ID})
+		# if not staging_matches:
+			# return "❌ Staging deck not found."
 
-		staging_deck = staging_matches[0]
+		# staging_deck = staging_matches[0]
 
-		success, contents = get_deck_contents(staging_deck, full=True)
-		if not success:
-			return f"❌ Failed to load staging deck contents:\n{contents}"
+		# success, contents = get_deck_contents(staging_deck, full=True)
+		# if not success:
+			# return f"❌ Failed to load staging deck contents:\n{contents}"
 
-		if not contents:
-			return "ℹ️ Staging deck is empty."
+		# if not contents:
+			# return "ℹ️ Staging deck is empty."
 
-		# 2️⃣ Bucket items by destination deck, keyed by (content_type, content_id)
-		move_plan = {
-			ASPECT_DECK_ID: {},
-			COMBO_CARD_DECK_ID: {},
-			DEFAULT_CARD_DECK_ID: {},
-		}
-		display_names = {}
+		# # 2️⃣ Bucket items by destination deck, keyed by (content_type, content_id)
+		# move_plan = {
+			# ASPECT_DECK_ID: {},
+			# COMBO_CARD_DECK_ID: {},
+			# DEFAULT_CARD_DECK_ID: {},
+		# }
+		# display_names = {}
 
-		for item in contents:
-			content_type = item["item_type"]
-			content_id = item["id"]
-			key = (content_type, content_id)
-			display_names[key] = get_display_name(item, content_type)
+		# for item in contents:
+			# content_type = item["item_type"]
+			# content_id = item["id"]
+			# key = (content_type, content_id)
+			# display_names[key] = get_display_name(item, content_type)
 
-			if content_type == "aspect":
-				target_deck_id = ASPECT_DECK_ID
-			elif (
-				content_type == "card"
-				and item.get("valence") is None
-				and item.get("element") is None
-			):
-				target_deck_id = COMBO_CARD_DECK_ID
-			else:
-				target_deck_id = DEFAULT_CARD_DECK_ID
+			# if content_type == "aspect":
+				# target_deck_id = ASPECT_DECK_ID
+			# elif (
+				# content_type == "card"
+				# and item.get("valence") is None
+				# and item.get("element") is None
+			# ):
+				# target_deck_id = COMBO_CARD_DECK_ID
+			# else:
+				# target_deck_id = DEFAULT_CARD_DECK_ID
 
-			move_plan[target_deck_id][key] = move_plan[target_deck_id].get(key, 0) + 1
+			# move_plan[target_deck_id][key] = move_plan[target_deck_id].get(key, 0) + 1
 
-		# 3️⃣ Remove EVERYTHING from staging
-		for bucket in move_plan.values():
-			for (content_type, content_id), qty in bucket.items():
-				success, result = remove_from_deck_by_ref(staging_deck, content_type, content_id, qty)
-				if not success:
-					name = display_names.get((content_type, content_id), content_id)
-					return f"❌ Failed to remove `{name}` ×{qty} from staging:\n{result}"
+		# # 3️⃣ Remove EVERYTHING from staging
+		# for bucket in move_plan.values():
+			# for (content_type, content_id), qty in bucket.items():
+				# success, result = remove_from_deck_by_ref(staging_deck, content_type, content_id, qty)
+				# if not success:
+					# name = display_names.get((content_type, content_id), content_id)
+					# return f"❌ Failed to remove `{name}` ×{qty} from staging:\n{result}"
 
-		update_record(TABLE_NAME, staging_deck["id"], {"updated_at": "now()"})
+		# update_record(TABLE_NAME, staging_deck["id"], {"updated_at": "now()"})
 
-		# 4️⃣ Add items to destination decks
-		moved_summary = []
+		# # 4️⃣ Add items to destination decks
+		# moved_summary = []
 
-		for deck_id, items in move_plan.items():
-			if not items:
-				continue
+		# for deck_id, items in move_plan.items():
+			# if not items:
+				# continue
 
-			matches = fetch_all(TABLE_NAME, filters={"id": deck_id})
-			if not matches:
-				return f"❌ Destination deck {deck_id} not found."
+			# matches = fetch_all(TABLE_NAME, filters={"id": deck_id})
+			# if not matches:
+				# return f"❌ Destination deck {deck_id} not found."
 
-			deck = matches[0]
+			# deck = matches[0]
 
-			for (content_type, content_id), qty in items.items():
-				success, result = add_to_deck_by_ref(deck, content_type, content_id, qty)
-				name = display_names.get((content_type, content_id), content_id)
-				if not success:
-					return (
-						f"❌ Failed to add `{name}` ×{qty} to "
-						f"`{deck['name']}`:\n{result}"
-					)
-				moved_summary.append(f"{name} ×{qty} → {deck['name']}")
+			# for (content_type, content_id), qty in items.items():
+				# success, result = add_to_deck_by_ref(deck, content_type, content_id, qty)
+				# name = display_names.get((content_type, content_id), content_id)
+				# if not success:
+					# return (
+						# f"❌ Failed to add `{name}` ×{qty} to "
+						# f"`{deck['name']}`:\n{result}"
+					# )
+				# moved_summary.append(f"{name} ×{qty} → {deck['name']}")
 
-			update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
+			# update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
 
-		# 5️⃣ Done
-		return (
-			"🎭 Unstaged all items:\n"
-			+ "\n".join(f"• {line}" for line in moved_summary)
-		)
+		# # 5️⃣ Done
+		# return (
+			# "🎭 Unstaged all items:\n"
+			# + "\n".join(f"• {line}" for line in moved_summary)
+		# )
 
 
 	# Autocomplete Helpers
@@ -579,8 +613,8 @@ def add_deck_commands(cls):
 
 
 	@update_deck_cmd.on_autocomplete("name")
-	@get_deck_cmd.on_autocomplete("name")
-	@delete_deck_cmd.on_autocomplete("name")
+	@show_deck_cmd.on_autocomplete("name")
+	# @delete_deck_cmd.on_autocomplete("name")
 	@add_to_deck_cmd.on_autocomplete("deck_name")
 	@remove_from_deck_cmd.on_autocomplete("deck_name")
 	@render_deck_cmd.on_autocomplete("name")
@@ -625,7 +659,7 @@ def add_deck_commands(cls):
 
 
 	@add_to_deck_cmd.on_autocomplete("item_name")
-	@stage_cmd.on_autocomplete("item_name")
+	# @stage_cmd.on_autocomplete("item_name")
 	async def autocomplete_item_name(self, interaction: Interaction, input: str):
 		from supabase_helpers import encode_item_ref, make_item_label
 
@@ -646,48 +680,48 @@ def add_deck_commands(cls):
 		await interaction.response.send_autocomplete(dict(sorted_items))
 
 
-	@postpone_cmd.on_autocomplete("item_name")
-	async def autocomplete_postpone_item(self, interaction: Interaction, input: str):
-		from supabase_helpers import encode_item_ref, make_item_label, get_display_name
-		decks = fetch_all(
-			TABLE_NAME,
-			filters={
-				"archived_at": None,
-				"type": "base",
-				"usage_type": "draft",
-			},
-		)
+	# @postpone_cmd.on_autocomplete("item_name")
+	# async def autocomplete_postpone_item(self, interaction: Interaction, input: str):
+		# from supabase_helpers import encode_item_ref, make_item_label, get_display_name
+		# decks = fetch_all(
+			# TABLE_NAME,
+			# filters={
+				# "archived_at": None,
+				# "type": "base",
+				# "usage_type": "draft",
+			# },
+		# )
 
-		if not decks:
-			await interaction.response.send_autocomplete([])
-			return
+		# if not decks:
+			# await interaction.response.send_autocomplete([])
+			# return
 
-		input_lower = input.lower()
-		choices = {}
-		for deck in decks:
-			success, contents = get_deck_contents(deck, full=True)
-			if not success or not contents:
-				continue
-			for item in contents:
-				content_type = item["item_type"]
-				name = get_display_name(item, content_type)
-				if name and input_lower in name.lower():
-					label = make_item_label(name, content_type, item["id"])
-					choices[label] = encode_item_ref(content_type, item["id"])
+		# input_lower = input.lower()
+		# choices = {}
+		# for deck in decks:
+			# success, contents = get_deck_contents(deck, full=True)
+			# if not success or not contents:
+				# continue
+			# for item in contents:
+				# content_type = item["item_type"]
+				# name = get_display_name(item, content_type)
+				# if name and input_lower in name.lower():
+					# label = make_item_label(name, content_type, item["id"])
+					# choices[label] = encode_item_ref(content_type, item["id"])
 
-		sorted_items = sorted(choices.items(), key=lambda kv: kv[0].lower())[:25]
-		await interaction.response.send_autocomplete(dict(sorted_items))
+		# sorted_items = sorted(choices.items(), key=lambda kv: kv[0].lower())[:25]
+		# await interaction.response.send_autocomplete(dict(sorted_items))
 
 
 	cls.create_deck_cmd = create_deck_cmd
 	cls.update_deck_cmd = update_deck_cmd
-	cls.delete_deck_cmd = delete_deck_cmd
-	cls.get_deck_cmd	= get_deck_cmd
+	# cls.delete_deck_cmd = delete_deck_cmd
+	cls.show_deck_cmd	= show_deck_cmd
 	cls.render_deck_cmd = render_deck_cmd
 	cls.render_hand_cmd = render_hand_cmd
 	cls.add_to_deck_cmd = add_to_deck_cmd
 	cls.remove_from_deck_cmd = remove_from_deck_cmd
-	cls.postpone_cmd = postpone_cmd
-	cls.stage_cmd = stage_cmd
-	cls.merge_staging_cmd = merge_staging_cmd
+	# cls.postpone_cmd = postpone_cmd
+	# cls.stage_cmd = stage_cmd
+	# cls.merge_staging_cmd = merge_staging_cmd
 

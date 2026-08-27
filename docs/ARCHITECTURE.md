@@ -28,7 +28,7 @@ azoth_commands/
   helpers.py                safe_interaction decorator, image helpers, JSON formatting
   autocomplete.py           Generic table-backed autocomplete
   cards.py  aspects.py  rites.py  decks.py
-  content.py                /get and /render, across all content types
+  content.py                /show and /render, across all content types
   search.py                 /search
   heroes.py                 RETIRED -- attacher deliberately not called
   misc.py                   bulk_insert / bulk_update
@@ -48,7 +48,7 @@ azoth_logic/
   fate_render.py            Composites aspect and rite faces
   deck_render.py            Deck grid and fanned sample hand
   art_cache.py              On-disk caches for art and animated renders
-  content_index.py          Cached (kind, id, name) index behind /get and /render
+  content_index.py          Cached (kind, id, name) index behind /show and /render
   content_search.py         The filters behind /search
   bulk_report.py            Diffs and summaries for /bulk_insert and /bulk_update
 
@@ -153,7 +153,7 @@ a followup. Commands that send their own files or embeds return `None`.
 | `fetch_all(table, columns, filters, sort)` | `filters` values dispatch by type: `None` → `is null`, `list` → `in_`, else `eq`. `sort` takes `["-col"]` for descending |
 | `create_record(table, data)` | |
 | `update_record(table, id, data)` | Stamps `updated_at`. Returns the updated rows; `[]` means no row matched |
-| `delete_record(table, id)` | Hard delete |
+| `delete_record(table, id)` | Hard delete. **No command calls this any more** — the four `/delete_*` commands were removed 2026-08-27 |
 | `soft_delete_record(table, id)` | Sets `archived_at`; delegates to `update_record` |
 
 ### Failures raise; only genuine emptiness returns `[]`
@@ -278,9 +278,9 @@ fixed; the rest are still open.
 | ~~`soft_delete_record` always returned `None`~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — `/delete_deck` and `/delete_hero` reported failure on every success |
 | `game_stats` table does not exist | `stats.py` version autocomplete | Autocomplete always returns nothing. Now logs the reason to the console |
 | Leaderboard sorts client-side after a capped fetch | `stats.py` | Hits PostgREST's 1000-row default against a larger view |
-| Hardcoded deck IDs | `decks.py` `stage` / `merge_staging` | IDs 20/21/22/3; deck 21 ("Staging") and 22 ("Testing Fates", named `ASPECT_DECK_ID`) look stale |
+| Hardcoded deck IDs | `decks.py` `stage` / `merge_staging` | IDs 20/21/22/3; deck 21 ("Staging") is **archived** and 22 is "Testing Fates" despite the constant being `ASPECT_DECK_ID`. **Both commands hidden 2026-08-27** — the bug is parked, not fixed. Derive the decks from `type`/`usage_type` before restoring them |
 | Six pseudo-docstrings placed above `def` | `supabase_helpers.py` | Not real docstrings; `help()` shows nothing |
 | Stale comment | `supabase_storage.py` `download_image` | Says "timestamped filename"; it writes a flat name |
 | `add_to_deck` never sets `position` or `weight` | `supabase_helpers.py` | Bot-added deck entries take column defaults; `weight` appears to be draft probability |
-| ~~No tests, no linter config~~ | — | **Fixed 2026-08-26/27** — 399 pytest tests; `test_command_registration.py` runs `pyflakes` over the whole tree. Still no CI |
+| ~~No tests, no linter config~~ | — | **Fixed 2026-08-26/27** — 438 pytest tests; `test_command_registration.py` runs `pyflakes` over the whole tree. Still no CI |
 | ~~The render cache grows without bound~~ | — | **Fixed 2026-08-27** — size-capped LRU eviction on write (art 300 MB, renders 400 MB), and `/cache` now reaches `stats()` / `clear()`. See [CARD_RENDERING.md § Eviction](CARD_RENDERING.md#eviction) |
