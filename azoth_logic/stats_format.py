@@ -173,21 +173,34 @@ def fields(row: dict, columns=None, inline: bool = True, exclude=()) -> list:
 
 
 def record(row: dict) -> str:
-    """Wins out of finished runs, with the rate only when it means anything.
+    """Runs that CLEARED, out of runs that finished.
 
-    `no_boss_key` counts as a win alongside `victory` (docs/DB_SCHEMA.md), and
-    `finished` excludes NULL results -- those are abandoned or in progress, and
+    "Cleared" is beating the act 3 boss -- the milestone the game itself rewards
+    with the next ritual (main.gd:1464). Acts 4 and 5 are bonus content, so a run
+    that cleared act 3 and then died to the act 4 boss is a cleared run, and
+    `games.result` still correctly says `death`. `public.run_cleared()` holds
+    that definition; nothing here re-derives it.
+
+    A full clear (the act 5 boss) is called out separately when there is one --
+    it is a different achievement, not a bigger version of the same one.
+
+    `finished` excludes NULL results: those are abandoned or in progress, and
     counting them as losses would invent defeats.
 
     Reported as TWO NUMBERS, never a bare percentage: "50%" over two runs is one
-    win wearing a decimal point.
+    clear wearing a decimal point.
     """
-    wins, finished = row.get("wins"), row.get("finished")
+    cleared, finished = row.get("cleared"), row.get("finished")
     if not finished:
         return f"{row.get('game_count') or 0} played, none finished"
-    line = f"**{wins or 0}** of {finished} won"
+
+    line = f"**{cleared or 0}** of {finished} cleared act 3"
     if finished >= MIN_RUNS_FOR_A_RATE:
-        line += f" ({round(100 * (wins or 0) / finished)}%)"
+        line += f" ({round(100 * (cleared or 0) / finished)}%)"
+
+    full = row.get("full_clears") or 0
+    if full:
+        line += f"\n**{full}** full clear{'' if full == 1 else 's'} *(act 5)*"
     return line
 
 

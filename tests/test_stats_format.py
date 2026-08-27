@@ -178,7 +178,7 @@ PLAYER = {"player": "Turner", "game_count": 3,
           "max_ritual": 10, "avg_deck_size": 18.3,
           "avg_links_regular": 1.67, "avg_links_boss": 5.0,
           "regular_turns_sampled": 3, "boss_turns_sampled": 1,
-          "wins": 1, "finished": 2, "best_combo": "652298",
+          "cleared": 1, "full_clears": 0, "finished": 2, "best_combo": "652298",
           "most_drafted": "Ablution, Bind", "most_drafted_count": 2,
           "last_played": "2026-08-27T16:38:39+00:00"}
 
@@ -197,14 +197,35 @@ def test_a_thirty_digit_combo_is_grouped_not_compacted():
     assert out.startswith("2,596,148") and out.endswith("610,048")
 
 
-def test_a_win_rate_is_withheld_on_a_tiny_sample():
-    """One win in two runs is not "50%". Two numbers, per docs/DB_SCHEMA.md."""
+def test_a_clear_rate_is_withheld_on_a_tiny_sample():
+    """One clear in two runs is not "50%". Two numbers, per docs/DB_SCHEMA.md."""
     assert "%" not in sf.record(PLAYER)
-    assert "1** of 2 won" in sf.record(PLAYER)
+    assert "1** of 2 cleared act 3" in sf.record(PLAYER)
 
 
 def test_a_rate_appears_once_there_are_enough_runs():
-    assert "%" in sf.record({**PLAYER, "wins": 3, "finished": 10})
+    assert "%" in sf.record({**PLAYER, "cleared": 3, "finished": 10})
+
+
+def test_a_full_clear_is_called_out_separately():
+    """Act 5 is a different achievement, not a bigger act 3. Folding it into the
+    cleared count would hide it entirely."""
+    out = sf.record({**PLAYER, "cleared": 2, "full_clears": 1})
+    assert "2** of 2 cleared act 3" in out
+    assert "1** full clear" in out
+    assert "act 5" in out
+
+
+def test_no_full_clears_says_nothing_about_them():
+    assert "full clear" not in sf.record(PLAYER)
+
+
+def test_clearing_act_3_counts_even_when_the_run_ended_in_death():
+    """The case this exists for: beat the act 3 boss, then died to the act 4
+    boss. `result` is `death` and the run still cleared — the view decides that
+    via run_cleared(), and nothing here second-guesses it."""
+    out = sf.record({**PLAYER, "cleared": 1, "finished": 1, "full_clears": 0})
+    assert "1** of 1 cleared act 3" in out
 
 
 def test_unfinished_runs_are_not_counted_as_losses():

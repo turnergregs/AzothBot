@@ -63,7 +63,7 @@ in the game repo). What changed and why:
 | Turn **counts** dropped (`avg_turns`, `max_turns`) | Act reached says the same thing at the granularity anyone reads it at, and `avg_act` / `max_act` were already there |
 | **Links per turn** added, regular vs boss | The measure the turn-grain schema was reshaped to answer. Follows the worked example in [DB_SCHEMA.md](../../azoth/docs/DB_SCHEMA.md) exactly, including its two load-bearing parts: `left join turn_nodes` (an inner join drops zero-link turns and reintroduces the bias the design exists to prevent) and `kind = 'link'` (so skip nodes are not counted) |
 | **`regular_turns_sampled`** / **`boss_turns_sampled`** | The link sample is scoped to *finished* runs — an abandoned run's last turn is mid-flight — so it covers a smaller population than `game_count`. An average with no denominator is what caveat 6 is about |
-| Added `max_ritual`, `wins` / `finished`, `avg_deck_size`, `last_played` | Difficulty reached, and an outcome record. A win is `victory` **or** `no_boss_key` |
+| Added `max_ritual`, `cleared` / `full_clears` / `finished`, `avg_deck_size`, `last_played` | Difficulty reached, and an outcome record — see [What counts as a win](#what-counts-as-a-win) |
 | **`draft_picks`** added (`2026-08-27_player_info_draft_picks.sql`) | A NULL `most_drafted` has two causes that look identical: *picked things, none of them twice* (expected on a small sample) and *no draft rows at all* (a recording problem). Without the pick count the card can only shrug, and the second hides behind the first. Appended with `CREATE OR REPLACE`, so grants survive |
 
 ⚠️ **The link averages are unverified against live data.** `turns` and
@@ -92,6 +92,42 @@ also swallows the `draft_picks = 0` case, which is not the same news: no picks a
 all means draft rows are missing for those runs — a recording fault rather than a
 small sample. Nothing has that shape today, but if draft capture ever breaks,
 this is where the silence would come from.
+
+### What counts as a win
+
+**Beating the act 3 boss.** That is the milestone the game itself rewards:
+[main.gd:1464](../../azoth/scripts/main.gd:1464) grants the next ritual there and
+nowhere else. Acts 4 and 5 are bonus content — a run that cleared act 3 and then
+died to the act 4 boss **cleared**, and `games.result` still correctly says
+`death`.
+
+`public.run_cleared(uuid)` holds that definition
+(`2026-08-27_run_cleared.sql`), beside `analytics_cutoff()` and for the same
+reason: the version threshold was once duplicated across seven WHERE clauses and
+went stale. Only `player_info_view` counts clears today; the next view that needs
+to should call this rather than invent its own test.
+
+**The fact was already recorded.** `end_boss_fight("win")`
+([game_stats.gd:783](../../azoth/scripts/autoloads/game_stats.gd:783)) stamps
+`boss_result` onto the turn row at `main.gd:1460` — the line immediately before
+the unlock. So a cleared run is one with a turn at act 3 whose boss fight was
+won. No new column, no game change, and it holds retroactively for everything at
+0.8.2+.
+
+Two options that were considered and rejected:
+
+| Rejected | Why |
+|---|---|
+| Write `result = 'victory'` on the act 3 clear | Collapses three different outcomes into one — cleared and stopped, cleared then died in act 4, cleared act 5 — with no way back, and silently changes what `leaderboard_view.result`, the daily report and `bot_runner.gd`'s win counter mean |
+| Infer `act_reached >= 4` in the view | A proxy, not the fact. It correlates today, but a run reaching act 4 any other way silently becomes a win — and one view's private definition is how the other five drift |
+
+`cleared` also accepts `result in ('victory','no_boss_key')` as a belt: both
+imply the act 3 boss fell, and neither depends on turn rows existing.
+`full_clears` counts `result = 'victory'` — the act 5 boss ([main.gd:1478](../../azoth/scripts/main.gd:1478)).
+
+⚠️ **Turn rows only exist from 0.8.0**, so `run_cleared` is false for anything
+older. Everything below the `0.8.2` cutoff is already excluded, so this costs
+nothing today — but lowering the cutoff would make pre-0.8.0 clears invisible.
 
 ### Per-act links and pattern clearing (`2026-08-27_player_act_and_pattern_clearing.sql`)
 

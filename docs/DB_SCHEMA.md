@@ -148,6 +148,7 @@ NULL propagates and the row is excluded.
 | `version_key(text)` | Numeric sort key for a dotted version string; NULL if unparseable. `0.8.2` → `8002` |
 | `analytics_cutoff()` | The cutoff in one place — currently `8002`. Bump this, not seven WHERE clauses |
 | `combo_numeric(text)` | Safe numeric read of the BigNum-backed combo column; NULL rather than an error |
+| `run_cleared(uuid)` | True when the run beat the **act 3 boss** — the milestone that grants the next ritual. Independent of how the run ended, so a run that cleared act 3 and died in act 4 is still cleared |
 | `bulk_apply(jsonb, text)` | **All-or-nothing bulk insert/update for AzothBot.** See below |
 
 ### `bulk_apply(payload jsonb, mode text)`
