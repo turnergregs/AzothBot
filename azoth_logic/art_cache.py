@@ -49,7 +49,7 @@ ART_TTL = 7 * 24 * 3600
 
 # Bump when the renderer's output changes, to invalidate every cached render.
 # The card layout, symbol sizing and outline weights all feed this.
-RENDERER_VERSION = "2026-08-26.1"
+RENDERER_VERSION = "2026-08-27.1"      # transparent GIFs + tight crop
 
 # Size caps, enforced on write. Exceeding one evicts oldest-first down to
 # EVICT_TO of the cap, so a write does not trigger a scan every time.

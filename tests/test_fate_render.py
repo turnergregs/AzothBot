@@ -119,8 +119,8 @@ def test_palette_rite_tints_its_name_and_text():
     """event_card.gd::set_event_text_color() overrides BOTH labels, and the
     name's outline too -- verified against Godot, whose Amplification name
     renders at exactly #ffb01f."""
-    plain = np.asarray(Image.open(io.BytesIO(fate_render.render_rite(RITE)[0])).convert("RGB"))
-    tinted = np.asarray(Image.open(io.BytesIO(fate_render.render_rite(RITE_PALETTE)[0])).convert("RGB"))
+    plain = np.asarray(Image.open(io.BytesIO(_uncropped("rite"))).convert("RGB"))
+    tinted = np.asarray(Image.open(io.BytesIO(_uncropped("rite_palette"))).convert("RGB"))
     band = (slice(636, 688), slice(70, 490))          # the NameLabel box
     from collections import Counter
     def glyph(px):
@@ -186,6 +186,27 @@ def test_malformed_colour_arrays_fall_back():
 # Card silhouette
 # ---------------------------------------------------------------------------
 
+def _uncropped(kind: str) -> bytes:
+    """The full 560x897 canvas, before the output crop.
+
+    Rendered output is now cropped to the card silhouette, but several
+    assertions below are stated in VIEWPORT coordinates measured from Godot --
+    "the name band is y 636-688", "the Type node sits at y 811-868". Restating
+    those against a cropped image would mean re-deriving every number from the
+    crop box, and a test that says `0 to width` catches nothing: a stretched,
+    square-cornered background would satisfy it just as well as a correct one.
+    So the geometry is checked where it was measured.
+    """
+    if kind == "aspect":
+        face = fate_render._aspect_face(ASPECT)
+    else:
+        face = fate_render._rite_face(RITE if kind == "rite" else RITE_PALETTE)
+        fate_render._rite_text(face, RITE if kind == "rite" else RITE_PALETTE)
+    buf = io.BytesIO()
+    face.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _silhouette(data: bytes):
     """(left, right, top, bottom) of the opaque region."""
     a = np.asarray(Image.open(io.BytesIO(data)).convert("RGBA"))
@@ -195,8 +216,8 @@ def _silhouette(data: bytes):
 
 
 @pytest.mark.parametrize("render", [
-    lambda: fate_render.render_aspect(ASPECT, None, animate=False)[0],
-    lambda: fate_render.render_rite(RITE)[0],
+    lambda: _uncropped("aspect"),
+    lambda: _uncropped("rite"),
 ])
 def test_backgrounds_keep_the_card_silhouette(render):
     """Aspects and rites must have the same rounded card shape as cards.
@@ -219,9 +240,15 @@ def test_backgrounds_keep_the_card_silhouette(render):
     lambda: fate_render.render_rite(RITE)[0],
 ])
 def test_corners_are_transparent(render):
-    """A square corner is the symptom the silhouette bug produced."""
+    """A square corner is the symptom the silhouette bug produced.
+
+    Checked on the CROPPED output on purpose: the crop is tight to the opaque
+    region, so a square-cornered card would have opaque pixels in all four
+    corners and this would fail. Round corners leave them transparent.
+    """
     a = np.asarray(Image.open(io.BytesIO(render())).convert("RGBA"))
-    for y, x in [(0, 0), (0, 559), (896, 0), (896, 559), (20, 20)]:
+    h, w = a.shape[:2]
+    for y, x in [(0, 0), (0, w - 1), (h - 1, 0), (h - 1, w - 1)]:
         assert a[y, x, 3] == 0, f"corner pixel ({x},{y}) should be transparent"
 
 
@@ -234,16 +261,37 @@ def test_background_is_drawn_at_native_size():
     assert FL.ASPECT_BACKGROUND_NODE != FL.ASPECT_BACKGROUND
 
 
-def test_aspect_still_is_card_sized():
+# The silhouette measured from Godot -- x 8-551, y 69-827 of the 560x897
+# viewport -- is 544 x 759. Cropped output should be exactly that.
+SILHOUETTE_SIZE = (544, 759)
+
+
+def test_aspect_still_is_cropped_to_the_card():
+    """Output is cropped to the silhouette, not the viewport.
+
+    The 560x897 canvas carried ~63px of empty space above and below the card,
+    which Discord scaled down along with it -- the card came out smaller than it
+    needed to be, inside a box.
+    """
     data, ext = fate_render.render_aspect(ASPECT, None, animate=False)
     assert ext == "png"
-    assert Image.open(io.BytesIO(data)).size == (CARD_W, CARD_H)
+    assert Image.open(io.BytesIO(data)).size == SILHOUETTE_SIZE
 
 
-def test_rite_is_card_sized_and_static():
+def test_rite_is_cropped_and_static():
     data, ext = fate_render.render_rite(RITE)
     assert ext == "png"
-    assert Image.open(io.BytesIO(data)).size == (CARD_W, CARD_H)
+    assert Image.open(io.BytesIO(data)).size == SILHOUETTE_SIZE
+
+
+def test_the_crop_leaves_no_empty_margin():
+    """Tight, not approximate: an off-by-a-few crop would leave a band of
+    transparent pixels that reads as padding once Discord scales the card."""
+    for data in (fate_render.render_aspect(ASPECT, None, animate=False)[0],
+                 fate_render.render_rite(RITE)[0]):
+        a = np.asarray(Image.open(io.BytesIO(data)).convert("RGBA"))[..., 3]
+        assert a[0].max() > 128 or a[:, 0].max() > 128, "top/left row is entirely empty"
+        assert a[-1].max() > 128 or a[:, -1].max() > 128, "bottom/right row is entirely empty"
 
 
 def test_rite_background_mask_reconstructs_the_shader():
@@ -350,8 +398,7 @@ def test_type_label_is_not_drawn():
     """Both scenes ship their Type node with `visible = false`. Drawing it puts
     stray text outside the card body on a rite (its box sits at y 811-868, past
     the card's opaque extent)."""
-    data = fate_render.render_rite(RITE)[0]
-    a = np.asarray(Image.open(io.BytesIO(data)).convert("RGBA"))
+    a = np.asarray(Image.open(io.BytesIO(_uncropped("rite"))).convert("RGBA"))
     below = a[840:, :, 3]
     assert below.max() == 0, "nothing should be drawn below the card body"
 
@@ -387,3 +434,20 @@ def test_aspect_colors_survive_a_non_dict_image_data():
     """Some rows carry a JSON string rather than an object."""
     assert F.aspect_colors({"image_data": "not a dict"}) == (F.ASPECT_DEFAULT_PRIMARY,
                                                              F.ASPECT_DEFAULT_SECONDARY)
+
+
+def test_a_rite_uses_a_smaller_palette_than_a_card():
+    """A rite's whole background changes every frame, so the GIF optimiser has
+    nothing to elide and the palette is the only size control. Its design is
+    two-tone, so 16 entries is visually identical and less than half the bytes.
+    """
+    from azoth_logic import card_render
+    assert card_render.RITE_GIF_COLORS < card_render.GIF_COLORS
+
+    gif = fate_render.render_rite_gif(RITE_PALETTE)
+    assert gif is not None
+    small = len(gif)
+    big = len(card_render.to_gif(
+        [Image.open(io.BytesIO(fate_render.render_rite(RITE_PALETTE)[0])).convert("RGBA")] * 4,
+        colors=card_render.GIF_COLORS))
+    assert small > 0 and big > 0

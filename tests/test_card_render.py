@@ -6,12 +6,13 @@ reading the code, because the code alone is misleading -- those are called out
 individually. If the game's card template changes, these are the tests that
 should fail first.
 """
+import io
 import json
 import math
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from azoth_logic import card_layout as L
 from azoth_logic import card_render, eigenfunction_art as ef, rich_text
@@ -470,3 +471,186 @@ def test_split_second_valence_lands_inside_the_card():
     y = L.SYMBOL[1] + L.VALENCE2_REL[1]
     assert 0 <= x < L.CARD_W and 0 <= y < L.CARD_H
     assert x > L.CARD_W / 2, "the second valence belongs in the opposite corner"
+
+
+# ---------------------------------------------------------------------------
+# Transparent animated output
+# ---------------------------------------------------------------------------
+# Animated cards used to be flattened onto DISCORD_BG (#313338) because GIF
+# alpha is 1 bit. That is Discord's *Dark* theme colour -- on Darker, Midnight
+# or Light it read as a grey rectangle around the card.
+
+def _frames(n=6, size=(120, 200)):
+    """RGBA frames shaped like a card: a ROUNDED body inset in empty canvas,
+    with a blob that moves inside it.
+
+    Rounded on purpose. A plain rectangle would be fully opaque once cropped,
+    so every transparency assertion below would pass against a renderer that
+    had no transparency at all.
+    """
+    out = []
+    for i in range(n):
+        f = Image.new("RGBA", size, (0, 0, 0, 0))
+        d = ImageDraw.Draw(f)
+        d.rounded_rectangle([10, 10, size[0] - 11, size[1] - 11], radius=18,
+                            fill=(20, 20, 20, 255))
+        d.ellipse([30, 30 + i * 5, 70, 70 + i * 5], fill=(249, 164, 16, 255))
+        out.append(f)
+    return out
+
+
+def test_gif_carries_transparency():
+    data = card_render.to_gif(_frames())
+    g = Image.open(io.BytesIO(data))
+    assert g.info.get("transparency") is not None, "no transparent index in the GIF"
+    assert np.asarray(g.convert("RGBA"))[0, 0, 3] == 0, "the corner should be see-through"
+
+
+def test_gif_transparency_survives_every_frame():
+    """A transparent index that only holds on frame 1 gives a card that flashes
+    a background in on frame 2."""
+    g = Image.open(io.BytesIO(card_render.to_gif(_frames())))
+    for i in range(g.n_frames):
+        g.seek(i)
+        assert np.asarray(g.convert("RGBA"))[0, 0, 3] == 0, f"frame {i} lost transparency"
+
+
+def test_gif_is_cropped_to_the_card():
+    frames = _frames()
+    g = Image.open(io.BytesIO(card_render.to_gif(frames)))
+    assert g.size == (100, 180), "10px transparent border should be cropped away"
+    assert g.size != frames[0].size
+
+
+def test_the_crop_is_the_union_of_every_frame():
+    """Cropping each frame to its own bounds would make the card jitter as the
+    art moves inside it. The box has to be identical for all of them."""
+    frames = _frames(n=6)
+    shared = card_render.alpha_bbox(frames)
+    for f in frames:
+        own = card_render.alpha_bbox([f])
+        assert own[0] >= shared[0] and own[1] >= shared[1]
+        assert own[2] <= shared[2] and own[3] <= shared[3]
+    # and the shared box really is the union, not just the first frame's
+    g = Image.open(io.BytesIO(card_render.to_gif(frames)))
+    sizes = set()
+    for i in range(g.n_frames):
+        g.seek(i)
+        sizes.add(g.convert("RGBA").size)
+    assert len(sizes) == 1, f"frames differ in size -> the card would jitter: {sizes}"
+
+
+# alpha_bbox and _global_palette are unit-tested DIRECTLY, not through a render.
+#
+# Both take the whole frame list on purpose, and for a card that is currently
+# defensive rather than load-bearing: the face is identical in every frame (only
+# the art inside it moves), so a per-frame box and a per-frame palette would give
+# the same answer today. Mutating either to look at one frame survives a render
+# test. Exercising the contract here is what makes the intent enforceable.
+
+def test_alpha_bbox_is_the_union_not_the_first_frame():
+    """A frame list whose opaque extent MOVES. Cropping to any single frame's
+    box would clip the others; the card would jitter or lose an edge."""
+    a = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    ImageDraw.Draw(a).rectangle([10, 10, 40, 40], fill=(255, 255, 255, 255))
+    b = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    ImageDraw.Draw(b).rectangle([60, 60, 90, 90], fill=(255, 255, 255, 255))
+
+    assert card_render.alpha_bbox([a]) == (10, 10, 41, 41)
+    assert card_render.alpha_bbox([b]) == (60, 60, 91, 91)
+    assert card_render.alpha_bbox([a, b]) == (10, 10, 91, 91), "must span both"
+    assert card_render.alpha_bbox([b, a]) == (10, 10, 91, 91), "order must not matter"
+
+
+def test_alpha_bbox_respects_the_cutoff():
+    """Pixels under the cutoff become transparent in the GIF, so they must not
+    hold the crop open either."""
+    f = Image.new("RGBA", (50, 50), (0, 0, 0, 0))
+    ImageDraw.Draw(f).rectangle([20, 20, 30, 30], fill=(255, 255, 255, 255))
+    ImageDraw.Draw(f).point((2, 2), fill=(255, 255, 255, 40))     # faint, below cutoff
+    assert card_render.alpha_bbox([f], cutoff=128) == (20, 20, 31, 31)
+    assert card_render.alpha_bbox([f], cutoff=8)[0] == 2, "a lower cutoff should keep it"
+
+
+def test_the_palette_covers_colours_that_appear_late():
+    """Derived from frames sampled ACROSS the animation. Taking only the first
+    frame drops any colour introduced later, which then quantises to the nearest
+    entry -- the eigenfunction art shifts hue partway through its loop."""
+    frames = []
+    for i in range(16):
+        f = Image.new("RGBA", (40, 40), (0, 0, 0, 255))
+        # A colour that exists ONLY in the second half of the animation.
+        if i >= 8:
+            ImageDraw.Draw(f).rectangle([5, 5, 35, 35], fill=(0, 200, 255, 255))
+        frames.append(f)
+
+    palette = card_render._global_palette(frames, 64)
+    entries = [tuple(palette[i:i + 3]) for i in range(0, 64 * 3, 3)]
+    # Every entry must be a full RGB triple. Comparing against a SHORT palette
+    # silently scored 0 via zip(), which made this assertion vacuous.
+    assert all(len(e) == 3 for e in entries), "palette is not padded to full length"
+
+    def dist(c):
+        return sum((a - b) ** 2 for a, b in zip(c, (0, 200, 255)))
+    closest = min(entries, key=dist)
+    assert dist(closest) < 400, f"the late colour has no palette entry; nearest is {closest}"
+
+
+def test_a_low_colour_animation_gets_a_well_formed_palette():
+    """A rite background is 2-3 colours, so `getpalette()` comes back with four
+    entries while the pixel data references the transparent index at 64 -- a GIF
+    pointing past its own colour table. Padding keeps the table well formed.
+    """
+    frames = []
+    for i in range(4):
+        f = Image.new("RGBA", (60, 60), (0, 0, 0, 0))
+        d = ImageDraw.Draw(f)
+        d.rounded_rectangle([5, 5, 54, 54], radius=10, fill=(200, 20, 20, 255))
+        d.ellipse([20, 20 + i, 40, 40 + i], fill=(81, 158, 34, 255))
+        frames.append(f)
+
+    palette = card_render._global_palette(frames, card_render.GIF_COLORS)
+    assert len(palette) == (card_render.GIF_COLORS + 1) * 3, (
+        f"palette has {len(palette)//3} entries; the transparent index "
+        f"{card_render.GIF_COLORS} must be inside it")
+
+    g = Image.open(io.BytesIO(card_render.to_gif(frames)))
+    assert np.asarray(g.convert("RGBA"))[0, 0, 3] == 0
+
+
+def test_a_shared_palette_beats_per_frame_palettes_on_size():
+    """Per-frame adaptive palettes defeat the GIF optimiser's frame
+    differencing -- it can only encode a changed sub-rectangle when successive
+    frames share a colour table. Measured on a real card: 806 KB per-frame
+    against 272 KB shared.
+    """
+    frames = _frames(n=12)
+    shared = card_render.to_gif(frames)
+
+    per_frame = [Image.alpha_composite(
+        Image.new("RGBA", f.size, (0, 0, 0, 255)), f
+    ).convert("P", palette=Image.ADAPTIVE, colors=64) for f in frames]
+    buf = io.BytesIO()
+    per_frame[0].save(buf, format="GIF", save_all=True, append_images=per_frame[1:],
+                      duration=66, loop=0, optimize=True)
+    assert len(shared) < len(buf.getvalue())
+
+
+def test_still_png_is_cropped_and_keeps_alpha():
+    """PNG has always carried alpha; what it also carried was ~63px of empty
+    canvas above and below, which Discord scaled down along with the card."""
+    card = {"name": "X", "element": "sol", "valence": 2, "subtypes": ["S"],
+            "text": "Draw 1", "image": None, "split": None}
+    im = Image.open(io.BytesIO(card_render.render_png(card, None)))
+    assert im.mode == "RGBA"
+    assert im.size != (L.CARD_W, L.CARD_H), "still should be cropped to the card"
+    a = np.asarray(im)[..., 3]
+    assert a[0, 0] == 0, "rounded corner should stay transparent"
+    assert a.max() == 255
+
+
+def test_the_alpha_cutoff_is_where_the_rim_is_thin():
+    """1-bit alpha has to cut the antialiased rim somewhere. It is only ~3px
+    wide and 98% of the card is fully opaque, so the midpoint is imperceptible
+    -- but a cutoff at the extremes would either eat the edge or fringe it."""
+    assert 64 <= card_render.ALPHA_CUTOFF <= 192

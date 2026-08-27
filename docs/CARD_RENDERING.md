@@ -69,10 +69,67 @@ thresholding. Blending rendered pixels instead would cross-dissolve two
 hard-edged images and ghost; blending the smooth scalar field slides the edge and
 keeps it crisp.
 
-Defaults: **4s at 15fps, 560×897, ~700 KB.** GIF beats WebP here because the art
-is flat two-colour shapes that palettise well and only a 275×275 region changes
-between frames. GIF's 1-bit alpha means the card is flattened onto Discord's dark
-background (`#313338`), so it looks slightly wrong on light theme.
+Defaults: **4s at 15fps, cropped to the card, ~283 KB.**
+
+### The card is transparent, and cropped to itself
+
+Output carries real transparency and is cropped to the card's own bounds. Both
+matter more than they sound:
+
+- **Transparency.** GIF alpha is 1 bit, so the antialiased rim has to be cut
+  somewhere — `ALPHA_CUTOFF = 128`. Measured on a rendered face, that rim is only
+  **~3px wide and 98% of the card is fully opaque**, so the midpoint is
+  imperceptible. Before this, the card was flattened onto `#313338` — Discord's
+  *Dark* theme colour — which on Darker, Midnight or Light read as a grey
+  rectangle around the card.
+- **The crop.** The 560×897 viewport carried ~63px of empty canvas above and
+  below. Discord scaled that down along with the card, so the card arrived
+  smaller than it needed to be. A card crops to 552×766, an aspect or rite to
+  544×759 — exactly the silhouette measured from Godot.
+
+The crop box is the **union of every frame's** opaque pixels, never per frame:
+cropping each frame to its own bounds would make the card jitter as the art moves
+inside it. For a card that is currently defensive — the face is identical in
+every frame — so it is pinned by a unit test on `alpha_bbox`, not by a render
+test, which could not tell the difference.
+
+### One palette for the whole animation
+
+`GIF_COLORS = 64`, shared across every frame rather than adaptive per frame.
+
+Per-frame palettes defeat the GIF optimiser's frame differencing: it can only
+encode a changed sub-rectangle when successive frames share a colour table.
+Measured on Restoration, 60 frames:
+
+| | Size |
+|---|---|
+| Per-frame palettes | 806 KB |
+| **Shared palette** | **272 KB** |
+| Old flattened output, for reference | 453 KB |
+
+So transparency came out **cheaper** than not having it. `disposal=1` ("leave the
+previous frame") rather than `2` is part of that — and it is safe only because
+**the transparent region is identical in every frame**: the art is composited
+onto an opaque card face, so nothing but the outer rim is ever transparent. A
+renderer whose transparent area moves would need `disposal=2` or the holes would
+ghost.
+
+> **The palette is padded to a full `GIF_COLORS` entries before the transparent
+> one is appended.** `getpalette()` returns only the entries actually *used*, so a
+> low-colour animation comes back short — a rite background yields four. Appending
+> the transparent entry to a short palette puts it at index 4 while the pixel data
+> references index 64: a GIF whose pixels point past its own colour table. Pillow
+> tolerates reading that back; a stricter decoder need not.
+
+**Rites get `RITE_GIF_COLORS = 16` instead.** A rite's *whole* background changes
+each frame, so differencing cannot help it and the palette is its only size
+control. Its frames measure ~4,680 distinct colours, but those are all
+antialiasing between two hues — checked side by side at 16/32/64 against the
+source, they are indistinguishable. 3.0 MB at 64 against **1.7 MB at 16**.
+
+WebP was measured as the alternative: it carries 8-bit alpha and would need no
+cutoff, but came out ~20% *larger* than the shared-palette GIF, and GIF is what
+was wanted.
 
 ## Split cards
 
@@ -137,7 +194,9 @@ explicitly overrides the outline to white.
 ## Deck and hand layouts
 
 `/render_deck` tiles every card in a deck; `/render_hand` fans a random sample.
-Both are **static PNGs**. A 110-card deck animating at 60 frames each would be
+Both are **static, opaque PNGs** — unlike a single card, a sheet reads better
+with a background separating the tiles, which is what `DISCORD_BG` is still used
+for. A 110-card deck animating at 60 frames each would be
 tens of megabytes and unreadable at thumbnail size, so animation stays on
 `/render`, where one card fills the message.
 

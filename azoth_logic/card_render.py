@@ -28,10 +28,46 @@ ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
 BORDER_DIR = ASSET_ROOT / "card_art" / "borders"
 FONT_PATH = ASSET_ROOT / "fonts" / L.FONT_FILE
 
-# Discord's dark-theme message background. GIF alpha is 1-bit, so a soft-edged
-# card composited onto anything else would fringe; flattening onto this keeps the
-# rounded corners clean for the overwhelming majority of viewers.
+# Discord's dark-theme message background. Still used by the multi-card SHEETS
+# (deck_render), which are opaque RGB by design -- a grid reads better with a
+# background separating the cards.
+#
+# Single cards no longer use it: they carry real transparency. See to_gif().
 DISCORD_BG = (49, 51, 56)
+
+# --- Animated output -------------------------------------------------------
+#
+# GIF alpha is 1 bit, so every pixel is either fully drawn or fully absent and
+# the card's antialiased rim has to be cut somewhere. Measured on a rendered
+# face, that rim is only ~3px wide and 98% of the card is fully opaque, so
+# cutting at the halfway point is imperceptible -- and it buys a card that sits
+# correctly on every Discord theme instead of on a grey rectangle.
+ALPHA_CUTOFF = 128
+
+# Palette entries. The last index is reserved for transparency, so this is
+# (colours + 1) in GIF terms.
+GIF_COLORS = 64
+
+# ONE palette for the whole animation, not one per frame.
+#
+# Per-frame adaptive palettes defeat the GIF optimiser's frame differencing: it
+# can only encode a changed sub-rectangle when successive frames share a colour
+# table. Measured on Restoration (60 frames): per-frame palettes give 806 KB,
+# a shared palette 272 KB -- and 272 KB is smaller than the 453 KB the old
+# FLATTENED output cost, so transparency came out cheaper than not having it.
+#
+# The palette is derived from frames sampled across the animation rather than
+# from the first frame, which would miss colours that only appear later.
+GIF_PALETTE_SAMPLES = 8
+
+# A rite is a TWO-TONE design -- one pattern colour over one background -- and
+# every renderer passes GIF_COLORS except that one. Its frames measure ~4,680
+# distinct colours, but they are all antialiasing between two hues, so they
+# quantise to 16 with no visible difference (checked side by side at 16/32/64
+# against the source). It matters because a rite's WHOLE background changes each
+# frame, so frame differencing cannot help it and the palette is the only
+# control: 3.0 MB at 64 against 1.7 MB at 16.
+RITE_GIF_COLORS = 16
 
 _font_cache: dict = {}
 _border_cache: dict = {}
@@ -221,6 +257,99 @@ def render_still(card: dict, art_bytes: bytes | None) -> Image.Image:
     return face
 
 
+def alpha_bbox(frames, cutoff: int = ALPHA_CUTOFF):
+    """The tightest box containing every frame's opaque pixels.
+
+    Taken over the UNION of all frames so the crop is identical for each one --
+    cropping per frame would make the card jitter as the art moves.
+    """
+    import numpy as np
+    acc = None
+    for f in frames:
+        mask = np.asarray(f)[..., 3] >= cutoff
+        acc = mask if acc is None else (acc | mask)
+    ys, xs = np.where(acc)
+    if not len(xs):
+        return (0, 0, frames[0].width, frames[0].height)
+    return (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+
+
+def _global_palette(frames, colors: int):
+    """One adaptive palette covering the whole animation.
+
+    Built from a montage of sampled frames so a colour that only appears late
+    still gets an entry.
+    """
+    step = max(1, len(frames) // GIF_PALETTE_SAMPLES)
+    sample = frames[::step]
+    w, h = frames[0].size
+    strip = Image.new("RGB", (w, h * len(sample)))
+    for i, f in enumerate(sample):
+        strip.paste(_on_black(f), (0, i * h))
+    quantised = strip.convert("P", palette=Image.ADAPTIVE, colors=colors)
+
+    # PAD to exactly `colors` entries before appending the transparent one.
+    #
+    # getpalette() returns only the entries actually USED, so a low-colour
+    # animation comes back short -- a rite background is 2-3 colours and yields
+    # four entries. Appending the transparent entry to a short palette puts it at
+    # index 4 while the pixel data references index 64, which is a GIF whose
+    # pixels point past its own colour table. Pillow happens to tolerate reading
+    # that back; a stricter decoder need not, and the transparent index would
+    # then resolve to nothing.
+    palette = quantised.getpalette()[: colors * 3]
+    palette += [0, 0, 0] * (colors - len(palette) // 3)
+    return palette + [0, 0, 0]                  # index `colors` == transparent
+
+
+def _on_black(frame: Image.Image) -> Image.Image:
+    """RGB for quantisation. Black, not DISCORD_BG: pixels below the cutoff are
+    replaced by the transparent index anyway, so the matte only has to be a
+    colour that does not pull the palette toward a background nobody sees."""
+    return Image.alpha_composite(
+        Image.new("RGBA", frame.size, (0, 0, 0, 255)), frame).convert("RGB")
+
+
+def to_gif(frames, fps: int = 15, colors: int = GIF_COLORS,
+           cutoff: int = ALPHA_CUTOFF) -> bytes:
+    """RGBA frames -> a looping GIF with transparency. Shared by every renderer.
+
+    `disposal=1` ("leave the previous frame") rather than 2 ("restore to
+    background"). It is what lets the optimiser write only the changed
+    rectangle -- 1.04 MB against 1.72 MB -- and it is safe here because the
+    TRANSPARENT REGION IS IDENTICAL IN EVERY FRAME: the art is composited onto
+    an opaque card face, so only the outer rim is ever transparent. If a
+    renderer ever produces frames whose transparent area moves, this has to go
+    back to 2 or the holes will ghost.
+    """
+    import numpy as np
+
+    box = alpha_bbox(frames, cutoff)
+    frames = [f.crop(box) for f in frames]
+
+    transparent = colors                      # one past the last colour
+    palette = _global_palette(frames, colors)
+    reference = Image.new("P", (1, 1))
+    reference.putpalette(palette)
+
+    out = []
+    for frame in frames:
+        alpha = np.asarray(frame)[..., 3]
+        indexed = np.array(_on_black(frame).quantize(palette=reference, dither=Image.NONE))
+        indexed[indexed >= transparent] = transparent - 1   # nothing may collide
+        indexed[alpha < cutoff] = transparent
+        page = Image.fromarray(indexed, "P")
+        page.putpalette(palette)
+        page.info["transparency"] = transparent
+        out.append(page)
+
+    buf = io.BytesIO()
+    out[0].save(buf, format="GIF", save_all=True, append_images=out[1:],
+                duration=round(1000 / fps), loop=0,
+                transparency=transparent, disposal=1, optimize=True)
+    return buf.getvalue()
+
+
 def render_gif(card: dict, art_bytes: bytes, duration=4.0, fps=15) -> bytes:
     """The card as a looping GIF. Only meaningful when `is_animated(card)`.
 
@@ -235,23 +364,25 @@ def render_gif(card: dict, art_bytes: bytes, duration=4.0, fps=15) -> bytes:
                                departure=ef.departure_for_card(card))
 
     pos = (round(L.ART[0]), round(L.ART[1]))
-    flat = []
+    frames = []
     for art in art_frames:
         frame = face.copy()
         frame.alpha_composite(art, pos)
-        flat.append(Image.alpha_composite(
-            Image.new("RGBA", frame.size, DISCORD_BG + (255,)), frame
-        ).convert("P", palette=Image.ADAPTIVE, colors=128))
-
-    buf = io.BytesIO()
-    flat[0].save(buf, format="GIF", save_all=True, append_images=flat[1:],
-                 duration=round(1000 / fps), loop=0, optimize=True)
-    return buf.getvalue()
+        frames.append(frame)
+    return to_gif(frames, fps=fps)
 
 
 def render_png(card: dict, art_bytes: bytes | None) -> bytes:
+    """The card as a PNG, cropped to itself.
+
+    PNG carries full alpha, so a still has never needed flattening -- but it did
+    carry ~63px of empty canvas above and below, which Discord scaled down along
+    with the card. Cropping is done HERE rather than in render_still, because
+    deck_render lays its grid out from the full CARD_W x CARD_H box.
+    """
+    still = render_still(card, art_bytes)
     buf = io.BytesIO()
-    render_still(card, art_bytes).save(buf, format="PNG")
+    still.crop(alpha_bbox([still])).save(buf, format="PNG")
     return buf.getvalue()
 
 

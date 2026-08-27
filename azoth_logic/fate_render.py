@@ -114,17 +114,12 @@ def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
         with card_render._temp(art_bytes, ".exr") as path:
             frames = ef.frames(path, base, accent, duration=duration, fps=fps,
                                departure=ef.departure_for_card(aspect))
-        flat = []
+        pages = []
         for art in frames:
             frame = face.copy()
             frame.alpha_composite(art.resize(size, Image.LANCZOS), pos)
-            flat.append(Image.alpha_composite(
-                Image.new("RGBA", frame.size, card_render.DISCORD_BG + (255,)), frame
-            ).convert("P", palette=Image.ADAPTIVE, colors=128))
-        buf = io.BytesIO()
-        flat[0].save(buf, format="GIF", save_all=True, append_images=flat[1:],
-                     duration=round(1000 / fps), loop=0, optimize=True)
-        return buf.getvalue(), "gif"
+            pages.append(frame)
+        return card_render.to_gif(pages, fps=fps), "gif"
 
     if art_bytes:
         if is_animated(aspect):
@@ -135,7 +130,9 @@ def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
         face.alpha_composite(art.resize(size, Image.LANCZOS), pos)
 
     buf = io.BytesIO()
-    face.save(buf, format="PNG")
+    # Cropped like a card's still: PNG keeps its alpha, and the empty canvas
+    # above and below only made Discord scale the card down.
+    face.crop(card_render.alpha_bbox([face])).save(buf, format="PNG")
     return buf.getvalue(), "png"
 
 
@@ -266,18 +263,15 @@ def render_rite_gif(rite: dict, fps: int = 15) -> bytes | None:
     frames = _rite_background_frames(rite, F.rite_colors(rite))
     if not frames:
         return None
-    flat = []
+    pages = []
     for bg in frames:
         face = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
         face.alpha_composite(bg, (round(F.RITE_BACKGROUND[0]), round(F.RITE_BACKGROUND[1])))
         _rite_text(face, rite)
-        flat.append(Image.alpha_composite(
-            Image.new("RGBA", face.size, card_render.DISCORD_BG + (255,)), face
-        ).convert("P", palette=Image.ADAPTIVE, colors=128))
-    buf = io.BytesIO()
-    flat[0].save(buf, format="GIF", save_all=True, append_images=flat[1:],
-                 duration=round(1000 / fps), loop=0, optimize=True)
-    return buf.getvalue()
+        pages.append(face)
+    # A rite is two-tone, and its whole background changes every frame, so a
+    # smaller palette is both invisible and the only size control it has.
+    return card_render.to_gif(pages, fps=fps, colors=card_render.RITE_GIF_COLORS)
 
 
 def render_rite(rite: dict, art_bytes: bytes | None = None):
@@ -292,7 +286,7 @@ def render_rite(rite: dict, art_bytes: bytes | None = None):
     face = _rite_face(rite)
     _rite_text(face, rite)
     buf = io.BytesIO()
-    face.save(buf, format="PNG")
+    face.crop(card_render.alpha_bbox([face])).save(buf, format="PNG")
     return buf.getvalue(), "png"
 
 
