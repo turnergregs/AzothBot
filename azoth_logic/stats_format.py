@@ -233,34 +233,95 @@ def links(row: dict) -> str:
     return "\n".join(parts)
 
 
-def act_table(rows: list) -> str:
-    """Links per turn per act, as a code-fenced table.
-
-    Turn counts are in the table, not a footnote: with a handful of turns spread
-    over three acts, "4.9 in act 3" can rest on two turns, and the difference
-    between acts is only a difference if the samples are real.
-    """
-    if rows is None:
-        return "*unavailable — `player_act_view` is not migrated*"
-    if not rows:
-        return "*no act data yet*"
-    body = []
-    for r in sorted(rows, key=lambda x: x.get("act") or 0):
-        body.append([
-            str(r.get("act")),
-            value("x", r.get("avg_links_regular")),
-            str(r.get("regular_turns") or 0),
-            value("x", r.get("avg_links_boss")),
-            str(r.get("boss_turns") or 0),
-        ])
-    heads = ["Act", "Reg", "n", "Boss", "n"]
-    widths = [max(len(heads[i]), *(len(b[i]) for b in body)) for i in range(len(heads))]
+def _grid(heads: list, body: list) -> str:
+    """A code-fenced table with a rule under the header."""
+    widths = [max(len(heads[i]), *(len(row[i]) for row in body)) for i in range(len(heads))]
 
     def line(cells):
         return "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
 
     return block("\n".join([line(heads), "  ".join("-" * w for w in widths)]
-                           + [line(b) for b in body]))
+                           + [line(row) for row in body]))
+
+
+def _sorted_acts(rows: list) -> list:
+    return sorted(rows, key=lambda r: r.get("act") or 0)
+
+
+def links_table(acts: list, row: dict) -> str:
+    """Links per turn, per act, with the overall figure as a final `All` row.
+
+    One table rather than a number and a table beside it -- the overall average
+    IS the bottom of this column, and separating them invited reading the act
+    rows as a decomposition of something else.
+
+    `All` comes from `player_info_view`, not from averaging the act rows: the
+    acts have different turn counts, so a mean of means would be wrong.
+
+    Turn counts are IN the table. "4.9 in act 3" can rest on four turns, and a
+    difference between acts is only a difference if the samples are real.
+    """
+    if acts is None:
+        return "*unavailable — `player_act_view` is not migrated*"
+
+    body = [[str(r.get("act")),
+             value("x", r.get("avg_links_regular")),
+             str(r.get("regular_turns") or 0),
+             value("x", r.get("avg_links_boss")),
+             str(r.get("boss_turns") or 0)]
+            for r in _sorted_acts(acts or [])]
+
+    if row.get("avg_links_regular") is not None or row.get("avg_links_boss") is not None:
+        body.append(["All",
+                     value("x", row.get("avg_links_regular")),
+                     str(row.get("regular_turns_sampled") or 0),
+                     value("x", row.get("avg_links_boss")),
+                     str(row.get("boss_turns_sampled") or 0)])
+
+    if not body:
+        return "*no turn-level data yet*"
+    return _grid(["Act", "Reg", "num", "Boss", "num"], body)
+
+
+def clearing_table(acts: list, row: dict) -> str:
+    """Pattern clearing per act, with an `All` row.
+
+    Links and seconds share a cell -- "4.3, 8m21s" -- because they answer one
+    question together and six columns will not fit a phone.
+
+    REGULAR TURNS ONLY, and only turns that had patterns to solve; the view
+    decides both. `Cleared` is the censoring, carried on every row: turns that
+    never clear contribute no numerator, so an average without it is biased
+    optimistic exactly where difficulty is highest.
+    """
+    if acts is None:
+        return "*unavailable — `player_act_view` is not migrated*"
+
+    def cells(r):
+        cleared, clearable = r.get("cleared_turns"), r.get("clearable_turns")
+        if not clearable:
+            return None
+        if not cleared:
+            return ["—", "—", f"0/{clearable}"]
+        return [f"{value('x', r.get('avg_links_before_clear'))}, "
+                f"{_seconds(r.get('avg_seconds_before_clear'))}",
+                f"{value('x', r.get('avg_links_after_clear'))}, "
+                f"{_seconds(r.get('avg_seconds_after_clear'))}",
+                f"{cleared}/{clearable}"]
+
+    body = []
+    for r in _sorted_acts(acts or []):
+        made = cells(r)
+        if made:
+            body.append([str(r.get("act"))] + made)
+
+    overall = cells(row)
+    if overall:
+        body.append(["All"] + overall)
+
+    if not body:
+        return "*no turn-level data yet*"
+    return _grid(["Act", "Before", "After", "Cleared"], body)
 
 
 def clearing(row: dict) -> str:
@@ -311,7 +372,8 @@ def reached(row: dict) -> str:
     """
     return (f"Act **{row.get('max_act')}** (avg {value('avg_act', row.get('avg_act'))})\n"
             f"Level **{row.get('max_level')}** (avg {value('avg_level', row.get('avg_level'))})\n"
-            f"Deck size **{value('avg_deck_size', row.get('avg_deck_size'))}** (avg)")
+            f"Deck size **{row.get('max_deck_size')}** "
+            f"(avg {value('avg_deck_size', row.get('avg_deck_size'))})")
 
 
 def most_drafted(row: dict) -> str:

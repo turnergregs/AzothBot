@@ -99,6 +99,7 @@ verbatim with their defects annotated but not fixed.
 | `active_players_view` | ~184 | `name` (autocomplete source) |
 | `hero_info_view` | 1 | `hero_name`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |
 | `version_info_view` | 5 | `version`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |
+| `turn_clearing_view` | — | One row per regular turn with patterns to solve: `clear_index`, `links_before/after`, `seconds_before/after`. NULL `clear_index` = never cleared, kept so the denominator survives |
 | `player_act_view` | — | `player`, `act`, `avg_links_regular`, `avg_links_boss`, `regular_turns`, `boss_turns`. Added 2026-08-27 |
 | `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, `events`, element and valence breakdowns, `combo`. Covers base, non-archived decks with `usage_type in ('draft', 'rite')` — the rite half added 2026-08-27, before which `events` was always 0. Surfaced by `/stats draft_pool` |
 | `draft_rates_view` | 1 | Pre-formatted comma-joined strings of most/least picked items |

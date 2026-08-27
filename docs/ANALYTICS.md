@@ -131,14 +131,22 @@ nothing today — but lowering the cutoff would make pre-0.8.0 clears invisible.
 
 ### Per-act links and pattern clearing (`2026-08-27_player_act_and_pattern_clearing.sql`)
 
-`player_act_view` is one row per (player, act): links per regular turn and per
-boss turn, each with the turn count behind it. Turn counts are in the table
-rather than a footnote — "4.9 links in act 3" can rest on three turns, and a
-difference between acts is only a difference if the samples are real.
+`turn_clearing_view` is one row per regular turn that **had patterns to solve**,
+carrying the links and seconds either side of the first node where
+`patterns_after = 0` (that column already excludes Ascender's Bane, so no extra
+filter is needed). Both `player_info_view` and `player_act_view` aggregate it —
+the calculation lives in **one** place, because asking the same question per act
+would otherwise have meant a second copy, and two copies of a definition is how
+every drift in this schema started.
 
-`player_info_view` gains the pattern-clearing columns: links and seconds either
-side of the first node where `patterns_after = 0`. That column already excludes
-Ascender's Bane, so no extra filter is needed for it.
+A turn that never cleared is **kept as a row** with `clear_index IS NULL`.
+Dropping it would right-censor the average silently, which is the failure
+`DB_SCHEMA.md` calls out by name.
+
+`player_act_view` is one row per (player, act): links per regular and boss turn,
+plus the same clearing split. It `FULL JOIN`s the two halves — an act can have
+link data with no clearable turns (every turn started with nothing to solve), and
+dropping either side would lose a row that has something to say.
 
 Three things make it honest, and all three are load-bearing:
 

@@ -298,53 +298,85 @@ def test_the_ritual_value_is_bare():
 
 def test_max_leads_and_the_average_is_labelled():
     """`act 3 (max 3)` gave no clue which number was which."""
-    out = sf.reached(PLAYER)
+    out = sf.reached({**PLAYER, "max_deck_size": 25})
     assert "Act **3** (avg 2.3)" in out
-    assert "Deck size" in out
+
+
+def test_deck_size_reads_like_act_and_level():
+    """It was the odd one out: an average with no max beside it."""
+    out = sf.reached({**PLAYER, "max_deck_size": 25})
+    assert "Deck size **25** (avg 18.3)" in out
 
 
 # ---------------------------------------------------------------------------
 # Per-act links, and pattern clearing
 # ---------------------------------------------------------------------------
 
-ACTS = [{"act": 1, "avg_links_regular": 4.1, "regular_turns": 6,
-         "avg_links_boss": 6.0, "boss_turns": 2},
-        {"act": 2, "avg_links_regular": 4.6, "regular_turns": 7,
-         "avg_links_boss": 9.5, "boss_turns": 2},
-        {"act": 3, "avg_links_regular": 4.9, "regular_turns": 3,
-         "avg_links_boss": None, "boss_turns": 0}]
+ACTS = [
+    {"act": 1, "avg_links_regular": 3.2, "regular_turns": 6,
+     "avg_links_boss": 10.5, "boss_turns": 2,
+     "avg_links_before_clear": 3.1, "avg_seconds_before_clear": 302.0,
+     "avg_links_after_clear": 1.0, "avg_seconds_after_clear": 6.0,
+     "cleared_turns": 4, "clearable_turns": 6},
+    {"act": 2, "avg_links_regular": 5.5, "regular_turns": 6,
+     "avg_links_boss": 10.0, "boss_turns": 2,
+     "avg_links_before_clear": 4.8, "avg_seconds_before_clear": 551.0,
+     "avg_links_after_clear": 1.3, "avg_seconds_after_clear": 8.0,
+     "cleared_turns": 3, "clearable_turns": 6},
+    # Act 3: links recorded, but nothing ever cleared.
+    {"act": 3, "avg_links_regular": 4.8, "regular_turns": 4,
+     "avg_links_boss": None, "boss_turns": 0,
+     "avg_links_before_clear": None, "avg_seconds_before_clear": None,
+     "avg_links_after_clear": None, "avg_seconds_after_clear": None,
+     "cleared_turns": 0, "clearable_turns": 4},
+]
 
 
-def test_the_act_table_shows_the_turn_count_behind_each_average():
-    """"4.9 in act 3" can rest on three turns. A difference between acts is only
+OVERALL = {"avg_links_regular": 4.4, "avg_links_boss": 11.0,
+           "regular_turns_sampled": 16, "boss_turns_sampled": 5,
+           "avg_links_before_clear": 4.3, "avg_seconds_before_clear": 501.0,
+           "avg_links_after_clear": 1.2, "avg_seconds_after_clear": 7.0,
+           "cleared_turns": 9, "clearable_turns": 16}
+
+
+def test_the_links_table_shows_the_turn_count_behind_each_average():
+    """"4.8 in act 3" can rest on four turns. A difference between acts is only
     a difference if the samples are real."""
-    out = sf.act_table(ACTS)
-    assert "4.9" in out and "3" in out
-    assert "Reg" in out and "Boss" in out
+    out = sf.links_table(ACTS, OVERALL)
+    assert "num" in out and "Reg" in out and "Boss" in out
+    assert "4.9" in out or "4.8" in out
+
+
+def test_the_overall_row_comes_from_the_player_view_not_a_mean_of_means():
+    """The acts have different turn counts, so averaging the act rows would be
+    wrong. `All` is the figure the view computed over every turn."""
+    out = sf.links_table(ACTS, OVERALL)
+    assert "All" in out
+    assert "4.4" in out and "16" in out
 
 
 def test_acts_are_ordered_even_when_the_rows_are_not():
-    out = sf.act_table(list(reversed(ACTS)))
+    out = sf.links_table(list(reversed(ACTS)), OVERALL)
     body = [l for l in out.splitlines() if l and l[0].isdigit()]
     assert [l[0] for l in body] == ["1", "2", "3"]
 
 
 def test_an_act_with_no_boss_turns_shows_a_dash_not_a_zero():
-    """Act 3 has no boss turns recorded. `0.0` would claim they fought a boss
-    and played no links."""
-    out = sf.act_table([ACTS[2]])
+    """`0.0` would claim they fought a boss and played no links."""
+    out = sf.links_table([ACTS[2]], {})
     assert "—" in out
     assert "0.0" not in out
 
 
 def test_no_act_data_says_so():
-    assert "no act data" in sf.act_table([])
+    assert "no turn-level data" in sf.links_table([], {})
 
 
 def test_a_missing_view_is_named_rather_than_shown_as_no_data():
     """`None` means the fetch failed — most likely the migration has not run.
     "No act data" would blame the dataset for a deployment problem."""
-    assert "not migrated" in sf.act_table(None)
+    assert "not migrated" in sf.links_table(None, {})
+    assert "not migrated" in sf.clearing_table(None, {})
 
 
 CLEAR = {"avg_links_before_clear": 3.2, "avg_links_after_clear": 1.1,
@@ -352,29 +384,30 @@ CLEAR = {"avg_links_before_clear": 3.2, "avg_links_after_clear": 1.1,
          "cleared_turns": 7, "clearable_turns": 9}
 
 
-def test_clearing_reports_both_sides():
-    out = sf.clearing(CLEAR)
+def test_clearing_reports_both_sides_per_act():
+    out = sf.clearing_table(ACTS, OVERALL)
     assert "Before" in out and "After" in out
-    assert "3.2" in out and "1.1" in out
+    assert "3.1" in out and "4.8" in out
 
 
-def test_clearing_is_reported_with_its_censoring():
+def test_clearing_carries_its_censoring_on_every_row():
     """Right-censored: turns that never clear contribute no numerator, so the
-    mean is biased optimistic exactly where difficulty is highest. "3.2 links"
-    alone is not the honest statement."""
-    out = sf.clearing(CLEAR)
-    assert "7 of 9 turns" in out and "78%" in out
+    mean is biased optimistic exactly where difficulty is highest. The ratio
+    rides on each row, not in a footnote under the table."""
+    out = sf.clearing_table(ACTS, OVERALL)
+    assert "4/6" in out and "9/16" in out
 
 
-def test_never_clearing_is_not_reported_as_an_average():
-    """Zero cleared turns means every average is over an empty set."""
-    out = sf.clearing({**CLEAR, "cleared_turns": 0})
-    assert "Never cleared" in out
-    assert "3.2" not in out
+def test_an_act_that_never_cleared_shows_no_average():
+    """Act 3 in the fixture cleared nothing. An average over an empty set would
+    be blank or zero; both read as a measurement."""
+    out = sf.clearing_table([ACTS[2]], {})
+    lines = [l for l in out.splitlines() if l.startswith("3")]
+    assert lines and "0/4" in lines[0] and "—" in lines[0]
 
 
 def test_no_clearable_turns_says_so():
-    assert "no turn-level data" in sf.clearing({"clearable_turns": 0})
+    assert "no turn-level data" in sf.clearing_table([], {})
 
 
 @pytest.mark.parametrize("seconds, expected", [(41.0, "41s"), (60.0, "1m 00s"),

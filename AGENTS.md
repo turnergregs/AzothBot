@@ -200,7 +200,7 @@ ones that bite most often:
 
 ## Testing
 
-**pytest, 613 tests, all offline.** See `docs/TESTING.md`.
+**pytest, 615 tests, all offline.** See `docs/TESTING.md`.
 
 ```bash
 .venv/bin/python -m pytest
