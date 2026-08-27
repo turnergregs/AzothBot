@@ -77,14 +77,16 @@ Include only tables with at least one item.
 
 ### `bulk_insert`
 
-Each entry **is the row**, so every key must be a real column. Iterates tables,
-then entries, inserting one at a time.
+Each entry **is the row**, so every key must be a real column. The whole payload
+is handed to the `bulk_apply` database function and applied in **one
+transaction**.
 
 - **Never send `id`** — Supabase assigns it.
 - **Never send** `created_at` / `updated_at` / `archived_at`, or runtime-only
   fields (`custom`, `editable`, `instance_id`, `phantom`, `upgraded`, and the rest
   listed in the spec).
-- Errors are **per row**. A bad entry is reported and skipped; the rest still land.
+- **A bad entry aborts everything.** The reply names the table, the record index
+  and the offending column; nothing is written. Fix the file and re-upload.
 
 ### `bulk_update`
 
@@ -142,15 +144,17 @@ Both invalidate the content index, so new or renamed items are selectable in
 
 ### Bulk gotchas
 
-- **Not transactional.** Rows apply one at a time. A failure part-way leaves
-  earlier rows written. There is no rollback — re-run with a corrected file, or
-  clean up by hand.
-- **Duplicate names win silently.** `bulk_update` takes `matches[0]`. If two rows
-  share a name you cannot tell which one you changed.
+- **All-or-nothing since 2026-08-27.** Both commands call one database function
+  in a single transaction. If any record is rejected, every record is rolled
+  back — there is never a half-applied payload to clean up. Before this, a
+  failure at record 40 of 60 left 39 rows written.
+- **Duplicate names are refused, not guessed.** `bulk_update` used to take
+  `matches[0]`, so two rows sharing a name meant you could not tell which one you
+  changed. The function now aborts and says how many it found.
 - **A missing row is skipped, not created.** `bulk_update` never inserts.
-- **The reply is truncated.** 15 error lines, 1,800 characters. The rest goes to
-  the bot console — which lives on a teammate's machine. If a bulk run reports
-  more errors than it shows, ask for the console output.
+- **You get one error, not a list.** The transaction stops at the first bad
+  record, so the reply names that record and nothing further. A payload with
+  three mistakes takes three uploads to clear.
 - **Both are 🔒 authorized-only**, and the deployed bot's service-role key means
   there is no database-level guard behind that check.
 

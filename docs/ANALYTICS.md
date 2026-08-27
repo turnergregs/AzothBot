@@ -1,5 +1,11 @@
 # Analytics
 
+> **The `/stats` commands render embeds, not raw JSON** (2026-08-27).
+> `azoth_logic/stats_format.py` does the formatting; the commands do the I/O.
+> `avg_combo_log10` displays as `10^x` because that is what it means, and every
+> reply footers the cutoff and the game count so no number arrives without its
+> denominator.
+
 What AzothBot reports, where those numbers come from, and which of them you can
 currently trust.
 
@@ -30,8 +36,9 @@ to exclude.
 
 ## The `/stats` commands
 
-Each subcommand fetches one view and dumps it as JSON into a code block. There is
-no aggregation, formatting or filtering in Python beyond a `limit` slice.
+Each subcommand fetches one view. The aggregation is all in SQL; Python does the
+rendering only — `azoth_logic/stats_format.py` turns a view into a table or a set
+of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 
 | Command | View | Purpose |
 |---|---|---|
@@ -42,6 +49,53 @@ no aggregation, formatting or filtering in Python beyond a `limit` slice.
 | `/stats version` | `version_info_view` | Per-version aggregates |
 | `/stats draft_pool` | `draft_deck_view` | Draft pool composition. Command renamed 2026-08-27; **the view kept its old name** |
 | `/stats draft_rates` | `draft_rates_view` | Global pick rates |
+
+### The player card (2026-08-27)
+
+`player_info_view` was rebuilt (`db/migrations/2026-08-27_player_info_view_v2.sql`
+in the game repo). What changed and why:
+
+| Change | Reason |
+|---|---|
+| `most_picked_hero` **dropped** | One hero exists. It answered "Lumis" for everyone |
+| `avg_combo_log10` **dropped**, `max_combo` → **`best_combo`** (full text) | Log space is the right summary for an *average* over an exponential quantity — which is why `hero_info_view` and `version_info_view` keep it. A player card shows one player's single best run, and a maximum is not distorted by a distribution, so there was nothing for log space to fix; the two columns were one number twice |
+| `most_drafted` floor **3 → 2**, plus `most_drafted_count` | **This is why it read NULL.** At 0.8.2 Turner has 30 picked items over 2 games and nothing was picked more than twice, so `having count(*) >= 3` excluded everything and `string_agg` over an empty set returned NULL |
+| Turn **counts** dropped (`avg_turns`, `max_turns`) | Act reached says the same thing at the granularity anyone reads it at, and `avg_act` / `max_act` were already there |
+| **Links per turn** added, regular vs boss | The measure the turn-grain schema was reshaped to answer. Follows the worked example in [DB_SCHEMA.md](../../azoth/docs/DB_SCHEMA.md) exactly, including its two load-bearing parts: `left join turn_nodes` (an inner join drops zero-link turns and reintroduces the bias the design exists to prevent) and `kind = 'link'` (so skip nodes are not counted) |
+| **`regular_turns_sampled`** / **`boss_turns_sampled`** | The link sample is scoped to *finished* runs — an abandoned run's last turn is mid-flight — so it covers a smaller population than `game_count`. An average with no denominator is what caveat 6 is about |
+| Added `max_ritual`, `wins` / `finished`, `avg_deck_size`, `last_played` | Difficulty reached, and an outcome record. A win is `victory` **or** `no_boss_key` |
+| **`draft_picks`** added (`2026-08-27_player_info_draft_picks.sql`) | A NULL `most_drafted` has two causes that look identical: *picked things, none of them twice* (expected on a small sample) and *no draft rows at all* (a recording problem). Without the pick count the card can only shrug, and the second hides behind the first. Appended with `CREATE OR REPLACE`, so grants survive |
+
+⚠️ **The link averages are unverified against live data.** `turns` and
+`turn_nodes` are INSERT-only for anon, so AzothBot cannot check coverage. Before
+trusting them:
+
+```sql
+select count(*) filter (where t.boss_id is null)     as regular_turns,
+       count(*) filter (where t.boss_id is not null) as boss_turns,
+       count(tn.id) filter (where tn.kind = 'link')  as link_nodes
+  from turns t
+  join games g on g.uuid = t.game_uuid
+  left join turn_nodes tn on tn.turn_uuid = t.uuid
+ where version_key(g.version) >= analytics_cutoff();
+```
+
+Zeros there mean the link columns are NULL by construction — and the card says
+*"no turn-level data yet"* rather than showing **0.0 links per turn**, which
+would be a striking and completely false statistic.
+
+The rendered card withholds a **win rate** below 5 finished runs: "50%" over two
+runs is one win wearing a decimal point.
+
+"Most drafted" is **always shown**, because a missing field reads as "this player
+drafts nothing":
+
+| Case | Card says |
+|---|---|
+| An item repeated | `Ablution — picked 2×` (`each` only with more than one name) |
+| Picks, none repeated | `Nothing picked twice yet — 6 picks across 2 runs, every one different` |
+| No picks at all | `No draft picks recorded for these runs` |
+| View predates `draft_picks` | `Not available` — neither claim can be made, so neither is |
 
 Autocomplete sources: `active_players_view` for players, `heroes` for heroes, and
 `game_stats` for versions — ⚠️ **`game_stats` does not exist**, so the version

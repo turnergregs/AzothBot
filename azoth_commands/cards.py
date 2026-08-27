@@ -6,7 +6,7 @@ from azoth_commands.helpers import safe_interaction, generate_and_upload_image, 
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_BUCKET_NAMES
 from supabase_helpers import fetch_all, update_record
-from azoth_logic import art_cache, card_render, content_index
+from azoth_logic import art_cache, card_render, content_index, taxonomy
 
 TABLE_NAME = "cards"
 MODEL_NAME = "card"
@@ -218,14 +218,14 @@ def add_card_commands(cls):
 	@create_card_cmd.on_autocomplete("element")
 	@update_card_cmd.on_autocomplete("element")
 	async def autocomplete_element(self, interaction: Interaction, input: str):
-		suggestions = autocomplete_from_table("card_elements", input)
+		suggestions = taxonomy.suggest("card_elements", input)
 		await interaction.response.send_autocomplete(suggestions)
 
 
 	@create_card_cmd.on_autocomplete("type")
 	@update_card_cmd.on_autocomplete("type")
 	async def autocomplete_type(self, interaction: Interaction, input: str):
-		suggestions = autocomplete_from_table("card_types", input)
+		suggestions = taxonomy.suggest("card_types", input)
 		await interaction.response.send_autocomplete(suggestions)
 
 
@@ -237,7 +237,7 @@ def add_card_commands(cls):
 		existing = parts[:-1]
 		current = parts[-1]
 
-		matches = autocomplete_from_table("card_attributes", current)
+		matches = taxonomy.suggest("card_attributes", current)
 
 		prefix = ", ".join(existing) + ", " if existing else ""
 		suggestions = [prefix + match for match in matches][:25]
@@ -248,20 +248,22 @@ def add_card_commands(cls):
 	@update_card_cmd.on_autocomplete("name")
 	# @delete_card_cmd.on_autocomplete("name")
 	async def autocomplete_card_name(self, interaction: Interaction, input: str):
-		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
 		await interaction.response.send_autocomplete(matches[:25])
 
 
 	@create_card_cmd.on_autocomplete("deck")
 	async def autocomplete_card_decks(self, interaction: Interaction, input: str):
-		from azoth_commands.autocomplete import autocomplete_from_table
 
+		# Every unarchived deck. This used to filter on `decks.content_type`,
+		# which was dropped 2026-08-27 -- `deck_contents` carries the type per
+		# ROW, so a deck can hold anything and there is no deck-level type to
+		# filter on any more.
 		suggestions = autocomplete_from_table(
 			table_name="decks",
 			input=input,
 			column="name",
-			filters={"content_type": "cards"}
+			filters={"archived_at": None}
 		)
 
 		await interaction.response.send_autocomplete(suggestions[:25])

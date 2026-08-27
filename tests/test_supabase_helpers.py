@@ -104,7 +104,32 @@ def test_sort_prefix_controls_direction(monkeypatch, fake_supabase):
     fs = fake_supabase({"games": []})
     monkeypatch.setattr(h, "supabase", fs)
     h.fetch_all("games", sort=["-created_at", "name"])
-    assert fs.log["games"]["order"] == [("created_at", True), ("name", False)]
+    assert fs.log["games"]["order"] == [("created_at.desc,name.asc", False)]
+
+
+def test_multi_column_sort_is_one_request_parameter(monkeypatch, fake_supabase):
+    """REGRESSION (2026-08-27): every column after the first was ignored.
+
+    postgrest-py's .order() does `params.add("order", ...)`, so a call per column
+    sends `order=a&order=b` and PostgREST honours only the first. `/decks` asked
+    for `["usage_type", "name"]` and got decks grouped by usage type and then
+    ordered arbitrarily inside each group -- which reads as a working sort until
+    you look at it. PostgREST wants one `order=a.asc,b.asc`.
+    """
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    fs = fake_supabase({"decks": []})
+    monkeypatch.setattr(h, "supabase", fs)
+    h.fetch_all("decks", sort=["usage_type", "name"])
+    assert len(fs.log["decks"]["order"]) == 1, "one call, not one per column"
+    assert fs.log["decks"]["order"][0][0] == "usage_type.asc,name.asc"
+
+
+def test_a_single_column_sort_still_carries_its_direction(monkeypatch, fake_supabase):
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    fs = fake_supabase({"games": []})
+    monkeypatch.setattr(h, "supabase", fs)
+    h.fetch_all("games", sort=["-created_at"])
+    assert fs.log["games"]["order"] == [("created_at.desc", False)]
 
 
 def test_limit_is_pushed_to_the_server(monkeypatch, fake_supabase):

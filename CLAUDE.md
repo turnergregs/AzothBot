@@ -15,8 +15,9 @@ Three things cause more wrong conclusions here than anything else.
 **1. Which Supabase key is loaded changes what you can see — silently.**
 The deployed bot uses the **service-role** key: full read/write, RLS bypassed.
 A local `.env` may hold the **anon** key, which cannot read `turns`,
-`turn_nodes`, `levelups`, `rituals`, `consumables`, `macros`, `reports`, or the
-`deck_*` taxonomy tables. PostgREST returns **HTTP 200 with an empty array**, not
+`turn_nodes`, `levelups`, `rituals`, `consumables` or `reports`. (**Not** `macros` — it has a public read
+policy and is genuinely empty. It is deliberately absent from
+`ANON_UNREADABLE`.) PostgREST returns **HTTP 200 with an empty array**, not
 an error. Check the key before concluding a table is empty.
 
 **2. Supabase failures raise; `[]` now means genuinely empty.** Fixed
@@ -98,7 +99,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 438 tests, all offline** (`docs/TESTING.md`):
+**pytest, 599 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest
@@ -164,6 +165,9 @@ See `docs/CONTENT_PIPELINE.md`.
   file and history matters more
 - Don't change the schema from here — it originates in the game repo's
   `db/migrations/`
+- Don't add a taxonomy table back. Elements, card types, attributes and
+  deck types live in `azoth_logic/taxonomy.py`, beside the game constants
+  they mirror; adding a value is a code change in both repos
 - Don't re-add a `/delete_*` command. All four were removed 2026-08-27 —
   `cards`/`aspects`/`events` have no `archived_at`, so those deletes were
   unrecoverable and also pruned the game's offline snapshot. Retire content

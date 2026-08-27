@@ -1,8 +1,11 @@
 """Tests for the multi-card layouts.
 
-Both the grid and the hand are STATIC by design: a 110-card deck animating at 60
-frames each would be tens of megabytes and unreadable at thumbnail size, so the
-animation stays on `/render`.
+The grid and the hand are STATIC by design: a 110-card deck animating at 60
+frames each would be tens of megabytes and unreadable at thumbnail size.
+
+The upgrade comparison is the exception -- two faces, not a hundred, so it
+animates whenever either side has eigenfunction art. It composes frames and
+hands them to the same `card_render.to_gif` every other renderer uses.
 """
 import io
 
@@ -242,3 +245,152 @@ def test_a_mixed_pool_fetches_per_kind(monkeypatch):
     assert ("cardimages", "c.png") in seen
     assert ("aspectimages", "a.png") in seen
     assert not [b for b, _ in seen if _ == "r.png"], "the rite must not be downloaded"
+
+
+# ---------------------------------------------------------------------------
+# Upgrade comparison
+# ---------------------------------------------------------------------------
+
+# Far enough apart to survive quantisation into a shared 128-colour palette.
+_TEST_COLOURS = [(220, 30, 30), (30, 200, 30), (40, 60, 230), (230, 210, 40),
+                 (210, 40, 200), (40, 210, 210), (245, 245, 245), (15, 15, 15)]
+
+
+def _frames(n):
+    """`n` RGBA frames that stay distinct through the GIF encoder.
+
+    Two earlier fixtures were too subtle and PIL merged frames it considered
+    identical, so the GIF came back with 29 of 30 -- which reads as a bug in the
+    composition rather than in the test. Flat, saturated, far-apart colours.
+    """
+    assert n <= len(_TEST_COLOURS), "add more colours"
+    return [Image.new("RGBA", (L.CARD_W, L.CARD_H), _TEST_COLOURS[i] + (255,))
+            for i in range(n)]
+
+
+@pytest.fixture
+def sides(monkeypatch):
+    """Install per-face frame lists, bypassing art and the shader."""
+    def install(*counts):
+        queue = list(counts)
+        def fake(item, kind, art, duration, fps):
+            return _frames(queue[item["_i"]])
+        monkeypatch.setattr(deck_render, "_frames_for", fake)
+        monkeypatch.setattr(deck_render, "_animates", lambda i, k, a: queue[i["_i"]] > 1)
+        return [{**_card(f"C{i}"), "_i": i} for i in range(len(counts))]
+    return install
+
+
+def test_a_still_comparison_is_a_png(sides):
+    items = sides(1, 1)
+    data, ext = deck_render.render_comparison(
+        items, ["card", "card"], ["Base", "Upgraded"], animate=True)
+    assert ext == "png"
+    assert Image.open(io.BytesIO(data)).format == "PNG"
+
+
+def test_an_animated_side_makes_it_a_gif(sides):
+    items = sides(6, 1)
+    data, ext = deck_render.render_comparison(
+        items, ["card", "aspect"], ["Base", "Upgraded (Aspect)"], animate=True)
+    assert ext == "gif"
+    assert Image.open(io.BytesIO(data)).n_frames == 6
+
+
+def test_a_still_side_holds_while_the_other_moves(sides):
+    """The common card-into-aspect shape: an animated .exr card upgrading into a
+    flat-art aspect. The aspect has one frame and must simply persist."""
+    items = sides(8, 1)
+    data, ext = deck_render.render_comparison(
+        items, ["card", "aspect"], ["Base", "Upgraded"], animate=True)
+    assert Image.open(io.BytesIO(data)).n_frames == 8
+
+
+def test_frame_count_follows_the_longest_side(sides):
+    items = sides(3, 7)
+    data, _ = deck_render.render_comparison(
+        items, ["card", "card"], ["Base", "Upgraded"], animate=True)
+    assert Image.open(io.BytesIO(data)).n_frames == 7
+
+
+def test_animate_false_forces_the_still_path(sides):
+    items = sides(6, 6)
+    _, ext = deck_render.render_comparison(
+        items, ["card", "card"], ["Base", "Upgraded"], animate=False)
+    assert ext == "png"
+
+
+def test_mismatched_inputs_are_refused(sides):
+    items = sides(1, 1)
+    with pytest.raises(ValueError):
+        deck_render.render_comparison(items, ["card"], ["Base", "Upgraded"])
+    with pytest.raises(ValueError):
+        deck_render.render_comparison([], [], [])
+
+
+def test_the_sheet_is_wide_enough_for_every_face(sides):
+    items = sides(1, 1)
+    data, _ = deck_render.render_comparison(
+        items, ["card", "card"], ["Base", "Upgraded"],
+        card_width=deck_render.COMPARE_CARD_WIDTH, animate=True)
+    width, height = Image.open(io.BytesIO(data)).size
+    assert width == 2 * deck_render.COMPARE_CARD_WIDTH + 3 * deck_render.COMPARE_GUTTER
+    assert height > deck_render.COMPARE_LABEL_BAND, "captions need their band"
+
+
+def test_the_cache_key_changes_when_a_face_does(sides):
+    """Two cards that differ only in rules text must not share a render.
+
+    Keying on one side, or on the name, is how the previous renderer served a
+    stale image after every edit.
+    """
+    art = {}
+    a = _card("Same"); b = _card("Same")
+    base = deck_render._comparison_key([a, b], ["card", "card"],
+                                       ["Base", "Upgraded"], art, 380, 4.0, 15)
+    b2 = {**b, "text": "Draw 2"}
+    changed = deck_render._comparison_key([a, b2], ["card", "card"],
+                                          ["Base", "Upgraded"], art, 380, 4.0, 15)
+    assert base != changed
+
+
+def test_the_cache_key_changes_with_the_captions(sides):
+    """`Upgraded` and `Upgraded (Aspect)` are different images."""
+    art = {}
+    a, b = _card("A"), _card("B")
+    k1 = deck_render._comparison_key([a, b], ["card", "card"],
+                                     ["Base", "Upgraded"], art, 380, 4.0, 15)
+    k2 = deck_render._comparison_key([a, b], ["card", "aspect"],
+                                     ["Base", "Upgraded (Aspect)"], art, 380, 4.0, 15)
+    assert k1 != k2
+
+
+def test_the_cache_key_changes_with_the_sheen(sides):
+    """Both faces are foiled; only the intensity differs. Keying without it
+    would serve a base-intensity render for an upgraded face."""
+    art = {}
+    a, b = _card("A"), _card("B")
+    common = ([a, b], ["card", "card"], ["Base", "Upgraded"], art, 380, 4.0, 15)
+    assert (deck_render._comparison_key(*common, holo_levels=[0.06, 0.06])
+            != deck_render._comparison_key(*common, holo_levels=[0.06, 0.15]))
+
+
+def test_each_side_gets_its_own_sheen_intensity(sides, monkeypatch):
+    """A yes/no flag would flatten base and upgraded into the same foil."""
+    applied = []
+    monkeypatch.setattr(deck_render.holo, "apply_all",
+                        lambda frames, intensity=None: applied.append(intensity) or frames)
+    items = sides(1, 1)
+    deck_render.render_comparison(items, ["card", "card"], ["Base", "Upgraded"],
+                                  holo_levels=[0.06, 0.15], animate=True)
+    assert applied == [0.06, 0.15]
+
+
+def test_a_zero_level_skips_the_sheen(sides, monkeypatch):
+    calls = []
+    monkeypatch.setattr(deck_render.holo, "apply_all",
+                        lambda frames, intensity=None: calls.append(intensity) or frames)
+    items = sides(1, 1)
+    deck_render.render_comparison(items, ["card", "card"], ["Base", "Upgraded"],
+                                  holo_levels=[0.0, 0.15], animate=True)
+    assert calls == [0.15]

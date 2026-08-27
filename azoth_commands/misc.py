@@ -2,34 +2,10 @@ import asyncio
 import io
 import nextcord
 import aiohttp
-from datetime import datetime, timezone
 from nextcord import SlashOption, Interaction
 from azoth_commands.helpers import safe_interaction, pack_fields_into_embeds
 from constants import DEV_GUILD_ID
-from supabase_helpers import fetch_all
-from supabase_client import supabase
-from azoth_logic import bulk_report, content_index, deck_render
-
-
-# Discord messages cap at 2000 chars; leave room for the success summary
-_MAX_ERROR_LINES = 15
-_MAX_RESPONSE_CHARS = 1800
-
-
-def _format_bulk_summary(success_lines: list[str], error_lines: list[str]) -> str:
-	parts: list[str] = []
-	if success_lines:
-		parts.extend(success_lines)
-	if error_lines:
-		shown = error_lines[:_MAX_ERROR_LINES]
-		parts.append("**Errors:**")
-		parts.extend(shown)
-		if len(error_lines) > _MAX_ERROR_LINES:
-			parts.append(f"... and {len(error_lines) - _MAX_ERROR_LINES} more (see bot console).")
-	message = "\n".join(parts)
-	if len(message) > _MAX_RESPONSE_CHARS:
-		message = message[:_MAX_RESPONSE_CHARS] + "\n...(truncated; see bot console)"
-	return message
+from azoth_logic import bulk_apply, bulk_report, content_index, deck_render, taxonomy
 
 
 # How many updated items get drawn. Rendering is ~0.7s each on a cold cache, and
@@ -91,6 +67,16 @@ async def _send_bulk_report(interaction, title, total, groups, error_lines,
         await interaction.followup.send(embed=embeds[-1])
 
 
+async def _download_payload(json_file):
+    """The uploaded attachment, parsed. Returns (payload, error_message)."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(json_file.url) as resp:
+            try:
+                return await resp.json(), None
+            except Exception as e:
+                return None, f"❌ Uploaded file is not valid JSON: {e}"
+
+
 def add_misc_commands(cls):
 
 	@nextcord.slash_command(name="bulk_update", description="Bulk update fields on existing records using a JSON file.", guild_ids=[DEV_GUILD_ID])
@@ -100,84 +86,33 @@ def add_misc_commands(cls):
 	    interaction: Interaction,
 	    json_file: nextcord.Attachment = SlashOption(description="Upload a JSON file", required=True)
 	):
-	    # Download the uploaded JSON file
-	    async with aiohttp.ClientSession() as session:
-	        async with session.get(json_file.url) as resp:
-	            try:
-	                payload = await resp.json()
-	            except Exception as e:
-	                return f"❌ Uploaded file is not valid JSON: {e}"
+	    payload, error = await _download_payload(json_file)
+	    if error:
+	        return error
 
-	    if not isinstance(payload, dict):
-	        return "❌ JSON must be an object with table names as keys."
+	    # One RPC, one transaction. A bad record anywhere aborts the whole
+	    # payload, so there is no partial state to report -- either every record
+	    # applied or none did. The call is blocking network I/O; off the loop.
+	    try:
+	        results = await asyncio.to_thread(bulk_apply.apply, payload, "update")
+	    except bulk_apply.BulkApplyError as e:
+	        return f"❌ Nothing was written — the whole payload was rolled back.\n{e}"
 
-	    success_lines: list[str] = []
-	    error_lines: list[str] = []
 	    changes: dict = {}
 	    touched: list = []
-	    total_updates = 0
-
-	    # Iterate over each table in the JSON
-	    for table, updates in payload.items():
-	        if not isinstance(updates, list):
-	            error_lines.append(f"⚠️ Skipped `{table}` (value is not a list).")
-	            continue
-
-	        table_updates = 0
-	        for entry in updates:
-	            original_name = entry.get("name")
-	            if not original_name:
-	                error_lines.append(f"⚠️ `{table}`: entry missing `name` field; skipped.")
-	                continue
-
-	            update_data = entry.copy()
-	            update_data.pop("name", None)
-
-	            if "new_name" in update_data:
-	                update_data["name"] = update_data.pop("new_name")
-
-	            # Lookup record by original name
-	            try:
-	                matches = fetch_all(table, filters={"name": original_name})
-	            except Exception as e:
-	                error_lines.append(f"❌ `{table}` / `{original_name}`: lookup failed — `{e}`")
-	                continue
-
-	            if not matches:
-	                error_lines.append(f"⚠️ `{table}` / `{original_name}`: no record with that name.")
-	                continue
-
-	            record = matches[0]
-	            try:
-	                update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-	                response = supabase.table(table).update(update_data).eq("id", record["id"]).execute()
-	                if response.data:
-	                    table_updates += 1
-	                    # `record` is the row as it was; response.data[0] is the row
-	                    # as written. Diffing them is what turns "updated 5
-	                    # records" into a report you can actually check.
-	                    after = response.data[0]
-	                    changes[(table, after.get("name") or original_name)] = bulk_report.diff(record, after)
-	                    if table in bulk_report.RENDERABLE:
-	                        touched.append((after, bulk_report.RENDERABLE[table]))
-	                else:
-	                    error_lines.append(f"⚠️ `{table}` / `{original_name}`: update returned no rows.")
-	            except Exception as e:
-	                error_lines.append(f"❌ `{table}` / `{original_name}`: {e}")
-
-	        if table_updates > 0:
-	            success_lines.append(f"✅ Updated {table_updates} record(s) in `{table}`.")
-	            total_updates += table_updates
-
-	    if total_updates == 0 and not error_lines:
-	        return "❌ No records were updated (input contained no actionable rows)."
-
-	    if total_updates == 0:
-	        return "❌ No records were updated.\n" + _format_bulk_summary(success_lines, error_lines)
+	    for result in results:
+	        table = result["table"]
+	        # `before` and `after` come back from the function precisely so the
+	        # field diff can still be built here, where the tests can reach it.
+	        changes[(table, result["name"])] = bulk_report.diff(
+	            result["before"] or {}, result["after"])
+	        if table in bulk_report.RENDERABLE:
+	            touched.append((result["after"], bulk_report.RENDERABLE[table]))
 
 	    content_index.invalidate()
+	    taxonomy.invalidate()
 	    await _send_bulk_report(
-	        interaction, "Bulk update", total_updates, changes, error_lines,
+	        interaction, "Bulk update", len(results), changes, [],
 	        touched=touched, empty_note="no field changed")
 
 
@@ -191,63 +126,33 @@ def add_misc_commands(cls):
 	    interaction: Interaction,
 	    json_file: nextcord.Attachment = SlashOption(description="Upload a JSON file", required=True)
 	):
-	    # Download the uploaded JSON file
-	    async with aiohttp.ClientSession() as session:
-	        async with session.get(json_file.url) as resp:
-	            try:
-	                payload = await resp.json()
-	            except Exception as e:
-	                return f"❌ Uploaded file is not valid JSON: {e}"
+	    payload, error = await _download_payload(json_file)
+	    if error:
+	        return error
 
-	    if not isinstance(payload, dict):
-	        return "❌ JSON must be an object with table names as keys."
+	    # All-or-nothing, same as /bulk_update. This matters more on insert: a
+	    # half-applied insert used to leave orphan rows that no command could
+	    # remove once the /delete_* commands were retired.
+	    try:
+	        results = await asyncio.to_thread(bulk_apply.apply, payload, "insert")
+	    except bulk_apply.BulkApplyError as e:
+	        return f"❌ Nothing was written — the whole payload was rolled back.\n{e}"
 
-	    success_lines: list[str] = []
-	    error_lines: list[str] = []
 	    created: dict = {}
-	    total_inserts = 0
-
-	    for table, records in payload.items():
-	        if not isinstance(records, list):
-	            error_lines.append(f"⚠️ Skipped `{table}` (value is not a list).")
-	            continue
-
-	        table_inserts = 0
-	        for index, entry in enumerate(records):
-	            if not isinstance(entry, dict) or not entry:
-	                error_lines.append(f"⚠️ `{table}[{index}]`: entry is empty or not an object; skipped.")
-	                continue
-
-	            label = entry.get("name") or f"index {index}"
-	            try:
-	                response = supabase.table(table).insert(entry).execute()
-	                if response.data:
-	                    table_inserts += 1
-	                    created.setdefault(table, []).append(
-	                        bulk_report.summarize_new(table, response.data[0]))
-	                else:
-	                    error_lines.append(f"⚠️ `{table}` / `{label}`: insert returned no data.")
-	            except Exception as e:
-	                error_lines.append(f"❌ `{table}` / `{label}`: {e}")
-
-	        if table_inserts > 0:
-	            success_lines.append(f"✅ Inserted {table_inserts} record(s) into `{table}`.")
-	            total_inserts += table_inserts
-
-	    if total_inserts == 0 and not error_lines:
-	        return "❌ No records were inserted (input contained no actionable rows)."
-
-	    if total_inserts == 0:
-	        return "❌ No records were inserted.\n" + _format_bulk_summary(success_lines, error_lines)
+	    for result in results:
+	        table = result["table"]
+	        created.setdefault(table, []).append(
+	            bulk_report.summarize_new(table, result["after"]))
 
 	    content_index.invalidate()
+	    taxonomy.invalidate()
 	    # Deliberately NOT rendered. Art is uploaded after an insert, not with
 	    # it, so every card would come back with a hole in the middle -- which
 	    # reads as a broken render rather than as "no art yet". The per-row
 	    # summary flags `no art` instead.
 	    await _send_bulk_report(
-	        interaction, "Bulk insert", total_inserts,
-	        {(t, ""): lines for t, lines in created.items()}, error_lines,
+	        interaction, "Bulk insert", len(results),
+	        {(t, ""): lines for t, lines in created.items()}, [],
 	        footer="Art is uploaded separately, so nothing is rendered here.")
 
 

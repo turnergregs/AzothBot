@@ -4,6 +4,9 @@
 GIF** for cards with eigenfunction art, a PNG for the rest. The same command
 covers aspects and rites; see [COMMANDS.md](COMMANDS.md#content-lookup).
 
+A card that has an **upgrade** renders as a static side-by-side comparison
+instead — see [Upgrade comparison](#upgrade-comparison) below.
+
 Rewritten 2026-08-26. The previous renderer targeted a card template the game had
 since replaced.
 
@@ -16,10 +19,117 @@ border, art, valence, name, subtype and rules text with inline symbols.
 
 | Skipped | Why |
 |---|---|
-| `base_card_shader.gdshader` (1,136 lines) | Tilt, specular, drop shadow, holographic sheen — all responses to hovering or moving a card in-game |
+| `base_card_shader.gdshader` (1,136 lines) | Tilt, specular, drop shadow — responses to hovering or moving a card in-game. **Its holographic block is now ported** for upgraded cards: `azoth_logic/holo.py`, see [The upgraded card](#the-upgraded-card) |
 | Enhancements (`enhancement_visuals.gd`) | Applied during a run; never present on a card as authored |
 | Attributes | Same — granted in-game |
 | Split-side dimming | `SPLIT_INACTIVE_DIM` fades the side you are not hovering — in-game state with no meaning in a snapshot |
+
+
+## Holographic sheen
+
+**Every card wears it**, not just upgraded ones. `card.tscn`, `aspect_card.tscn`
+and `event_card.tscn` all load `scenes/cards/base_card_material.tres`, where
+`_enableHolographic = true` at `_holoIntensity = 0.06`. `azoth_logic/holo.py` is
+the port.
+
+⚠️ **Take the constants from the MATERIAL, not the shader's uniform defaults.**
+`base_card_shader.gdshader` declares `_brightnessThreshold = 0.15`,
+`_saturationWeight = 1.5`, `_metallicness = 0.7`; the material overrides all six
+with `0.1`, `2.0` and `3.0`. The first version of this port used the declared
+defaults and the sheen was invisible on white faces — which is most of what a
+**catalyst** is, since a colourless card gets the white border and white art and
+is coloured by nothing else. They rendered flat white in Discord while
+shimmering in-game.
+
+`_metallicness = 3.0` is outside `[0, 1]` deliberately: GLSL `mix` extrapolates,
+so `mix(tinted, reflection, 3.0)` overshoots hard toward the rainbow. That
+overshoot is what lets white pick up colour at an intensity of 0.06. Clamping it
+to a normal blend puts the bug back.
+
+**Where it is applied, and where it deliberately is not:**
+
+| Path | Sheen |
+|---|---|
+| `/render` single face (`render_png`, `render_gif`, `render_aspect`, `render_rite`) | ✅ 0.06 |
+| Upgrade comparison, base face | ✅ 0.06 |
+| Upgrade comparison, upgraded face | ✅ 0.15 |
+| Deck grid, sample hand, `/search` results | ❌ `sheen=False` |
+
+Grids draw at 200px, where the effect cannot be seen, and a 110-card deck would
+pay for it once per card to show nothing. `deck_render._still_for` passes
+`sheen=False` for that reason, which is also why the comparison applies it
+itself — the two faces need different intensities.
+
+**Cost:** ~70ms per face at full card size, so ~4s of a 60-frame loop. Measured
+worst case through the real commands, cold: **8.0s for a comparison, 7.1s for a
+single animated card**, against a 30s timeout — and cached after.
+
+## The upgraded card
+
+Two things mark the upgraded face, both matching the game.
+
+**A `+` on the name.** `base_card.gd::set_upgrade_card_visuals` appends a single
+one and guards against doubling it — `Harbinger` becomes `Harbinger+`. It is a
+label, never data: the row that reaches the cache key and the filename is still
+the row the database holds.
+
+**A stronger sheen.** Every card is foiled at `0.06`; `set_upgrade_card_visuals`
+raises an upgraded one to `0.15`. The difference is the marker — a base card is
+not un-foiled. The rainbow itself ports exactly — a spectrum
+through three sines at 0, 2pi/3 and 4pi/3, saturation-boosted around a
+`dot(colour, vec3(0.633))` grey. So does the `holoAppeal` mask, including the
+part that keeps white suppressed: the rules text is white, and shimmering text
+is unreadable text.
+
+What could not port is what made the effect exist. In-game the spectrum comes
+off a surface normal tilted by where the card sits and where the pointer is;
+there is no tilt in a rendered image, so that term is constant and the rainbow
+would be frozen. It is replaced by a phase that advances once around the
+animation loop — the motion a player gets from tilting, a viewer gets from the
+GIF playing. `_fresnelPower` is the same kind of term, and its visible
+consequence (stronger toward the edges) is kept as a radial falloff, because a
+foil that shimmers hardest in the middle of the card reads as a smudge.
+
+It is subtle in a single frame and much clearer in motion, which is how the
+game's own is. `holo.HOLO_INTENSITY` and `holo.UPGRADED_INTENSITY` are the dials.
+
+## Upgrade comparison
+
+`/render` composes a card beside its upgraded state through
+`deck_render.render_comparison`, which takes parallel `items` / `kinds` /
+`labels`. `kinds` is **required** here, unlike the deck paths that default
+everything to `card`: 28 cards upgrade into aspects, and the two sides of a
+comparison are routinely different content types.
+
+It reuses `_faces` and `fetch_art_many`, so mixed kinds and parallel art fetch
+come for free — the same machinery `/search` uses for a mixed result grid.
+
+**Animated**, unlike the grid and the hand. `_frames_for` mirrors
+`card_render.render_gif` and `fate_render.render_aspect` up to but *not*
+including `to_gif` — stopping short of the encoder is what makes them
+composable. Frames are composed side by side and handed to the same
+`card_render.to_gif` every other renderer uses.
+
+A side with one frame holds it while the other moves, so the common
+animated-card-into-flat-aspect case still animates on the left. When no side
+animates it returns a PNG (16 of 197 cards).
+
+Each side is cropped to its **own** alpha box, computed across all of its frames
+at once so the crop cannot jitter mid-animation. Cropping matters more here than
+in a grid: a card face carries ~63px of empty canvas above and below (which
+`render_png` crops for exactly this reason) and an aspect face does not, so
+scaling both to one box without cropping drew the card visibly smaller than the
+aspect beside it.
+
+`COMPARE_GIF_COLORS = 128`, double the single-card 64, because one palette now
+covers two colour schemes — an orange card beside a pink aspect. That is the same
+budget per side, and costs about 15% on the file.
+
+Measured across 60 comparisons: 0.71 MB largest GIF against Discord's 10 MB cap,
+4.5s slowest render against a 30s timeout, instant on a cache hit.
+
+Captions are **ASCII only**. The card font has no arrow glyph and a missing glyph
+renders as a silent gap, so `Upgraded -> Aspect` came out as `Upgraded   Aspect`.
 
 ## Modules
 

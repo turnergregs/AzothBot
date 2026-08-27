@@ -20,6 +20,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from azoth_logic import art_cache
+from azoth_logic import holo
 from azoth_logic import card_layout as L
 from azoth_logic import eigenfunction_art as ef
 from azoth_logic import rich_text
@@ -369,7 +370,11 @@ def render_gif(card: dict, art_bytes: bytes, duration=4.0, fps=15) -> bytes:
         frame = face.copy()
         frame.alpha_composite(art, pos)
         frames.append(frame)
-    return to_gif(frames, fps=fps)
+    # Every card wears the holographic material in-game
+    # (scenes/cards/base_card_material.tres, `_enableHolographic = true`).
+    # It is most of what a colourless catalyst looks like: white art and a white
+    # border, coloured only by this.
+    return to_gif(holo.apply_all(frames), fps=fps)
 
 
 def render_png(card: dict, art_bytes: bytes | None) -> bytes:
@@ -379,8 +384,12 @@ def render_png(card: dict, art_bytes: bytes | None) -> bytes:
     carry ~63px of empty canvas above and below, which Discord scaled down along
     with the card. Cropping is done HERE rather than in render_still, because
     deck_render lays its grid out from the full CARD_W x CARD_H box.
+
+    The holographic sheen is applied HERE for the same reason: a deck grid draws
+    at 200px, where the effect is invisible, and a 110-card deck would pay for it
+    110 times over to show nothing.
     """
-    still = render_still(card, art_bytes)
+    still = holo.apply(render_still(card, art_bytes))
     buf = io.BytesIO()
     still.crop(alpha_bbox([still])).save(buf, format="PNG")
     return buf.getvalue()

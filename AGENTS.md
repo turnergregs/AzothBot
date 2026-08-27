@@ -27,8 +27,10 @@ Read these before drawing any conclusion from a command's output or a query.
 **1. The Supabase key determines what you can see, and failure is silent.**
 The deployed bot uses the **service-role** key — full read/write, RLS bypassed. A
 local `.env` may hold the **anon** key, which cannot read `turns`, `turn_nodes`,
-`levelups`, `rituals`, `consumables`, `macros`, `reports`, or the `deck_*`
-taxonomy tables. PostgREST returns **HTTP 200 with an empty array**, not an error.
+`levelups`, `rituals`, `consumables` or `reports`. (**Not** `macros` — it has a
+public read policy and is genuinely empty. The six `card_*` / `deck_*` taxonomy
+tables were dropped 2026-08-27; a read of one now fails loudly with PGRST205.)
+PostgREST returns **HTTP 200 with an empty array**, not an error.
 If something reads as empty, check the key before concluding the table is empty.
 See [DB_SCHEMA.md § Which key you are holding](docs/DB_SCHEMA.md#azothbot-which-key-you-are-holding).
 
@@ -198,7 +200,7 @@ ones that bite most often:
 
 ## Testing
 
-**pytest, 438 tests, all offline.** See `docs/TESTING.md`.
+**pytest, 599 tests, all offline.** See `docs/TESTING.md`.
 
 ```bash
 .venv/bin/python -m pytest
@@ -233,6 +235,9 @@ real `turns` data. There is no CI. See `docs/TESTING.md` § Gaps.
 - **Don't write content directly into the game repo's `assets/game_data/`** — that
   is a fallback snapshot. Content goes into Supabase, via `/bulk_insert`.
 - **Don't add a write command without `require_authorized=True`.**
+- **Don't add a taxonomy table back.** Elements, card types, attributes and
+  deck types live in `azoth_logic/taxonomy.py`, beside the game constants they
+  mirror. Adding a value is a code change in both repos, not a new row.
 - **Don't re-add a `/delete_*` command.** All four were removed 2026-08-27.
   `cards`, `aspects` and `events` have no `archived_at` column, so those deletes
   were unrecoverable — and the game's `prune_content_dirs()` reads a missing row

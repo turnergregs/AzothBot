@@ -185,11 +185,15 @@ def add_aspect_commands(cls):
 	async def autocomplete_fate_decks(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 
+		# Every unarchived deck. This used to filter on `decks.content_type`,
+		# which was dropped 2026-08-27 -- `deck_contents` carries the type per
+		# ROW, so a deck can hold anything and there is no deck-level type to
+		# filter on any more.
 		suggestions = autocomplete_from_table(
 			table_name="decks",
 			input=input,
 			column="name",
-			filters={"content_type": "fates"}
+			filters={"archived_at": None}
 		)
 
 		await interaction.response.send_autocomplete(suggestions[:25])

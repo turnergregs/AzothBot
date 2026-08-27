@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 438 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 599 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -22,9 +22,14 @@ Added 2026-08-26. Before that there was no suite at all.
 | `tests/test_bulk_report.py` | 24 | Bulk diffs: changed-fields-only, jsonb shape not contents, announced truncation |
 | `tests/test_command_registration.py` | 22 | **What the cog actually exposes**, and that no name in it is undefined at runtime |
 | `tests/test_art_cache.py` | 21 | Both caches: content-hash render keys, art TTL, invalidation after a re-upload |
-| `tests/test_content_get.py` | 20 | The `/show` embed: which fields show, which are deliberately omitted |
+| `tests/test_content_get.py` | 31 | The `/show` embed: which fields show, which are deliberately omitted — plus `/rules`, which carries exactly the four `jsonb` fields `/show` drops |
+| `tests/test_stats_format.py` | 27 | `/stats` rendering: `avg_combo_log10` as an order of magnitude, compacted combos, and a footer that never omits the denominator |
+| `tests/test_holo.py` | 18 | The holographic sheen: constants taken from the MATERIAL not the shader defaults, `_metallicness` extrapolating past 1, white tinting (the catalyst bug) while staying weaker than saturated colour |
+| `tests/test_upgrades.py` | 32 | The engine's upgrade rules, transcribed: tier selection and gaps, `_added` append semantics, replace-before-add ordering, and cards that upgrade into aspects |
+| `tests/test_taxonomy.py` | 26 | The vocabularies that were six tables: canonical lists match the game, in-use values are unioned in, a failed read never loses the hardcoded list |
+| `tests/test_bulk_apply.py` | 21 | The client half of the transactional bulk write: payload passed through unmangled, malformed input refused without a round trip, database errors made readable |
 | `tests/test_content_index.py` | 18 | The autocomplete index: TTL, explicit invalidation, ref encoding, match ranking |
-| `tests/test_deck_render.py` | 17 | Grid and hand layout, art deduplication, per-kind bucket routing |
+| `tests/test_deck_render.py` | 26 | Grid and hand layout, art deduplication, per-kind bucket routing — plus the upgrade comparison: gif-vs-png selection, a still side holding while the other animates, and cache keys that cover both faces |
 | `tests/test_sync_assets.py` | 8 | The vendored-asset sync, and the shader-exported backgrounds it deliberately cannot sync |
 
 ## What these tests are for
@@ -109,6 +114,21 @@ revert.
 
 Honest list of what is **not** covered:
 
+- **`public.bulk_apply` is not covered by pytest**, and cannot be — it is a
+  plpgsql function, and the whole point of it is transaction behaviour the
+  offline suite has no database to observe. It has its own verification instead:
+  `db/tests/bulk_apply_test.sql` in the **game repo**, run against a throwaway
+  Postgres. Ten scenarios, including the rollback cases that are the reason the
+  function exists.
+
+  ```bash
+  createdb bulk_apply_scratch
+  psql -q bulk_apply_scratch -f db/tests/bulk_apply_test.sql
+  dropdb bulk_apply_scratch
+  ```
+
+  `tests/test_bulk_apply.py` covers only the client half. **Change the SQL and
+  the pytest suite stays green** — run the script.
 - **The turn-grain queries have never run against live `turns`.** The aggregation
   is tested against fixtures; the actual PostgREST calls are unverified because
   the tables need the service-role key. First real daily report is the check.

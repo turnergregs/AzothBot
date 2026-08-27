@@ -33,24 +33,22 @@ ANON_INSERT_ONLY = frozenset({
 	"turns", "turn_nodes", "levelups", "reports",
 })
 
-# These are all slated for deletion (2026-08-26): the `rituals` table held the
-# precursor to Aspects and is dead; the `*_types` tables populated slash-command
-# dropdowns that no longer exist. Once dropped, reads return PGRST205 ("table not
-# found") rather than an empty set, which is already a loud failure -- remove the
-# entry here at that point.
+# Retired content types. Kept in the database on purpose -- they still hold data
+# worth referencing -- but nothing reads them at runtime, and RLS is deny-all, so
+# an anon read of either looks exactly like an empty table.
 ANON_NO_POLICY = frozenset({
-	# Retired content types. Kept in the database on purpose -- they still hold
-	# data worth referencing -- but nothing reads them at runtime.
 	"rituals", "consumables",
-	# These populate slash-command dropdowns in cards.py / decks.py. Still wired
-	# up, so leave them here: without the guard an anon key makes the dropdown
-	# look empty rather than unreadable.
-	"card_attributes", "card_elements", "card_types",
-	"deck_types", "deck_content_types", "deck_usage_types",
-	# `fate_types` was DROPPED 2026-08-26 and is deliberately absent: a missing
-	# table already fails loudly with PGRST205, and listing it here would report
-	# a permissions problem for what is really a gone table.
 })
+
+# The six taxonomy tables that used to live here -- `card_attributes`,
+# `card_elements`, `card_types`, `deck_types`, `deck_content_types`,
+# `deck_usage_types` -- were DROPPED 2026-08-27. Their vocabularies moved into
+# `azoth_logic/taxonomy.py`, next to the game constants they mirror.
+#
+# They are deliberately absent rather than kept "just in case", for the same
+# reason `fate_types` is: a missing table already fails loudly with PGRST205,
+# and listing it here would report a permissions problem for what is really a
+# gone table.
 
 ANON_UNREADABLE = ANON_INSERT_ONLY | ANON_NO_POLICY
 
@@ -86,7 +84,9 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 	- columns: column names to select (defaults to '*')
 	- filters: field -> value. None becomes `is null`, a list becomes `in`,
 	  anything else becomes `eq`
-	- sort: e.g. ["-created_at", "name"]; a leading '-' means descending
+	- sort: e.g. ["-created_at", "name"]; a leading '-' means descending.
+	  Multiple columns apply left to right (this was broken until 2026-08-27 --
+	  only the first took effect)
 	- limit: pushed to PostgREST. WITHOUT it, PostgREST caps the response at
 	  1000 rows, so slicing the result in Python silently reads a truncated
 	  page of a larger table. Pass a limit whenever you only need the top N.
@@ -115,11 +115,20 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 				query = query.eq(key, value)
 
 	if sort:
-		for s in sort:
-			if s.startswith("-"):
-				query = query.order(s[1:], desc=True)
-			else:
-				query = query.order(s)
+		# ONE order call, comma-joined -- not one per column.
+		#
+		# postgrest-py's .order() does params.add("order", ...), so calling it
+		# twice sends `order=a&order=b` and PostgREST honours only the first.
+		# Every column after the first was silently dropped: `sort=["usage_type",
+		# "name"]` grouped correctly and then ordered arbitrarily WITHIN each
+		# group, which looks like a sort that works until you read it closely.
+		#
+		# PostgREST wants `order=a.asc,b.desc`. The direction suffix is explicit
+		# on every column because it has to be for the ones after the first.
+		spec = ",".join(
+			f"{column[1:]}.desc" if column.startswith("-") else f"{column}.asc"
+			for column in sort)
+		query = query.order(spec)
 
 	if limit is not None:
 		query = query.limit(limit)

@@ -16,7 +16,8 @@ no database-level guard. See [ARCHITECTURE.md § safe_interaction](ARCHITECTURE.
 | Command | Access | Parameters |
 |---|---|---|
 | `/show` | — | `name`* — any card, aspect or rite |
-| `/render` | — | `name`* — any card, aspect or rite |
+| `/render` | — | `name`*, `compare?` — any card, aspect or rite |
+| `/rules` | — | `name`* — the mechanics JSON, as a file |
 
 **One command each, across all content types.** Replaced the six typed
 `/get_*` and `/render_*` commands on 2026-08-26.
@@ -45,7 +46,7 @@ It used to dump the raw database row as JSON. Deliberately **not** shown now:
 
 | Omitted | Why |
 |---|---|
-| `upgrades` | A nested blob that dwarfs the card, and its rules text reads as the card's own |
+| `upgrades` | A nested blob that dwarfs the card, and its rules text reads as the card's own. **`/rules` carries it** |
 | `created_at` / `updated_at` / `created_by` | Audit metadata |
 | `image` / `image_data` | Rendering internals — `/render` is the view |
 | `actions` / `triggers` / `properties` | `jsonb`, and past Discord's 2000-char limit on their own |
@@ -53,6 +54,57 @@ It used to dump the raw database row as JSON. Deliberately **not** shown now:
 `type` is shown only when it is *not* `spell` — 328 of 400 cards are spells, so
 printing it on each is noise; a catalyst is the exception worth naming. A null
 element reads as **Colourless** rather than blank, which is what 64 cards have.
+
+### `/render` and the upgrade comparison
+
+When a card has an upgrade, `/render` draws it **beside its upgraded state**,
+captioned `Base` / `Upgraded`. 197 of 400 cards have one, and for those the
+comparison is the only view that shows what the upgrade actually does. A card
+with no upgrade renders exactly as before.
+
+**A card can upgrade into an aspect** — it transforms and moves to the aspect
+bar — so the upgraded face is drawn by the *aspect* renderer and captioned
+`Upgraded (Aspect)`. 28 cards do this. Drawing that face as a card would show a
+card that cannot exist.
+
+**The comparison animates.** Both faces run their eigenfunction art at once, and
+a still side simply holds its frame while the other moves — which is the common
+shape, since an animated `.exr` card often upgrades into a flat-art aspect. When
+neither side animates it falls back to a PNG (16 of the 197).
+
+This is the one multi-face layout here that is not static, and it earns it: two
+faces, not a hundred. Measured across 60 comparisons — **largest GIF 0.71 MB
+against Discord's 10 MB cap, slowest render 4.5s against a 30s timeout.** GIFs
+are cached like any other animated render, so a repeat is instant.
+
+`compare:False` gives the single face on its own; `compare:True` on a card with
+no upgrade says so rather than silently rendering one face.
+
+The merge follows the engine exactly (`GameContentData.apply_upgrade`):
+`_added` keys append and everything else replaces, replacements land before
+additions, and a string `x_added` is dropped when `x` is replaced in the same
+entry. Tiers are cumulative. `azoth_logic/upgrades.py` is the transcription, and
+the game is the authority — a disagreement is a bug there, not here.
+
+---
+
+### `/rules`
+
+The four `jsonb` fields `/show` deliberately omits — `actions`, `triggers`,
+`properties`, `upgrades` — as a **file attachment**, which has no 2,000-character
+limit. The richest card currently runs to 5.8 KB, nearly 3× what a message can
+carry, which is why this is a file and not an embed.
+
+Empty fields are dropped rather than printed as `[]`: "no triggers" and "does not
+use triggers" are different claims. 27 cards have no mechanics at all, and the
+command says so instead of sending an empty file.
+
+`upgrades` is included, and is often the most interesting part — **a card can
+upgrade into an aspect**, transforming and moving to the aspect bar, and the
+upgrade payload is the only place that transformation is visible.
+
+Until this existed, the documented way to read any of these was "query the
+database directly" — for the fields that actually define the mechanic.
 
 ---
 
@@ -74,9 +126,9 @@ element reads as **Colourless** rather than blank, which is what 64 cards have.
   filename now holds different bytes.
 - `create_card` and `update_card` (with `regenerate_image`) reply with the
   rendered card. To look one up without touching it, use `/show` or `/render`.
-- To read `actions`, `triggers` or `properties`, query the database directly.
-  `/show` omits them on purpose — each is past Discord's 2000-char limit on its
-  own. `/search` does reach inside them.
+- To read `actions`, `triggers` or `properties`, use **`/rules`**. `/show` omits
+  them on purpose — each is past Discord's 2000-char limit on its own. `/search`
+  also reaches inside them.
 
 ## Aspects
 
@@ -141,16 +193,30 @@ read the column instead of inferring deletion from a missing row.
 
 | Command | Access | Parameters |
 |---|---|---|
-| `/create_deck` | 🔒 | `name`, `description`, `type`*, `content_type`*, `usage_type`* |
+| `/decks` | — | *(none)* — every unarchived deck, grouped by usage type |
+| `/create_deck` | 🔒 | `name`, `description`, `type`*, `usage_type`* |
 | `/update_deck` | 🔒 | `name`*, `new_name?`, `description?`, `type?`*, `usage_type?`*, `archived?` |
 | `/show_deck` | — | `name`* — details plus contents |
 | `/render_deck` | — | `name`* — every card, tiled, static (120s timeout) |
 | `/render_hand` | — | `name`*, `hand_size?` (default 6) — a fanned sample draw, static |
 
-`type` / `content_type` / `usage_type` autocomplete from `deck_types`,
-`deck_content_types` and `deck_usage_types`. ⚠️ Those three tables read as empty
-with an anon key — verify against the service key before trusting an empty
-autocomplete.
+`/decks` lists the **8 live decks** with their ids and contents, grouped by usage
+type. Unarchived only — 20 of the 28 rows are archived, and a list that is
+two-thirds dead content is not one you can scan; `/show_deck` still opens an
+archived deck by name. The **id** is shown because it is the thing you cannot get
+anywhere else and the thing that keeps mattering: `/stage` and `/merge_staging`
+are parked precisely because they pinned ids that had since moved.
+
+`type` and `usage_type` autocomplete from `azoth_logic/taxonomy.py`, not from the
+database. The six taxonomy tables were dropped 2026-08-27 — see
+[Taxonomy](#taxonomy-lives-in-code).
+
+`content_type` was **removed** the same day along with the `decks.content_type`
+column. `deck_contents` carries the type per row, so a deck holds anything and
+there was nothing left for a deck-level type to mean.
+
+The deck pickers on `/create_card`, `/create_aspect` and `/create_rite` used to
+narrow by that column and now list **every unarchived deck**.
 
 ### Deck curation
 
@@ -187,6 +253,34 @@ The bodies must stay **commented**, not merely unattached:
 never assigns onto the cog, and a separate test asserts these three names stay
 off the cog.
 
+## Taxonomy lives in code
+
+The small fixed vocabularies — card elements, card types, card attributes, deck
+types, deck usage types — are in `azoth_logic/taxonomy.py`. They were six
+database tables (`card_elements`, `card_types`, `card_attributes`, `deck_types`,
+`deck_content_types`, `deck_usage_types`) until 2026-08-27.
+
+They are enumerations the engine defines, and the game already hardcodes every
+one of them in GDScript. The tables were a second copy that could only lag: a new
+element is a code change, and the database row was the half nobody was reminded
+to add. It showed — `deck_usage_types` had no `rite`, and `rite` is a large part
+of why the Rites deck was invisible to `draft_deck_view` for its entire life.
+
+**Autocomplete offers the canonical list plus anything actually in use.**
+Hardcoding drifts too, so a value present in the data can never be missing from
+the picker even when someone forgets to update the file. And because Discord
+autocomplete is a suggestion rather than a constraint, a genuinely new value can
+still be typed in to create the first row that uses it.
+
+Adding a value: edit `taxonomy.py`, keeping it in step with the game constant
+named in the comment above each list.
+
+**"In use" means in use now.** The deck vocabularies only union values from
+**unarchived** decks. Without that, removing a value would be impossible — the
+retired `reactant` / `boon_a` / `boon_b` / `boon_c` usage types all still have
+decks carrying them (32–35, all archived), and the union would hand them
+straight back.
+
 ---
 
 ## Bulk ingest
@@ -200,8 +294,15 @@ Both take a JSON object keyed by table name, with a list of records per table.
 `bulk_insert` inserts rows as given; `bulk_update` matches existing rows **by
 `name`** and applies partial field updates (use `new_name` to rename).
 
-Neither is transactional — rows are applied one at a time and a failure part-way
-leaves earlier rows written.
+**Both are transactional** (2026-08-27). The payload goes to the `bulk_apply`
+database function and applies in one statement, so a rejected record rolls the
+whole payload back — there is no half-applied state. The reply names the table,
+the record index and what was wrong with it.
+
+This replaced a Python loop that issued one request per record. PostgREST wraps
+each *request* in a transaction, so 60 records meant 60 transactions and a
+failure at record 40 left 39 rows written — with no command able to remove them
+once `/delete_*` was retired the same day.
 
 Both reply with an embed describing the action: `/bulk_update` gives a per-record
 field diff **and renders the updated items**; `/bulk_insert` lists each new row
@@ -266,15 +367,35 @@ what you would want to force. Full policy:
 |---|---|---|
 | `/stats active_players` | — | `limit?` (default 25) |
 | `/stats leaderboard` | — | `limit?` (default 10), `player?`*, `hero?`*, `version?`* |
-| `/stats player` | — | `player`* |
+| `/stats player` | — | `player`* — a full player card |
 | `/stats hero` | — | — |
 | `/stats version` | — | — |
 | `/stats draft_pool` | — | — |
 | `/stats draft_rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/event) |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 
-All `/stats` subcommands dump raw JSON from a database **view** into a code block.
-They are open to anyone in the guild.
+All `/stats` subcommands reply with an **embed** — an aligned table for the
+multi-row views, labelled fields for the single-row ones. They are open to anyone
+in the guild. They dumped raw `json.dumps` into a code fence until 2026-08-27,
+which was complete and nearly unreadable.
+
+Three things the formatting fixes rather than decorates:
+
+- **`avg_combo_log10` renders as `10^4.8`.** It is an order of magnitude, not an
+  average. Printed raw as `4.78` beside `max_combo: 652298` it reads as an
+  average combo of about five, which is the exact misreading
+  [ANALYTICS.md](ANALYTICS.md) warns about.
+- **Every reply carries a footer** naming the cutoff and how many games are
+  behind the number. `/stats version` says **"all versions"** instead —
+  `version_info_view` is the one view with no cutoff, because comparing versions
+  is its whole job, and claiming `>= 0.8.2` over a table showing 0.7.0 rows
+  would be a lie.
+- **Dropped columns are named.** A table too wide for a phone loses columns from
+  the right, and the footer says which — the same rule `/search` follows when it
+  truncates.
+
+Big combos are compacted (`652.3K`, `53.3T`), playtime reads as time (`13m`,
+`2.1h`), and an empty value is `—` rather than `None`.
 
 `/stats draft_pool` was `/stats draft_deck` until 2026-08-27. It still reads
 `draft_deck_view` — the command was renamed, the view was not, so the bot works
@@ -304,8 +425,9 @@ sections say "unavailable" rather than silently reporting zero. See
 
 ## Quick index
 
-**Open to any guild member:** `/show`, `/render`, `/search`, `/show_deck`,
-`/render_deck`, `/render_hand`, `/cache status`, and all of `/stats`.
+**Open to any guild member:** `/show`, `/render`, `/rules`, `/search`,
+`/decks`, `/show_deck`, `/render_deck`, `/render_hand`, `/cache status`, and all
+of `/stats`.
 
 **Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
 `/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`.

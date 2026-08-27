@@ -2,8 +2,9 @@ import asyncio
 import json
 import nextcord
 from nextcord import SlashOption, Interaction
-from azoth_commands.helpers import safe_interaction, missing_asset_hint
+from azoth_commands.helpers import pack_fields_into_embeds, safe_interaction, missing_asset_hint
 from azoth_commands.autocomplete import autocomplete_from_table
+from azoth_logic import taxonomy
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID
 from supabase_helpers import fetch_all, update_record, get_deck_contents
 
@@ -22,7 +23,6 @@ def add_deck_commands(cls):
 		name: str = SlashOption(description="Deck name"),
 		description: str = SlashOption(description="Deck Description"),
 		type: str = SlashOption(description="Deck type", autocomplete=True),
-		content_type: str = SlashOption(description="Content type", autocomplete=True),
 		usage_type: str = SlashOption(description="Usage type", autocomplete=True)
 	):
 		from supabase_helpers import create_record
@@ -31,7 +31,6 @@ def add_deck_commands(cls):
 			"name": name,
 			"description": description,
 			"type": type,
-			"content_type": content_type,
 			"usage_type": usage_type,
 			"created_by": BOT_PLAYER_ID,
 		}
@@ -118,6 +117,56 @@ def add_deck_commands(cls):
 			# return f"❌ Failed to delete {MODEL_NAME} `{name}`."
 
 		# return f"🗑️ Deleted {MODEL_NAME} `{name}`."
+
+
+	@nextcord.slash_command(name="decks", description="List every unarchived deck.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=10, error_message="❌ Failed to list decks.")
+	async def decks_cmd(self, interaction: Interaction):
+		"""Every live deck, grouped the way the game groups them.
+
+		Unarchived only, deliberately: 20 of the 28 rows are archived, and a list
+		that is two-thirds dead content is not a list you can scan. `/show_deck`
+		still opens an archived deck by name.
+
+		The **id** is shown because it is the thing you cannot get anywhere else
+		and the thing that keeps mattering -- `/stage` and `/merge_staging` are
+		commented out precisely because they pinned ids that had since moved, and
+		the Rites deck was invisible to `draft_deck_view` for its whole life
+		without anyone being able to see the deck list to notice.
+		"""
+		decks = fetch_all(TABLE_NAME, filters={"archived_at": None},
+		                  sort=["usage_type", "name"])
+		if not decks:
+			return "❌ No unarchived decks."
+
+		# One read for every count, rather than one per deck.
+		counts: dict = {}
+		kinds: dict = {}
+		for row in fetch_all("deck_contents", columns=["deck_id", "content_type"]):
+			counts[row["deck_id"]] = counts.get(row["deck_id"], 0) + 1
+			kinds.setdefault(row["deck_id"], set()).add(row["content_type"])
+
+		LABEL = {"card": "cards", "aspect": "aspects", "event": "rites"}
+
+		groups: dict = {}
+		for deck in decks:
+			total = counts.get(deck["id"], 0)
+			held = ", ".join(sorted(LABEL.get(k, k) for k in kinds.get(deck["id"], ())))
+			detail = f"{total} × {held}" if held else "empty"
+			groups.setdefault(deck["usage_type"] or "(none)", []).append(
+				f"`{deck['id']:>3}` **{deck['name']}** — {detail}")
+
+		fields = [(f"{usage} ({len(lines)})", "\n".join(lines), False)
+		          for usage, lines in sorted(groups.items())]
+
+		total_items = sum(counts.get(d["id"], 0) for d in decks)
+		embeds = pack_fields_into_embeds(
+			fields,
+			title=f"Decks — {len(decks)} live",
+			colour=0x5865F2,
+			footer=f"{total_items} items across them. Archived decks are not listed.")
+		for embed in embeds:
+			await interaction.followup.send(embed=embed)
 
 
 	@nextcord.slash_command(name="show_deck", description="Show a deck’s details and contents.", guild_ids=[DEV_GUILD_ID])
@@ -594,21 +643,18 @@ def add_deck_commands(cls):
 
 	@create_deck_cmd.on_autocomplete("type")
 	@update_deck_cmd.on_autocomplete("type")
-	async def autocomplete_type(self, interaction: Interaction, input: str):
-		suggestions = autocomplete_from_table("deck_types", input)
+	async def autocomplete_deck_type(self, interaction: Interaction, input: str):
+		suggestions = taxonomy.suggest("deck_types", input)
 		await interaction.response.send_autocomplete(suggestions)
 
 
-	@create_deck_cmd.on_autocomplete("content_type")
-	async def autocomplete_deck_content_type(self, interaction: Interaction, input: str):
-		suggestions = autocomplete_from_table("deck_content_types", input)
-		await interaction.response.send_autocomplete(suggestions)
-
-
+	# Was also called `autocomplete_type`, shadowing the one above at module
+	# level. Both decorators still registered, so it worked -- but the second
+	# definition silently replaced the first name, which is a trap.
 	@create_deck_cmd.on_autocomplete("usage_type")
 	@update_deck_cmd.on_autocomplete("usage_type")
-	async def autocomplete_type(self, interaction: Interaction, input: str):
-		suggestions = autocomplete_from_table("deck_usage_types", input)
+	async def autocomplete_deck_usage_type(self, interaction: Interaction, input: str):
+		suggestions = taxonomy.suggest("deck_usage_types", input)
 		await interaction.response.send_autocomplete(suggestions)
 
 
@@ -620,12 +666,16 @@ def add_deck_commands(cls):
 	@render_deck_cmd.on_autocomplete("name")
 	@render_hand_cmd.on_autocomplete("name")
 	async def autocomplete_deck_name(self, interaction: Interaction, input: str):
-		command = interaction.data.get("name")
-		if command == "render_hand" or command == "render_deck":
-			# TODO support for non-card decks
-			matches = autocomplete_from_table(TABLE_NAME, input, "name", {"content_type": "cards"})
-		else:
-			matches = autocomplete_from_table(TABLE_NAME, input)
+		# Every unarchived deck, for every command that takes one.
+		#
+		# /render_hand and /render_deck used to be narrowed to `content_type =
+		# 'cards'` because the deck renderer draws cards only. That column was
+		# dropped 2026-08-27, and the narrowing was already redundant: both
+		# commands filter their contents to cards and say so in the reply
+		# ("3 non-card item(s) not rendered", or "has no cards to render").
+		# Hiding the deck from the picker was the worse of the two behaviours --
+		# it made a real deck look missing.
+		matches = autocomplete_from_table(TABLE_NAME, input, "name", {"archived_at": None})
 		await interaction.response.send_autocomplete(matches[:25])
 
 
@@ -713,6 +763,7 @@ def add_deck_commands(cls):
 		# await interaction.response.send_autocomplete(dict(sorted_items))
 
 
+	cls.decks_cmd = decks_cmd
 	cls.create_deck_cmd = create_deck_cmd
 	cls.update_deck_cmd = update_deck_cmd
 	# cls.delete_deck_cmd = delete_deck_cmd

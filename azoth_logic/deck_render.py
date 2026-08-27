@@ -1,4 +1,4 @@
-"""Multi-card layouts: a deck grid and a fanned sample hand.
+"""Multi-card layouts: a deck grid, a fanned sample hand, and an upgrade comparison.
 
 Both are STATIC. A 110-card deck animating at 60 frames each would be tens of
 megabytes and unreadable at thumbnail size, so the animation stays on `/render`,
@@ -11,16 +11,20 @@ command timeout, to roughly ten.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import math
 import random
 from concurrent.futures import ThreadPoolExecutor
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from azoth_logic import art_cache
 from azoth_logic import card_layout as L
 from azoth_logic import card_render
+from azoth_logic import eigenfunction_art as ef
+from azoth_logic import holo
+from azoth_logic import fate_layout as F
 
 # Enough parallelism to hide network latency without hammering Supabase.
 DOWNLOAD_WORKERS = 12
@@ -34,6 +38,20 @@ GRID_BG = (30, 31, 34)
 
 # A deck bigger than this is refused rather than silently truncated.
 MAX_GRID_CARDS = 200
+
+# An upgrade comparison is two or three faces, not a hundred, so they can be
+# read rather than recognised -- this is nearly twice the grid width.
+COMPARE_CARD_WIDTH = 380
+COMPARE_GUTTER = 20
+COMPARE_LABEL_BAND = 40
+COMPARE_LABEL_SIZE = 24
+
+# A comparison shares one palette across BOTH faces, and they are routinely
+# different colour schemes -- an orange card beside a pink aspect. 64 (the
+# single-card value) is tuned for one scheme; this is the same budget per side.
+# Measured cost of the extra colours: about 15% on the file, against a cap the
+# largest comparison uses a twentieth of.
+COMPARE_GIF_COLORS = 128
 
 HAND_CARD_WIDTH = 300
 HAND_SPREAD_DEGREES = 26
@@ -106,11 +124,16 @@ def _bucket_for(item: dict, kind: str = "card") -> str | None:
 def _still_for(item, kind, art):
     """One static face, dispatched by content type."""
     from azoth_logic import fate_render
+    # `sheen=False` everywhere here: this feeds the deck grid, the sample hand
+    # and the comparison, and none of them wants the holographic material baked
+    # in. A grid draws at 200px, where it is invisible and would cost a 110-card
+    # deck 110 applications; the comparison applies it itself, per side, because
+    # the upgraded face uses a different intensity.
     if kind == "aspect":
-        data, _ = fate_render.render_aspect(item, art, animate=False)
+        data, _ = fate_render.render_aspect(item, art, animate=False, sheen=False)
         return Image.open(io.BytesIO(data)).convert("RGBA")
     if kind == "rite":
-        data, _ = fate_render.render_rite(item)
+        data, _ = fate_render.render_rite(item, sheen=False)
         return Image.open(io.BytesIO(data)).convert("RGBA")
     return card_render.render_still(item, art)
 
@@ -163,6 +186,193 @@ def render_grid(cards, columns: int = GRID_COLUMNS, card_width: int = GRID_CARD_
     buf = io.BytesIO()
     sheet.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
+
+
+def _frames_for(item, kind, art, duration: float, fps: int) -> list:
+    """Every frame of one face, as RGBA. A single frame when it does not animate.
+
+    The animated branches mirror `card_render.render_gif` and
+    `fate_render.render_aspect` exactly -- up to but NOT including `to_gif`,
+    which is what makes them composable. Rites are absent on purpose: only
+    `cards` has an `upgrades` column, so a comparison is always a card beside a
+    card or an aspect.
+    """
+    from azoth_logic import fate_render
+
+    if kind == "card" and art and card_render.is_animated(item):
+        face = card_render._base_face(item)
+        primary, secondary = ef.colors_for_card(item)
+        with card_render._temp(art, ".exr") as path:
+            arts = ef.frames(path, primary, secondary, duration=duration, fps=fps,
+                             departure=ef.departure_for_card(item))
+        pos = (round(L.ART[0]), round(L.ART[1]))
+        frames = []
+        for art_frame in arts:
+            frame = face.copy()
+            frame.alpha_composite(art_frame, pos)
+            frames.append(frame)
+        return frames
+
+    if kind == "aspect" and art and fate_render.is_animated(item):
+        face = fate_render._aspect_face(item)
+        pos = (round(F.ASPECT_ART[0]), round(F.ASPECT_ART[1]))
+        size = (round(F.ASPECT_ART[2]), round(F.ASPECT_ART[3]))
+        base, accent = fate_render.aspect_art_colors(item)
+        with card_render._temp(art, ".exr") as path:
+            arts = ef.frames(path, base, accent, duration=duration, fps=fps,
+                             departure=ef.departure_for_card(item))
+        frames = []
+        for art_frame in arts:
+            frame = face.copy()
+            frame.alpha_composite(art_frame.resize(size, Image.LANCZOS), pos)
+            frames.append(frame)
+        return frames
+
+    return [_still_for(item, kind, art)]
+
+
+def _animates(item, kind: str, art) -> bool:
+    """Whether this face has anything to animate."""
+    from azoth_logic import fate_render
+    if not art:
+        return False
+    if kind == "card":
+        return card_render.is_animated(item)
+    if kind == "aspect":
+        return fate_render.is_animated(item)
+    return False
+
+
+def _comparison_key(items, kinds, labels, art, width, duration, fps,
+                    holo_levels=None) -> str:
+    """One key covering every face, so any edit to either side misses.
+
+    `art_cache.render_key` keys a SINGLE item; a comparison is a function of
+    both, plus the captions, which change with the tier and the upgraded kind.
+    """
+    parts = [art_cache.render_key(item, art.get(id(item)), kind,
+                                  width=width, duration=duration, fps=fps)
+             for item, kind in zip(items, kinds)]
+    parts += list(labels) + [f"{level:g}" for level in (holo_levels or [])]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
+
+
+def _comparison_sides(items, kinds, art, width: int, animate: bool,
+                      duration: float, fps: int, holo_levels=None) -> list:
+    """Each face's frames, cropped and scaled to a common box.
+
+    Cropped to the side's OWN alpha box -- computed across all of its frames at
+    once, so the crop cannot jitter mid-animation.
+
+    Cropping matters more here than in a grid. A card face carries ~63px of
+    empty canvas above and below (`render_png` crops it for exactly this
+    reason); an aspect face does not, because `render_aspect` already cropped.
+    Scaling both to one box without cropping first therefore drew the card
+    visibly smaller than the aspect beside it.
+    """
+    scale = width / L.CARD_W
+    size = (width, round(L.CARD_H * scale))
+
+    sides = []
+    for index, (item, kind) in enumerate(zip(items, kinds)):
+        frames = (_frames_for(item, kind, art.get(id(item)), duration, fps)
+                  if animate else [_still_for(item, kind, art.get(id(item)))])
+        box = card_render.alpha_bbox(frames)
+        frames = [f.crop(box).resize(size, Image.LANCZOS) for f in frames]
+
+        # After the resize, not before: the sheen is a smooth gradient, so
+        # there is nothing to lose by computing it over four times fewer pixels.
+        #
+        # Per-side INTENSITY, not a yes/no: every card wears the sheen at 0.06,
+        # and an upgraded one at 0.15. A flag here would flatten that difference
+        # and make the two faces look identically foiled.
+        level = (holo_levels or [])[index] if holo_levels else 0.0
+        if level:
+            frames = holo.apply_all(frames, intensity=level)
+        sides.append(frames)
+    return sides
+
+
+def render_comparison(items, kinds, labels, holo_levels=None,
+                      card_width: int = COMPARE_CARD_WIDTH,
+                      animate: bool = False, duration: float = 4.0, fps: int = 15):
+    """Faces side by side under captions. Returns PNG bytes.
+
+    Built for a card and its upgrade, so `items`/`kinds`/`labels` run in
+    parallel and `kinds` is REQUIRED -- unlike the deck paths, the whole point
+    here is that the two sides may not be the same kind. 28 cards upgrade into
+    aspects, and drawing the upgraded face with the card renderer would show a
+    card that cannot exist.
+
+    STATIC, like every other multi-face layout in this module. The comparison is
+    a reading task -- what changed in the text, the valence, the attunement --
+    and animating it would cost seconds per side to make the words harder to
+    read. `/render` without `compare` still gives the animated single face.
+    """
+    if not items:
+        raise ValueError("nothing to compare")
+    if len(items) != len(kinds) or len(items) != len(labels):
+        raise ValueError("items, kinds and labels must be the same length")
+
+    art = fetch_art_many(items, kinds=kinds)
+    moving = animate and any(_animates(i, k, art.get(id(i)))
+                             for i, k in zip(items, kinds))
+
+    # Cache the GIFs only, matching card_render.render: a still comparison is
+    # two cached art fetches and a paste, while an animated one runs the
+    # eigenfunction shader twice and takes 3-7s.
+    key = None
+    if moving:
+        key = _comparison_key(items, kinds, labels, art, card_width, duration, fps,
+                              holo_levels)
+        hit = art_cache.get_render(key, "gif")
+        if hit is not None:
+            return hit, "gif"
+
+    sides = _comparison_sides(items, kinds, art, card_width, moving, duration, fps,
+                              holo_levels)
+    cw, ch = sides[0][0].size
+    pages = max(len(side) for side in sides)
+
+    # The labels never change, so they are drawn ONCE onto a background that
+    # every frame is copied from. GIF frame differencing then has nothing to
+    # encode outside the two art boxes.
+    board = Image.new(
+        "RGBA",
+        (len(sides) * cw + COMPARE_GUTTER * (len(sides) + 1),
+         ch + COMPARE_GUTTER * 2 + COMPARE_LABEL_BAND),
+        GRID_BG + (255,),
+    )
+    draw = ImageDraw.Draw(board)
+    font = card_render._font(COMPARE_LABEL_SIZE)
+    for i, label in enumerate(labels):
+        x = COMPARE_GUTTER + i * (cw + COMPARE_GUTTER)
+        # Centred under its own face, not under the sheet.
+        left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
+        draw.text(
+            (x + (cw - (right - left)) // 2 - left,
+             COMPARE_GUTTER + ch + (COMPARE_LABEL_BAND - (bottom - top)) // 2 - top),
+            label, font=font, fill=(235, 235, 235))
+
+    def compose(index: int) -> Image.Image:
+        sheet = board.copy()
+        for i, side in enumerate(sides):
+            # A still side holds its single frame while the other one moves.
+            sheet.alpha_composite(side[index % len(side)],
+                                  (COMPARE_GUTTER + i * (cw + COMPARE_GUTTER),
+                                   COMPARE_GUTTER))
+        return sheet
+
+    if pages == 1:
+        buf = io.BytesIO()
+        compose(0).convert("RGB").save(buf, format="PNG", optimize=True)
+        return buf.getvalue(), "png"
+
+    data = card_render.to_gif([compose(i) for i in range(pages)],
+                              fps=fps, colors=COMPARE_GIF_COLORS)
+    if key:
+        art_cache.put_render(key, "gif", data)
+    return data, "gif"
 
 
 def render_hand(cards, hand_size: int = 6, seed=None,

@@ -1,12 +1,18 @@
-"""Tests for `/get`'s detail view.
+"""Tests for `/show`'s detail view, and `/rules`' mechanics file.
 
-It used to dump the raw database row as JSON, which buried the two things you
-actually want -- the rules text and the card's stats -- under audit metadata,
+`/show` used to dump the raw database row as JSON, which buried the two things
+you actually want -- the rules text and the card's stats -- under audit metadata,
 rendering internals and a nested `upgrades` blob.
+
+`/rules` is where those omitted blobs went: the four `jsonb` fields, as a file
+attachment, because each one runs past Discord's 2000-character message limit on
+its own. The documented way to read them was previously "query the database
+directly", for the fields that actually define the mechanic.
 """
 import pytest
 
-from azoth_commands.content import _accent, _facts
+from azoth_commands.content import (MECHANIC_FIELDS, _accent, _comparison_labels,
+                                    _facts, _mechanics)
 from azoth_logic import card_layout, fate_layout
 
 CARD = {"id": 193, "name": "Ablution", "type": "spell", "element": "sol", "valence": 2,
@@ -121,3 +127,80 @@ def test_rite_accent_falls_back_when_it_has_no_palette():
 def test_accent_is_a_valid_discord_colour():
     for kind, row in [("card", CARD), ("aspect", {}), ("rite", {})]:
         assert 0 <= _accent(kind, row) <= 0xFFFFFF
+
+
+# ---------------------------------------------------------------------------
+# /rules -- the mechanics file
+# ---------------------------------------------------------------------------
+
+def test_the_four_jsonb_fields_are_exactly_what_show_omits():
+    """The two commands are complements. If `/show` starts printing one of these
+    or `/rules` stops carrying it, they have drifted apart."""
+    assert MECHANIC_FIELDS == ("actions", "triggers", "properties", "upgrades")
+    for field in MECHANIC_FIELDS:
+        assert field not in _labels("card", CARD)
+
+
+def test_populated_fields_are_carried():
+    row = {"actions": [{"name": "Draw"}], "triggers": [], "properties": [],
+           "upgrades": [{"text": "Draw 2"}]}
+    assert set(_mechanics(row)) == {"actions", "upgrades"}
+
+
+def test_empty_fields_are_dropped_not_emitted_as_empty_arrays():
+    """`{"triggers": []}` reads as "this has no triggers", which is a different
+    claim from "this card does not use triggers"."""
+    row = {"actions": [{"name": "Draw"}], "triggers": [], "properties": None}
+    assert _mechanics(row) == {"actions": [{"name": "Draw"}]}
+
+
+def test_a_card_with_no_mechanics_yields_nothing():
+    """27 cards are in this state -- their rules text is all there is. The
+    command says so rather than sending an empty file."""
+    assert _mechanics({"name": "Burnout", "text": "Draw 1", "actions": []}) == {}
+
+
+def test_upgrades_are_included():
+    """`/show` omits `upgrades` because it dwarfs the card. That is exactly why
+    it belongs here -- and since a card can upgrade INTO an aspect, the upgrade
+    payload is often the only place that transformation is visible."""
+    assert "upgrades" in _mechanics(CARD)
+
+
+def test_field_order_is_stable():
+    """Declaration order, not dict-insertion order from the database row, so two
+    cards' files diff against each other."""
+    row = {"upgrades": [1], "properties": [2], "triggers": [3], "actions": [4]}
+    assert list(_mechanics(row)) == ["actions", "triggers", "properties", "upgrades"]
+
+
+# ---------------------------------------------------------------------------
+# /render -- upgrade comparison captions
+# ---------------------------------------------------------------------------
+
+def test_a_single_tier_is_just_base_and_upgraded():
+    """Every card in the database has exactly one tier, so this is the caption
+    almost everyone sees. `Tier 1` would be noise."""
+    assert _comparison_labels([({}, "card", 1)]) == ["Base", "Upgraded"]
+
+
+def test_a_type_change_is_named():
+    """28 cards upgrade into aspects. Without the caption the second face just
+    looks like a different card."""
+    assert _comparison_labels([({}, "aspect", 1)]) == ["Base", "Upgraded (Aspect)"]
+
+
+def test_staying_a_card_is_not_worth_saying():
+    assert "(Card)" not in " ".join(_comparison_labels([({}, "card", 1)]))
+
+
+def test_multiple_tiers_are_numbered():
+    labels = _comparison_labels([({}, "card", 1), ({}, "aspect", 2)])
+    assert labels == ["Base", "Tier 1", "Tier 2 (Aspect)"]
+
+
+def test_labels_stay_ascii():
+    """The card font has no arrow glyph, and a missing glyph renders as a silent
+    gap -- `Upgraded -> Aspect` came out as `Upgraded   Aspect`."""
+    for label in _comparison_labels([({}, "aspect", 1)]):
+        assert label.isascii(), label

@@ -23,7 +23,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from azoth_logic import art_cache, card_render, eigenfunction_art as ef, fate_layout as F, rich_text
+from azoth_logic import art_cache
+from azoth_logic import holo, card_render, eigenfunction_art as ef, fate_layout as F, rich_text
 from azoth_logic.card_layout import CARD_W, CARD_H
 
 BACKGROUND_DIR = Path(__file__).resolve().parent.parent / "assets" / "card_art" / "backgrounds"
@@ -103,8 +104,14 @@ def aspect_art_colors(aspect: dict):
 
 
 def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
-                  duration=4.0, fps=15):
-    """Returns (bytes, extension)."""
+                  duration=4.0, fps=15, sheen: bool = True):
+    """Returns (bytes, extension).
+
+    `sheen` is the holographic material every card scene wears -- aspect_card
+    and event_card load the same `base_card_material.tres` that card.tscn does.
+    Off for deck and search grids, where 200px thumbnails cannot show it and a
+    110-card sheet would pay for it once per card.
+    """
     face = _aspect_face(aspect)
     pos = (round(F.ASPECT_ART[0]), round(F.ASPECT_ART[1]))
     size = (round(F.ASPECT_ART[2]), round(F.ASPECT_ART[3]))
@@ -119,7 +126,7 @@ def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
             frame = face.copy()
             frame.alpha_composite(art.resize(size, Image.LANCZOS), pos)
             pages.append(frame)
-        return card_render.to_gif(pages, fps=fps), "gif"
+        return card_render.to_gif(holo.apply_all(pages) if sheen else pages, fps=fps), "gif"
 
     if art_bytes:
         if is_animated(aspect):
@@ -129,6 +136,8 @@ def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
             art = Image.open(io.BytesIO(art_bytes)).convert("RGBA")
         face.alpha_composite(art.resize(size, Image.LANCZOS), pos)
 
+    if sheen:
+        face = holo.apply(face)
     buf = io.BytesIO()
     # Cropped like a card's still: PNG keeps its alpha, and the empty canvas
     # above and below only made Discord scale the card down.
@@ -258,7 +267,7 @@ def _rite_background_frames(rite: dict, overrides):
     return out + out[-2:0:-1]
 
 
-def render_rite_gif(rite: dict, fps: int = 15) -> bytes | None:
+def render_rite_gif(rite: dict, fps: int = 15, sheen: bool = True) -> bytes | None:
     """A rite as a looping GIF, or None when its background does not animate."""
     frames = _rite_background_frames(rite, F.rite_colors(rite))
     if not frames:
@@ -271,10 +280,11 @@ def render_rite_gif(rite: dict, fps: int = 15) -> bytes | None:
         pages.append(face)
     # A rite is two-tone, and its whole background changes every frame, so a
     # smaller palette is both invisible and the only size control it has.
-    return card_render.to_gif(pages, fps=fps, colors=card_render.RITE_GIF_COLORS)
+    return card_render.to_gif(holo.apply_all(pages) if sheen else pages,
+                              fps=fps, colors=card_render.RITE_GIF_COLORS)
 
 
-def render_rite(rite: dict, art_bytes: bytes | None = None):
+def render_rite(rite: dict, art_bytes: bytes | None = None, sheen: bool = True):
     """Returns (bytes, extension). Always static, and never draws art.
 
     `event_card.tscn` ships the Image node with `visible = false`: a rite's
@@ -285,6 +295,8 @@ def render_rite(rite: dict, art_bytes: bytes | None = None):
     """
     face = _rite_face(rite)
     _rite_text(face, rite)
+    if sheen:
+        face = holo.apply(face)
     buf = io.BytesIO()
     face.crop(card_render.alpha_bbox([face])).save(buf, format="PNG")
     return buf.getvalue(), "png"

@@ -60,9 +60,11 @@ These map one-to-one onto database tables and onto this bot's CRUD commands.
 | **Boss** | `bosses` | HP, damage, a cycling attack **timeline**, and triggers |
 | **Deck** | `decks` + `deck_contents` | A named collection. `deck_contents` is a universal join table carrying `content_type` + `content_id` |
 
-"Fate" appears in the deck taxonomy (`content_type = 'fates'`) as the umbrella
-for aspects and events — the non-card content that goes into draft packs. It is
-why the renderer for those is `azoth_logic/fate_renderer.py`.
+"Fate" was the umbrella for aspects and events — the non-card content that goes
+into draft packs. It survives as the name of the renderer for those,
+`azoth_logic/fate_render.py`, and as the `fates` value that used to live in
+`decks.content_type`. That column was dropped 2026-08-27: a deck can hold cards
+and fates at once, so a deck-level content type had nothing left to say.
 
 ### "Ritual" means two different things — one of them is dead
 

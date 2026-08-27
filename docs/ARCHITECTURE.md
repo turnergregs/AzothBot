@@ -28,11 +28,11 @@ azoth_commands/
   helpers.py                safe_interaction decorator, image helpers, JSON formatting
   autocomplete.py           Generic table-backed autocomplete
   cards.py  aspects.py  rites.py  decks.py
-  content.py                /show and /render, across all content types
+  content.py                /show, /render and /rules, across all content types
   search.py                 /search
   heroes.py                 RETIRED -- attacher deliberately not called
-  misc.py                   bulk_insert / bulk_update
-  stats.py                  /stats subcommands
+  misc.py                   /bulk_insert, /bulk_update (both via azoth_logic/bulk_apply)
+  stats.py                  /stats subcommands (formatting in azoth_logic/stats_format)
   daily_update.py           Scheduled analytics reports + its background task
 
 azoth_logic/
@@ -46,11 +46,16 @@ azoth_logic/
   eigenfunction_art.py      .exr art -- the port of split_card_image.gdshader
   card_render.py            Composites a card face; PNG and GIF output
   fate_render.py            Composites aspect and rite faces
-  deck_render.py            Deck grid and fanned sample hand
+  deck_render.py            Deck grid, fanned sample hand, upgrade comparison
   art_cache.py              On-disk caches for art and animated renders
   content_index.py          Cached (kind, id, name) index behind /show and /render
   content_search.py         The filters behind /search
   bulk_report.py            Diffs and summaries for /bulk_insert and /bulk_update
+  bulk_apply.py             The transactional write itself -- one RPC, one transaction
+  taxonomy.py               Elements, card types, attributes, deck types -- was six tables
+  upgrades.py               What a card becomes when it upgrades; mirrors the engine
+  holo.py                   The upgraded card's holographic sheen (ported shader)
+  stats_format.py           /stats views as tables and fields, not raw JSON
 
   # ARCHIVES -- unreachable at runtime, kept as the record of the old templates.
   card_renderer.py          Superseded by card_render.py + deck_render.py
@@ -156,6 +161,11 @@ a followup. Commands that send their own files or embeds return `None`.
 | `delete_record(table, id)` | Hard delete. **No command calls this any more** — the four `/delete_*` commands were removed 2026-08-27 |
 | `soft_delete_record(table, id)` | Sets `archived_at`; delegates to `update_record` |
 
+Bulk writes do **not** go through these. `/bulk_insert` and `/bulk_update` call
+the `public.bulk_apply` database function through `azoth_logic/bulk_apply.py`, so
+the whole payload lands in one transaction — see
+[CONTENT_PIPELINE.md](CONTENT_PIPELINE.md#bulk-gotchas).
+
 ### Failures raise; only genuine emptiness returns `[]`
 
 **Fixed 2026-08-26.** These helpers used to catch every exception and return
@@ -181,9 +191,7 @@ RLS denial is **not an exception** — PostgREST answers a blocked SELECT with H
 
 ```python
 ANON_INSERT_ONLY = {"turns", "turn_nodes", "levelups", "reports"}
-ANON_NO_POLICY   = {"rituals", "consumables", "card_attributes", "card_elements",
-                    "card_types", "deck_types", "deck_content_types",
-                    "deck_usage_types", "fate_types"}
+ANON_NO_POLICY   = {"rituals", "consumables"}
 ```
 
 If `SUPABASE_ROLE` is anything other than `service_role` — including `unknown`,
@@ -282,5 +290,5 @@ fixed; the rest are still open.
 | Six pseudo-docstrings placed above `def` | `supabase_helpers.py` | Not real docstrings; `help()` shows nothing |
 | Stale comment | `supabase_storage.py` `download_image` | Says "timestamped filename"; it writes a flat name |
 | `add_to_deck` never sets `position` or `weight` | `supabase_helpers.py` | Bot-added deck entries take column defaults; `weight` appears to be draft probability |
-| ~~No tests, no linter config~~ | — | **Fixed 2026-08-26/27** — 438 pytest tests; `test_command_registration.py` runs `pyflakes` over the whole tree. Still no CI |
+| ~~No tests, no linter config~~ | — | **Fixed 2026-08-26/27** — 599 pytest tests; `test_command_registration.py` runs `pyflakes` over the whole tree. Still no CI |
 | ~~The render cache grows without bound~~ | — | **Fixed 2026-08-27** — size-capped LRU eviction on write (art 300 MB, renders 400 MB), and `/cache` now reaches `stats()` / `clear()`. See [CARD_RENDERING.md § Eviction](CARD_RENDERING.md#eviction) |

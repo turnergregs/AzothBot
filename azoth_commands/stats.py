@@ -9,6 +9,28 @@ from azoth_commands.helpers import safe_interaction, record_to_json
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID
 from supabase_helpers import fetch_all, SupabaseError
+from azoth_logic import stats_format as sf
+
+
+# Columns worth showing, per view. Explicit rather than "whatever the view
+# returns": the views order `avg_turns` before `avg_combo_log10`, so the width
+# trim in stats_format.table would throw away the combo -- the column anyone
+# actually came for. Anything trimmed beyond this is named in the footer.
+COLUMNS = {
+    "active_players": ["player", "game_count", "hours_played", "highest_combo"],
+    "leaderboard": ["player", "combo", "hero", "turns", "act", "level"],
+    "hero": ["hero_name", "game_count", "avg_act", "avg_level", "avg_combo_log10", "max_combo"],
+    "version": ["version", "game_count", "avg_act", "avg_level", "avg_combo_log10", "max_combo"],
+}
+
+
+async def _send_table(interaction, title, rows, columns=None, *, rank=False,
+                      note=None, cutoff=True, colour=0x5865F2):
+    """A view rendered as one embed: aligned table, and what it rests on."""
+    text, dropped = sf.table(rows, columns, rank=rank)
+    embed = nextcord.Embed(title=title, description=sf.block(text), colour=colour)
+    embed.set_footer(text=sf.footer(rows, note=note, dropped=dropped, cutoff=cutoff))
+    await interaction.followup.send(embed=embed)
 
 
 def add_stats_commands(cls):
@@ -31,7 +53,8 @@ def add_stats_commands(cls):
         if not records:
             return "❌ No active players found."
 
-        return f"```json\n{json.dumps(records, indent=2)}\n```"
+        await _send_table(interaction, "Active players", records,
+                          COLUMNS["active_players"], note="by games played")
 
     # --- Leaderboard ---
     @stats_cmd.subcommand(name="leaderboard", description="Show top combos")
@@ -64,7 +87,10 @@ def add_stats_commands(cls):
         if not records:
             return "❌ No leaderboard data available."
 
-        return f"```json\n{json.dumps(records, indent=2)}\n```"
+        applied = ", ".join(f"{k}: {v}" for k, v in filters.items())
+        await _send_table(interaction, "Leaderboard", records,
+                          COLUMNS["leaderboard"], rank=True,
+                          note=applied or "top combos", colour=0xF1C40F)
 
     # --- Player Info ---
     @stats_cmd.subcommand(name="player", description="Player statistics")
@@ -77,7 +103,32 @@ def add_stats_commands(cls):
         records = fetch_all("player_info_view", filters={"player": player})
         if not records:
             return f"❌ No stats found for `{player}`."
-        return f"```json\n{json.dumps(records, indent=2)}\n```"
+
+        # One row, and hand-grouped rather than a field per column: the view
+        # carries 22 columns and a flat dump of them is the JSON blob again with
+        # nicer punctuation.
+        row = records[0]
+        embed = nextcord.Embed(title=row.get("player") or player, colour=0x5865F2)
+
+        embed.add_field(name="Runs", inline=True, value=sf.record(row))
+        embed.add_field(name="Best combo", inline=True,
+                        value=sf.value("best_combo", row.get("best_combo")))
+        embed.add_field(name="Ritual", inline=True,
+                        value=sf.value("max_ritual", row.get("max_ritual")))
+
+        embed.add_field(name="Links per turn", inline=False, value=sf.links(row))
+        embed.add_field(name="Reached", inline=True, value=sf.reached(row))
+        embed.add_field(name="Deck", inline=True,
+                        value=sf.value("avg_deck_size", row.get("avg_deck_size")))
+
+        # Always shown. A missing field reads as "this player drafts nothing",
+        # when the truth is either "too few runs" or "the drafts are not being
+        # recorded" -- and the second one is worth noticing.
+        embed.add_field(name="Most drafted", inline=False,
+                        value=sf.most_drafted(row))
+
+        embed.set_footer(text=sf.footer(records, note=sf.last_played(row)))
+        await interaction.followup.send(embed=embed)
 
     # --- Hero Info ---
     @stats_cmd.subcommand(name="hero", description="Hero statistics")
@@ -89,7 +140,9 @@ def add_stats_commands(cls):
         records = fetch_all("hero_info_view")
         if not records:
             return "❌ No hero stats available."
-        return f"```json\n{json.dumps(records, indent=2)}\n```"
+
+        await _send_table(interaction, "Heroes", records, COLUMNS["hero"],
+                          colour=0xE67E22)
 
     # --- Version Info ---
     @stats_cmd.subcommand(name="version", description="Version statistics")
@@ -101,7 +154,11 @@ def add_stats_commands(cls):
         records = fetch_all("version_info_view")
         if not records:
             return "❌ No version stats available."
-        return f"```json\n{json.dumps(records, indent=2)}\n```"
+
+        # The ONE view with no cutoff -- comparing versions is the point, and
+        # filtering to >= 0.8.2 would leave it a single row.
+        await _send_table(interaction, "Versions", records, COLUMNS["version"],
+                          cutoff=False, colour=0x9B59B6)
 
     # --- Draft Deck Data ---
     @stats_cmd.subcommand(name="draft_pool", description="Draft pool composition data")
@@ -110,7 +167,21 @@ def add_stats_commands(cls):
         records = fetch_all("draft_deck_view")
         if not records:
             return "❌ No draft pool data available."
-        return f"```json\n{json.dumps(records, indent=2)}\n```"
+
+        row = records[0]
+        embed = nextcord.Embed(title="Draft pool", colour=0x2ECC71)
+        embed.add_field(name="Contents", inline=False, value=(
+            f"**{row.get('cards', 0)}** cards · "
+            f"**{row.get('aspects', 0)}** aspects · "
+            f"**{row.get('events', 0)}** rites"))
+        embed.add_field(name="Element", inline=False, value=(
+            f"anima **{row.get('anima', 0)}** · blood **{row.get('blood', 0)}** · "
+            f"sol **{row.get('sol', 0)}** · colourless **{row.get('combo', 0)}**"))
+        embed.add_field(name="Valence", inline=False, value=" · ".join(
+            f"{v}v **{row.get(f'{v}v', 0)}**" for v in range(1, 7)))
+        # Content only -- no games behind it, so no cutoff and no game count.
+        embed.set_footer(text="base decks, not archived, usage draft or rite")
+        await interaction.followup.send(embed=embed)
 
     # --- Draft Rate Data ---
     @stats_cmd.subcommand(name="draft_rates", description="Draft pick rates, per item")
@@ -141,7 +212,10 @@ def add_stats_commands(cls):
         records = fetch_all("draft_rates_view", filters=filters, sort=sort, limit=limit)
         if not records:
             return "❌ No draft rate data available."
-        return f"```json\n{json.dumps(records, indent=2)}\n```"
+
+        note = f"{order} picked" + (f", {item_type}s only" if item_type else "")
+        await _send_table(interaction, "Draft pick rates", records,
+                          rank=True, note=note, colour=0x1ABC9C)
 
 
     @stats_leaderboard.on_autocomplete("player")

@@ -1,4 +1,4 @@
-"""`/get` and `/render` -- one command each, across all content types.
+"""`/show`, `/render` and `/rules` -- one command each, across all content types.
 
 Replaces six typed commands (`/get_card`, `/get_aspect`, `/get_rite` and their
 `/render_*` counterparts). You pick from an autocomplete that disambiguates by
@@ -10,13 +10,15 @@ The value behind each choice is the same encoded ref the deck commands use
 """
 import asyncio
 import io
+import json
 
 import nextcord
 from nextcord import Interaction, SlashOption
 
 from azoth_commands.helpers import safe_interaction, missing_asset_hint, to_snake_case
 from constants import DEV_GUILD_ID
-from azoth_logic import card_layout, card_render, content_index as ci, fate_layout, fate_render
+from azoth_logic import (card_layout, card_render, content_index as ci, deck_render,
+                         fate_layout, fate_render, holo, upgrades)
 
 
 # Embed accent, matching the card face. Aspects carry their own palette; rites
@@ -77,6 +79,62 @@ def _render_any(kind: str, row: dict):
     return fate_render.render(row, kind)
 
 
+def _comparison_labels(tiers: list) -> list:
+    """Captions for a base face followed by each upgraded tier.
+
+    ASCII only. The card font has no arrow glyph and a missing one renders as a
+    silent gap, so "Upgraded -> Aspect" would read as "Upgraded   Aspect".
+    """
+    labels = ["Base"]
+    for _, kind, level in tiers:
+        name = "Upgraded" if len(tiers) == 1 else f"Tier {level}"
+        # Only worth saying when the upgrade CHANGES what the thing is.
+        labels.append(f"{name} ({ci.DISPLAY[kind]})" if kind != "card" else name)
+    return labels
+
+
+def _comparison(kind: str, row: dict):
+    """The card beside each of its upgraded states. Returns (bytes, extension).
+
+    Animated whenever either face is: a GIF when at least one side has
+    eigenfunction art, a PNG when neither does. A still side holds its frame
+    while the other moves, so a card that upgrades into a flat-art aspect still
+    animates on the left.
+    """
+    tiers = upgrades.tiers(row, kind)
+    # The `+` goes on the face, the way the game puts it on the label -- never
+    # into the row, so the cache key and the filename stay the database's.
+    upgraded = [{**t[0], "name": upgrades.plus_name(t[0].get("name"))} for t in tiers]
+    return deck_render.render_comparison(
+        [row] + upgraded,
+        [kind] + [t[1] for t in tiers],
+        _comparison_labels(tiers),
+        # Both faces wear the sheen -- every card does, in-game -- but the
+        # upgraded one wears it at the higher intensity `set_upgrade_card_visuals`
+        # sets. That difference is the marker; a base card is not un-foiled.
+        holo_levels=[holo.HOLO_INTENSITY] + [holo.UPGRADED_INTENSITY] * len(tiers),
+        animate=True)
+
+
+# The `jsonb` blobs. `/show` omits all four on purpose -- each one runs past
+# Discord's 2000-character message limit on its own, and `upgrades` alone dwarfs
+# the card it belongs to. Until now the documented way to read them was "query
+# the database directly", for the fields that actually define the mechanic.
+#
+# A file attachment has no such limit, which is the whole trick here.
+MECHANIC_FIELDS = ("actions", "triggers", "properties", "upgrades")
+
+
+def _mechanics(row: dict) -> dict:
+    """The mechanic-defining fields that are actually populated.
+
+    Empty ones are dropped rather than emitted as `[]`: a file of empty arrays
+    reads as "this has no rules", which is a different claim from "this field is
+    unused on this card".
+    """
+    return {field: row[field] for field in MECHANIC_FIELDS if row.get(field)}
+
+
 def add_content_commands(cls):
 
     @nextcord.slash_command(name="show", description="Show details for a card, aspect or rite.",
@@ -108,26 +166,80 @@ def add_content_commands(cls):
         self,
         interaction: Interaction,
         name: str = SlashOption(description="Card, aspect or rite", autocomplete=True),
+        compare: bool = SlashOption(
+            description="Show the upgraded version beside it (default: on when there is one)",
+            required=False),
     ):
         kind, row = await asyncio.to_thread(ci.resolve, name)
         if not row:
             return f"❌ Could not find `{name}`."
 
+        # Auto: compare when there is something to compare against. 197 of 400
+        # cards have an upgrade, and for those the comparison is the more useful
+        # default -- it is the only view that shows what the upgrade DOES.
+        upgradeable = upgrades.has_upgrade(row)
+        comparing = upgradeable if compare is None else (compare and upgradeable)
+
         # Downloading art and drawing are both blocking and can run for seconds.
         # On the event loop they starve the gateway heartbeat, and `wait_for`
         # cannot interrupt them either -- so the timeout would never fire.
         try:
-            data, ext = await asyncio.to_thread(_render_any, kind, row)
+            if comparing:
+                data, ext = await asyncio.to_thread(_comparison, kind, row)
+            else:
+                data, ext = await asyncio.to_thread(_render_any, kind, row)
         except FileNotFoundError as e:
             return f"⚠️ Missing render asset: {e}\n{missing_asset_hint(e)}"
         except Exception as e:
             return f"⚠️ Could not render `{row['name']}`: {e}"
 
+        note = None
+        if comparing:
+            # Say what was traded away, once, rather than leaving someone to
+            # wonder why an animated card came back still.
+            note = f"🖼️ **{row['name']}** — base and upgraded."
+        elif compare and not upgradeable:
+            note = f"🖼️ **{row['name']}** has no upgrade to compare against."
+
         await interaction.followup.send(
-            file=nextcord.File(io.BytesIO(data), filename=f"{to_snake_case(row['name'])}.{ext}"))
+            note,
+            file=nextcord.File(io.BytesIO(data),
+                               filename=f"{to_snake_case(row['name'])}.{ext}"))
+
+    @nextcord.slash_command(name="rules", description="The mechanics JSON for a card, aspect or rite.",
+                            guild_ids=[DEV_GUILD_ID])
+    @safe_interaction(timeout=10, error_message="❌ Failed to read rules.")
+    async def rules_cmd(
+        self,
+        interaction: Interaction,
+        name: str = SlashOption(description="Card, aspect or rite", autocomplete=True),
+    ):
+        kind, row = await asyncio.to_thread(ci.resolve, name)
+        if not row:
+            return f"❌ Could not find `{name}`."
+
+        mechanics = _mechanics(row)
+        if not mechanics:
+            return (f"`{row['name']}` has no actions, triggers, properties or "
+                    f"upgrades — its rules text is all there is.")
+
+        blob = json.dumps(mechanics, indent=2, ensure_ascii=False)
+
+        # One line per field so the reply says what is in the file without
+        # opening it -- `upgrades` in particular is worth knowing about before
+        # you download 8 KB to find out.
+        summary = ", ".join(
+            f"`{field}` ({len(value)})" if isinstance(value, list) else f"`{field}`"
+            for field, value in mechanics.items())
+
+        await interaction.followup.send(
+            f"⚙️ **{row['name']}** — {ci.DISPLAY[kind]} #{row['id']}\n{summary}",
+            file=nextcord.File(io.BytesIO(blob.encode("utf-8")),
+                               filename=f"{to_snake_case(row['name'])}_rules.json"))
 
     @show_cmd.on_autocomplete("name")
     @render_cmd.on_autocomplete("name")
+    @rules_cmd.on_autocomplete("name")
     async def autocomplete_content(self, interaction: Interaction, input: str):
         # Served from an in-process index (azoth_logic/content_index.py). Reading
         # the three tables live costs 0.85-2.3s, and Discord fires this on every
@@ -139,3 +251,4 @@ def add_content_commands(cls):
 
     cls.show_cmd = show_cmd
     cls.render_cmd = render_cmd
+    cls.rules_cmd = rules_cmd
