@@ -9,6 +9,9 @@ from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUC
 from supabase_helpers import fetch_all, update_record
 from supabase_storage import download_image
 
+# Heroes still use the LEGACY renderer: hero cards are a different scene
+# (hero_card.tscn) and have not been ported to card_render.py, which targets
+# card.tscn. See docs/CARD_RENDERING.md § Not ported.
 from azoth_logic.card_renderer import CardRenderer
 renderer = CardRenderer()
 

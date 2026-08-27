@@ -59,7 +59,10 @@ azoth_commands/
   __init__.py             Builds the AzothCommands cog by calling each attacher
   helpers.py              safe_interaction decorator, image helpers, JSON formatting
   autocomplete.py         Generic table-backed autocomplete
-  cards.py aspects.py heroes.py events.py decks.py
+  cards.py aspects.py rites.py decks.py
+  content.py              /get and /render, across all content types
+  search.py               /search
+  heroes.py               RETIRED -- attacher deliberately not called
   misc.py                 bulk_insert / bulk_update
   stats.py                /stats subcommands
   daily_update.py         Scheduled reports + background task
@@ -67,11 +70,27 @@ azoth_commands/
 azoth_logic/
   image_generator.py          Facade over the eigenfunction generator
   eigenfunction_generator.py  Loads .npy eigenfunction data, produces art
-  card_renderer.py            Composites card images
-  fate_renderer.py            Composites aspect / event images
 
+  # The renderer, rewritten 2026-08-26. See docs/CARD_RENDERING.md.
+  card_layout.py              Geometry and type styling, from card.tscn
+  fate_layout.py              The same, for aspect_card.tscn / event_card.tscn
+  rich_text.py                Symbol tokens, wrapping, centred layout
+  eigenfunction_art.py        .exr art -- port of split_card_image.gdshader
+  card_render.py              Composites a card face; PNG and GIF
+  fate_render.py              Composites aspect and rite faces
+  deck_render.py              Deck grid and fanned sample hand
+  art_cache.py                On-disk caches for art and animated renders
+  content_index.py            Cached index behind /get and /render autocomplete
+  content_search.py           The filters behind /search
+  bulk_report.py              Diffs and summaries for the bulk commands
+
+  # ARCHIVES -- unreachable at runtime, kept as the record of the old templates.
+  card_renderer.py            Superseded by card_render.py + deck_render.py
+  fate_renderer.py            Superseded by fate_render.py
+
+tools/sync_assets.py          Vendors game art into assets/card_art/
 eigenfunctions/               .npy / .npz art source data
-assets/                       fonts, icons, renders, downloaded images
+assets/card_art/              Vendored borders, symbols, shader backgrounds
 docs/                         All documentation
 ```
 
@@ -87,7 +106,9 @@ Read the relevant doc before changing a system.
 | `docs/DB_SCHEMA.md` | **Full schema mirror.** Read the query caveats before writing ANY query |
 | `docs/ANALYTICS.md` | The `/stats` views, the daily report, and their known defects |
 | `docs/CONTENT_PIPELINE.md` | How content gets from an idea to a database row |
-| `docs/RENDERING.md` | Card/ritual image generation and Supabase Storage |
+| `docs/CARD_RENDERING.md` | **How `/render` draws cards, aspects and rites** — layout, symbols, animation, caching, vendored assets |
+| `docs/RENDERING.md` | ⚠️ Legacy renderers. Still current for art *generation* and the Storage buckets |
+| `docs/TESTING.md` | The pytest suite, what it guards, how it was mutation-tested |
 | `docs/DEPLOYMENT.md` | Where it runs, configuration, security posture |
 
 ## The cog-attachment pattern
@@ -109,9 +130,13 @@ def add_card_commands(cls):
 1. Define it inside the relevant `add_*_commands(cls)`.
 2. `@nextcord.slash_command(..., guild_ids=[DEV_GUILD_ID])` — always guild-scoped.
 3. `@safe_interaction(...)` — `require_authorized=True` if it writes anything.
-4. Assign it onto `cls`.
+4. Assign it onto `cls`. **`tests/test_command_registration.py` fails if you
+   forget** — that is the whole point of it.
 5. If the module is new, call its attacher in `azoth_commands/__init__.py`.
 6. Document it in `docs/COMMANDS.md`.
+7. If it renders anything, wrap the render in `asyncio.to_thread`. Blocking work
+   on the event loop starves the gateway heartbeat, and `asyncio.wait_for` in
+   `safe_interaction` cannot interrupt it — so the timeout never fires either.
 
 A command **returns a string**; `safe_interaction` posts it as a followup.
 Commands that send their own files or embeds return `None`.
@@ -130,16 +155,28 @@ without it is an open door to production content. Verify this on every review.
 ## Key Conventions
 
 - **Indentation is inconsistent across the repo.** Tabs: `bot.py`,
-  `supabase_helpers.py`, `cards.py`, `aspects.py`, `heroes.py`, `events.py`,
-  `decks.py`. Four spaces: `constants.py`,
-  `stats.py`, `daily_update.py`, everything in `azoth_logic/`. `misc.py` is
-  **mixed** — tab-indented outer function, space-indented command bodies. Match
-  the block you are editing; never reformat a whole file.
+  `supabase_helpers.py`, `helpers.py`, `cards.py`, `aspects.py`, `heroes.py`,
+  `rites.py`, `decks.py`. Four spaces: `constants.py`, `content.py`, `search.py`,
+  `stats.py`, `daily_update.py`, everything in `azoth_logic/` and `tools/`.
+  `misc.py` is **mixed** — tab-indented outer function, space-indented command
+  bodies and module-level helpers. Match the block you are editing; never
+  reformat a whole file.
 - **Rituals use `challenge_name`, not `name`.** Use `get_display_name(obj, type)`
   and `name_column_for(content_type)` rather than re-deriving it.
 - **Deck items are referenced by encoded ref**, `"card:447"`, not by bare name —
   names collide across content types. Use `encode_item_ref` / `parse_item_ref`.
 - **Never commit `.env`.** It holds a service-role key on the deployed machine.
+- **Never touch `mtime` in `get_art`.** It is the fetch time `ART_TTL` measures;
+  touching it on a hit means art never expires, and flat-named upserting uploads
+  mean never expiring is never noticing the bytes changed. `get_render` touches
+  on purpose — content-hash keys cannot go stale, so there `mtime` is last-used.
+- **Never render on the event loop.** Every render path goes through
+  `asyncio.to_thread`; inline it and the gateway heartbeat stalls for the
+  duration.
+- **Never send someone to `sync_assets` for a missing aspect or rite
+  background.** Those are shader output from `tools/BackgroundExportTool.tscn` in
+  the azoth repo, and `sync_assets` cannot produce them — it only verifies they
+  are there. `missing_asset_hint()` picks the right instruction.
 - **Content lives in the database, not in files.** The game repo's
   `assets/game_data/` is a fallback snapshot, not the source of truth.
 - **`created_by` is `BOT_PLAYER_ID`** on content the bot creates.
@@ -161,7 +198,7 @@ ones that bite most often:
 
 ## Testing
 
-**pytest, 109 tests, all offline.** See `docs/TESTING.md`.
+**pytest, 399 tests, all offline.** See `docs/TESTING.md`.
 
 ```bash
 .venv/bin/python -m pytest
@@ -176,8 +213,20 @@ through on the first pass.
 `tests/conftest.py` stubs the environment before any project module imports and
 points `SUPABASE_URL` at a fake host, so nothing reaches the live database.
 
-Still uncovered: the nextcord command layer, the renderers, and the turn-grain
-queries against real `turns` data. There is no CI.
+`tests/test_command_registration.py` is the one to know about. It is the only
+thing that sees two bug classes the 2026-08-26 overhaul shipped:
+
+- **A command defined but never attached.** `/render_card` and `/render_aspect`
+  were both complete function bodies reachable by nobody — the same failure that
+  hid `rituals.py` for months, and invisible at import.
+- **A name that does not exist at runtime.** Deleting the module-level
+  `renderer = CardRenderer()` left four call sites behind, so `/create_card`
+  raised `NameError` *after* writing the row and uploading the art. It shells out
+  to `pyflakes` and fails on undefined names only.
+
+Still uncovered: command BODIES are never executed, renders are not compared
+against Godot's own output, and the turn-grain queries have never run against
+real `turns` data. There is no CI. See `docs/TESTING.md` § Gaps.
 
 ## What NOT to Do
 

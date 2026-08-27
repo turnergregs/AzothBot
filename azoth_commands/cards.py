@@ -1,23 +1,20 @@
-import os
-import json
+import asyncio
+import io
 import nextcord
-from nextcord.ext import commands
 from nextcord import SlashOption, Interaction
 from azoth_commands.helpers import safe_interaction, generate_and_upload_image, record_to_json, to_snake_case
 from azoth_commands.autocomplete import autocomplete_from_table
-from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUCKET_NAMES, ASSET_DOWNLOAD_PATHS
+from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_BUCKET_NAMES
 from supabase_helpers import fetch_all, update_record
-from supabase_storage import download_image
-
-from azoth_logic.card_renderer import CardRenderer
-renderer = CardRenderer()
+from azoth_logic import art_cache, card_render, content_index
 
 TABLE_NAME = "cards"
 MODEL_NAME = "card"
 
+# Storage bucket for FLAT art. Eigenfunction (.exr) art lives in its own bucket;
+# card_render.art_bucket() picks between them. Renders are produced in memory and
+# streamed to Discord, so there are no longer render/download directories here.
 bucket = ASSET_BUCKET_NAMES[MODEL_NAME]
-render_dir = ASSET_RENDER_PATHS[MODEL_NAME]
-download_dir = ASSET_DOWNLOAD_PATHS[MODEL_NAME]
 
 def add_card_commands(cls):
 
@@ -59,6 +56,8 @@ def add_card_commands(cls):
 		}
 
 		created = create_record(TABLE_NAME, create_data)
+		# A new item must be autocompletable now, not after the index TTL.
+		content_index.invalidate()
 		if not created:
 			return f"❌ Failed to create {MODEL_NAME}."
 
@@ -86,17 +85,20 @@ def add_card_commands(cls):
 		if update_result:
 			created_record["image"] = file_path
 
-		# Download image for local rendering
-		download_success, image_local_path = download_image(file_path, bucket, download_dir)
-		if not download_success:
-			return f"✅ Created `{name}`, but failed to retrieve image:\n{image_local_path}"
+		# Storage names are flat and upserting, so a re-created card can land on a
+		# filename the art cache already holds. Drop it before rendering.
+		art_cache.forget_art(bucket, file_path)
 
-		# Render and send
-		render_path = renderer.render_card(created_record, output_dir=render_dir)
+		# Rendering downloads art and runs PIL/numpy -- all blocking. Off the
+		# event loop, or the gateway heartbeat stalls for its duration.
+		try:
+			data, ext = await asyncio.to_thread(card_render.render, created_record)
+		except Exception as e:
+			return f"✅ Created `{name}`, but could not render it: {e}"
+
 		await interaction.followup.send(
 			content=f"✅ Created `{name}` successfully!",
-			file=nextcord.File(render_path)
-		)
+			file=nextcord.File(io.BytesIO(data), filename=f"{to_snake_case(name)}.{ext}"))
 
 		return None
 
@@ -145,60 +147,34 @@ def add_card_commands(cls):
 			if not upload_success:
 				return f"✅ Updated `{name}`, but failed to upload image: `{file_path}`"
 			update_data["image"] = file_path
+			record["image"] = file_path
+			# upload_image upserts under a FLAT name, so the new art usually sits
+			# behind the same filename. Without this the cache serves the old art
+			# for up to ART_TTL.
+			art_cache.forget_art(bucket, file_path)
 
 		# Save updates to database
 		result = update_record(TABLE_NAME, record["id"], update_data)
 		if not result:
 			return f"❌ Failed to update {MODEL_NAME} `{name}`."
 
-		final_name = new_name if new_name else name
-		snake_name = to_snake_case(final_name)
-		render_path = f"{render_dir}/{snake_name}.png"
+		# A rename changes what /get, /render and /search autocomplete on.
+		if new_name:
+			content_index.invalidate()
 
-		# Delete the cached rendered image if it exists
-		if os.path.exists(render_path):
-			try:
-				render_path.unlink()
-				print(f"Deleted cached render: {render_path}")
-			except Exception as e:
-				print(f"Warning: Could not delete cached render for {final_name}: {e}")
-
-		# Optional re-download + render
 		if regenerate_image:
-			download_success, local_path = download_image(file_path, bucket, download_dir)
-			if download_success:
-				render_path = renderer.render_card(record, output_dir=render_dir)
-				await interaction.followup.send(
-					content=f"✅ Updated `{name}` and regenerated image!",
-					file=nextcord.File(render_path)
-				)
-				return None
+			try:
+				data, ext = await asyncio.to_thread(card_render.render, record)
+			except Exception as e:
+				return f"✅ Updated `{name}`, but could not render it: {e}"
+
+			await interaction.followup.send(
+				content=f"✅ Updated `{name}` and regenerated image!",
+				file=nextcord.File(io.BytesIO(data),
+								   filename=f"{to_snake_case(new_name or name)}.{ext}"))
+			return None
 
 		return f"✅ Updated `{name}`:\n```json\n{record_to_json(result[0])}\n```"
-
-
-	@nextcord.slash_command(name="get_card", description="Get card details.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to get card.")
-	async def get_card_cmd(self, interaction: Interaction, name: str):
-		
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
-
-		record = matches[0]
-
-		# Look up decks that use this card
-		deck_contents = fetch_all("deck_contents", filters={"content_id": record["id"], "content_type": MODEL_NAME})
-		deck_ids = [dc["deck_id"] for dc in deck_contents]
-
-		usages = []
-		if deck_ids:
-			decks = fetch_all("decks", filters={"id": deck_ids})
-			usages = [d["name"] for d in decks]
-
-		record["usages"] = usages
-
-		return f"```json\n{record_to_json(record)}\n```"
 
 
 	@nextcord.slash_command(name="delete_card", description="Delete a card.", guild_ids=[DEV_GUILD_ID])
@@ -212,29 +188,11 @@ def add_card_commands(cls):
 
 		record = matches[0]
 		success = delete_record(TABLE_NAME, record["id"])
+		content_index.invalidate()
 		if not success:
 			return f"❌ Failed to delete {MODEL_NAME} `{name}`."
 
 		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
-
-
-	@nextcord.slash_command(name="render_card", description="Render a card and return the image.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=10, error_message="❌ Failed to render card.")
-	async def render_card_cmd(self, interaction: Interaction, name: str = SlashOption(description="Card name", autocomplete=True)):
-		
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
-
-		record = matches[0]
-
-		# Download the art from Supabase
-		image_success, image_result = download_image(record["image"], bucket, download_dir)
-		if not image_success:
-			return f"⚠️ Could not load image for `{name}`:\n{image_result}"
-
-		render_path = renderer.render_card(record)
-		await interaction.followup.send(file=nextcord.File(render_path))
 
 
 	# Autocomplete Helpers
@@ -271,8 +229,6 @@ def add_card_commands(cls):
 
 	@update_card_cmd.on_autocomplete("name")
 	@delete_card_cmd.on_autocomplete("name")
-	@get_card_cmd.on_autocomplete("name")
-	@render_card_cmd.on_autocomplete("name")
 	async def autocomplete_card_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
@@ -295,6 +251,4 @@ def add_card_commands(cls):
 
 	cls.create_card_cmd = create_card_cmd
 	cls.update_card_cmd = update_card_cmd
-	cls.get_card_cmd 	= get_card_cmd
 	cls.delete_card_cmd = delete_card_cmd
-	cls.render_card_cmd = render_card_cmd

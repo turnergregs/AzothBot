@@ -50,6 +50,83 @@ def safe_interaction(timeout=10, error_message="⚠️ Something went wrong.", r
 	return decorator
 
 
+# Two DIFFERENT things go missing under assets/card_art/, and they are refreshed
+# by different tools. Telling someone to run sync_assets for a missing background
+# sends them to a script that cannot produce it.
+#
+#   borders/ symbols/ fonts/  -> copied out of an azoth checkout by tools/sync_assets.py
+#   backgrounds/              -> exported from GODOT, because they are shader output
+#                                (tools/BackgroundExportTool.tscn in the azoth repo)
+#
+# See docs/CARD_RENDERING.md.
+SYNC_HINT = "Run `python -m tools.sync_assets --azoth <path>`."
+BACKGROUND_HINT = (
+	"That one is SHADER OUTPUT -- `sync_assets` cannot produce it. Re-export with:\n"
+	"`godot --path <azoth> tools/BackgroundExportTool.tscn -- --out=/tmp/bgs`\n"
+	"then copy `/tmp/bgs/*` into `assets/card_art/backgrounds/`."
+)
+
+
+def missing_asset_hint(error: Exception) -> str:
+	"""How to restore whichever render asset just came up missing."""
+	if "backgrounds" in str(error).replace("\\", "/"):
+		return BACKGROUND_HINT
+	return SYNC_HINT
+
+
+# Discord embed limits. A single field caps at 1024 characters, but the WHOLE
+# embed caps at 6000 across title + description + every field + footer -- and
+# exceeding that is a 400 on send, which loses the entire reply rather than
+# truncating it. 24 full fields is ~24k, so a large report has to split.
+#
+# daily_update.py packs its own report the same way (`_build_update_embeds`); its
+# ordering safeguards make it not worth re-plumbing, so the rule lives twice.
+MAX_EMBED_CHARS = 5800          # buffer under Discord's 6000
+MAX_FIELD_CHARS = 1024
+MAX_EMBED_FIELDS = 25
+
+
+def embed_char_count(embed: nextcord.Embed) -> int:
+	"""Everything Discord counts toward the 6000-character embed limit."""
+	total = len(embed.title or "") + len(embed.description or "")
+	for field in embed.fields:
+		total += len(field.name or "") + len(field.value or "")
+	if embed.footer:
+		total += len(embed.footer.text or "")
+	if embed.author:
+		total += len(embed.author.name or "")
+	return total
+
+
+def pack_fields_into_embeds(fields, title: str, colour: int, footer: str = None) -> list:
+	"""Split (name, value, inline) triples across as many embeds as they need.
+
+	Returns at least one embed. Continuation embeds are titled '<title> (cont.)',
+	and the footer goes on the LAST one so it reads as the end of the report.
+	"""
+	embeds = []
+	current = nextcord.Embed(title=title, colour=colour)
+
+	for name, value, inline in fields:
+		name = str(name)[:256]
+		value = str(value)
+		if len(value) > MAX_FIELD_CHARS:
+			value = value[:MAX_FIELD_CHARS - 4] + "\n..."
+
+		too_long = embed_char_count(current) + len(name) + len(value) > MAX_EMBED_CHARS
+		too_many = len(current.fields) >= MAX_EMBED_FIELDS
+		if (too_long or too_many) and current.fields:
+			embeds.append(current)
+			current = nextcord.Embed(title=f"{title} (cont.)", colour=colour)
+
+		current.add_field(name=name, value=value, inline=inline)
+
+	embeds.append(current)
+	if footer:
+		embeds[-1].set_footer(text=footer)
+	return embeds
+
+
 def generate_image_filename(name: str, version: int) -> str:
 	safe_name = re.sub(r'\W+', '_', name.lower()).strip('_')
 	return f"{safe_name}_{version}.png"

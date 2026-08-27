@@ -14,6 +14,19 @@ DOWNLOADED_IMAGES_DIR = os.path.join("assets", "downloaded_images", "cards")
 RENDERED_CARDS_DIR = os.path.join("assets", "renders", "cards")
 
 
+# ARCHIVE. Not reachable at runtime.
+#
+# The only remaining import is `azoth_commands/heroes.py`, and that module is
+# itself never imported -- its attacher is deliberately not called from
+# azoth_commands/__init__.py, so the hero commands are retired.
+#
+# Superseded 2026-08-26 by card_render.py + deck_render.py, which target the
+# current `card.tscn`; this targets a template the game replaced. Its last caller
+# was /render_hero, and the hero commands were retired at the same time.
+#
+# Kept on purpose rather than deleted -- it is the original card renderer and the
+# only record of the old template. Do not wire it back up; if hero cards are ever
+# rendered again they should go through card_render.py against hero_card.tscn.
 class CardRenderer:
     def __init__(self, ppi=900, bleed_mm=8.5):
         # Standard playing card size is 63.5mm x 88.9mm

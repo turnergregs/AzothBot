@@ -1,19 +1,13 @@
-import os
+import asyncio
 import json
 import nextcord
-from nextcord.ext import commands
 from nextcord import SlashOption, Interaction
-from azoth_commands.helpers import safe_interaction, generate_and_upload_image
+from azoth_commands.helpers import safe_interaction, missing_asset_hint
 from azoth_commands.autocomplete import autocomplete_from_table
-from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUCKET_NAMES, ASSET_DOWNLOAD_PATHS
+from constants import DEV_GUILD_ID, BOT_PLAYER_ID
 from supabase_helpers import fetch_all, update_record, get_deck_contents
-from supabase_storage import download_image
 
-from azoth_logic.card_renderer import CardRenderer
-from azoth_logic.fate_renderer import FateRenderer
-
-bucket = ASSET_BUCKET_NAMES["card"]
-render_dir = ASSET_RENDER_PATHS["card"]
+from azoth_logic import deck_render
 
 TABLE_NAME = "decks"
 MODEL_NAME = "deck"
@@ -134,14 +128,17 @@ def add_deck_commands(cls):
 		return f"```json\n{record_json}\n```"
 
 
+	# 110 cards means 110 art downloads. They are parallelised (see
+	# deck_render.fetch_art_many) and land in ~27s warm, but a cold process pays
+	# DNS and TLS on top -- hence 120s rather than the 60s the old renderer used.
 	@nextcord.slash_command(name="render_deck", description="Render the full contents of a deck.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=60, error_message="❌ Failed to render deck.")
+	@safe_interaction(timeout=120, error_message="❌ Failed to render deck.")
 	async def render_deck_cmd(
 		self,
 		interaction: Interaction,
 		name: str = SlashOption(description="Deck to render", autocomplete=True),
 	):
-		import io, uuid
+		import io
 
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
 		if len(matches) == 0:
@@ -155,21 +152,24 @@ def add_deck_commands(cls):
 		if len(content_result) == 0:
 			return f"⚠️ Deck `{name}` is empty."
 
-		render_dir = ASSET_RENDER_PATHS["deck"]
-		filename = f"deck_render_{uuid.uuid4().hex}.png"
-		output_path = os.path.join(render_dir, filename)
+		# Cards only for now: aspects and events need the fate renderer.
+		cards = [c for c in content_result if c.get("item_type") == "card"]
+		if not cards:
+			return f"⚠️ Deck `{name}` has no cards to render."
 
-		renderer = CardRenderer()
-		# TODO support for FateRenderer
-		renderer.create_card_grid(content_result, output_path)
+		# 110 art downloads plus PIL compositing -- seconds of blocking work, so it
+		# runs off the event loop rather than starving the gateway heartbeat.
+		try:
+			image_bytes = await asyncio.to_thread(deck_render.render_grid, cards)
+		except ValueError as e:
+			return f"⚠️ {e}"
+		except FileNotFoundError as e:
+			return f"⚠️ Missing render asset: {e}\n{missing_asset_hint(e)}"
 
-		with open(output_path, "rb") as f:
-			image_bytes = f.read()
-
-		os.remove(output_path)
-
+		skipped = len(content_result) - len(cards)
+		note = f" ({skipped} non-card item(s) not rendered)" if skipped else ""
 		file = nextcord.File(io.BytesIO(image_bytes), filename="deck.png")
-		await interaction.followup.send(f"🖼️ Full deck: `{name}`", file=file)
+		await interaction.followup.send(f"🖼️ Full deck: `{name}` — {len(cards)} cards{note}", file=file)
 
 
 	@nextcord.slash_command(name="render_hand", description="Render a sample hand from a deck.", guild_ids=[DEV_GUILD_ID])
@@ -180,7 +180,7 @@ def add_deck_commands(cls):
 		name: str = SlashOption(description="Deck name", autocomplete=True),
 		hand_size: int = SlashOption(description="Number of cards to draw (default 6)", default=6)
 	):
-		import io, uuid
+		import io
 
 		matches = fetch_all(TABLE_NAME, filters={"name": name})
 		if len(matches) == 0:
@@ -194,21 +194,18 @@ def add_deck_commands(cls):
 		if len(content_result) == 0:
 			return f"⚠️ Deck `{name}` is empty."
 
-		render_dir = ASSET_RENDER_PATHS["deck"]
-		filename = f"deck_render_{uuid.uuid4().hex}.png"
-		output_path = os.path.join(render_dir, filename)
+		cards = [c for c in content_result if c.get("item_type") == "card"]
+		if not cards:
+			return f"⚠️ Deck `{name}` has no cards to draw from."
 
-		renderer = CardRenderer()
-		# TODO support for FateRenderer
-		renderer.create_sample_hand(content_result, output_path, hand_size)
-
-		with open(output_path, "rb") as f:
-			image_bytes = f.read()
-
-		os.remove(output_path)  # ✅ cleanup
+		try:
+			image_bytes = await asyncio.to_thread(deck_render.render_hand, cards, hand_size)
+		except FileNotFoundError as e:
+			return f"⚠️ Missing render asset: {e}\n{missing_asset_hint(e)}"
 
 		file = nextcord.File(io.BytesIO(image_bytes), filename="hand.png")
-		await interaction.followup.send(f"✋ Hand from `{name}`", file=file)
+		await interaction.followup.send(
+			f"✋ Hand of {min(hand_size, len(cards))} from `{name}`", file=file)
 
 
 	@nextcord.slash_command(name="add_to_deck", description="Add a card, aspect, or event to a deck.", guild_ids=[DEV_GUILD_ID])
@@ -259,22 +256,17 @@ def add_deck_commands(cls):
 	# Deck Helpers
 
 	def download_content_images(deck: dict):
-		success, contents = get_deck_contents(deck, full=True)
-		if not success:
-			return False, contents
-		if not contents:
-			return True, []
+		"""Deck contents, without pre-downloading art.
 
-		for item in contents:
-			item_type = item["item_type"]
-			download_dir = ASSET_DOWNLOAD_PATHS[item_type]
-			bucket = ASSET_BUCKET_NAMES[item_type]
-			# Rituals used to need a second download here for their reward side;
-			# that content type was retired 2026-08-26.
-			image_success, image_result = download_image(item["image"], bucket, download_dir)
-			if not image_success:
-				return False, f"⚠️ Could not load image for `{item['name']}`:\n{image_result}"
-		return True, contents
+		The renderer fetches art itself, in parallel and deduplicated by
+		filename (deck_render.fetch_art_many). This used to download every
+		item's image to disk first -- serially, and then again inside the
+		renderer, which roughly doubled the time to render a deck.
+
+		The name is kept because several commands call it; it no longer
+		downloads anything.
+		"""
+		return get_deck_contents(deck, full=True)
 
 
 	@nextcord.slash_command(name="postpone", description="Move all of the copies of the item from live draft decks to Removed decks.", guild_ids=[DEV_GUILD_ID])

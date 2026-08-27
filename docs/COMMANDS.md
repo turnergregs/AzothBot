@@ -11,15 +11,58 @@ no database-level guard. See [ARCHITECTURE.md § safe_interaction](ARCHITECTURE.
 
 ---
 
+## Content lookup
+
+| Command | Access | Parameters |
+|---|---|---|
+| `/get` | — | `name`* — any card, aspect or rite |
+| `/render` | — | `name`* — any card, aspect or rite |
+
+**One command each, across all content types.** Replaced the six typed
+`/get_*` and `/render_*` commands on 2026-08-26.
+
+The autocomplete disambiguates by type and id — `Diversity (Card #447)` — which
+matters because **17 names exist on more than one content type**: "Anima
+Shrinker" is both a Card and an Aspect. The old split handled that by making you
+pick the right command; now the label does it.
+
+The value behind each choice is the same encoded ref the deck commands use
+(`card:447`), so one lookup path serves both. Rites label as **Rite** while their
+ref still encodes `event:82`, matching the naming boundary.
+
+Autocomplete is served from an in-process index
+(`azoth_logic/content_index.py`) with a 60s TTL — Discord fires it on every
+keystroke and reading the three tables live costs 0.85–2.3s. `create_*` and
+`delete_*` invalidate it, so new content is selectable immediately; the TTL is
+the backstop for edits made in the Codex or by direct SQL.
+
+`/get` returns a **detail embed**, accented in the item's own colour: rules text
+as the body, and only the attributes that define the thing — element, valence,
+subtypes, split face, attunement or foresight, whichever apply. Empty and null
+values are dropped rather than printed.
+
+It used to dump the raw database row as JSON. Deliberately **not** shown now:
+
+| Omitted | Why |
+|---|---|
+| `upgrades` | A nested blob that dwarfs the card, and its rules text reads as the card's own |
+| `created_at` / `updated_at` / `created_by` | Audit metadata |
+| `image` / `image_data` | Rendering internals — `/render` is the view |
+| `actions` / `triggers` / `properties` | `jsonb`, and past Discord's 2000-char limit on their own |
+
+`type` is shown only when it is *not* `spell` — 328 of 400 cards are spells, so
+printing it on each is noise; a catalyst is the exception worth naming. A null
+element reads as **Colourless** rather than blank, which is what 64 cards have.
+
+---
+
 ## Cards
 
 | Command | Access | Parameters |
 |---|---|---|
 | `/create_card` | 🔒 | `name`, `type`*, `valence`, `element`*, `text`, `attributes?`, `subtypes?`, `deck?`*, `quantity?` |
 | `/update_card` | 🔒 | `name`*, `new_name?`, `type?`*, `valence?`, `element?`*, `text?`, `subtypes?`, `attributes?`, `regenerate_image?` |
-| `/get_card` | — | `name` |
 | `/delete_card` | 🔒 | `name` |
-| `/render_card` | — | `name`* |
 
 `*` = autocompleted. `?` = optional.
 
@@ -27,10 +70,14 @@ no database-level guard. See [ARCHITECTURE.md § safe_interaction](ARCHITECTURE.
 - `create_card` optionally adds the new card straight into a deck (`deck` +
   `quantity`) in the same call.
 - `update_card` only regenerates art when `regenerate_image=True`; otherwise the
-  existing image is kept.
-- `get_card` returns JSON with `actions`, `triggers` and `properties` **stripped**
-  (`record_to_json` in `helpers.py`) so the reply fits Discord's 2000-char limit.
-  To see those fields, query the database directly.
+  existing image is kept. When it does, the newly uploaded art is dropped from
+  the render cache first — Storage names are flat and upserting, so the same
+  filename now holds different bytes.
+- `create_card` and `update_card` (with `regenerate_image`) reply with the
+  rendered card. To look one up without touching it, use `/get` or `/render`.
+- To read `actions`, `triggers` or `properties`, query the database directly.
+  `/get` omits them on purpose — each is past Discord's 2000-char limit on its
+  own. `/search` does reach inside them.
 
 ## Aspects
 
@@ -38,35 +85,32 @@ no database-level guard. See [ARCHITECTURE.md § safe_interaction](ARCHITECTURE.
 |---|---|---|
 | `/create_aspect` | 🔒 | `name`, `text`, `attunement`, `image?`, `deck?`*, `quantity?` |
 | `/update_aspect` | 🔒 | `name`*, `new_name?`, `text?`, `attunement?`, `image?` |
-| `/get_aspect` | — | `name` |
-| `/delete_aspect` | — 🔒 | `name` |
-| ~~`/render_aspect`~~ | ⚠️ | Commented out in `aspects.py:201` |
+| `/delete_aspect` | 🔒 | `name` |
 
 Aspects take an existing image name in the `aspectimages` bucket rather than
 generating art. `update_aspect` has its `regenerate_image` parameter commented
-out.
+out. Render one with `/render`.
 
-## Events
+## Rites
 
-| Command | Access | Parameters |
-|---|---|---|
-| `/create_event` | 🔒 | `name`, `text`, `foresight`, `deck?`*, `quantity?` |
-| `/update_event` | 🔒 | `name`*, `new_name?`, `text?`, `foresight?`, `regenerate_image?` |
-| `/get_event` | — | `name` |
-| `/delete_event` | 🔒 | `name` |
-| `/render_event` | — | `name`* |
-
-## Heroes
+> **"Rite" is the current name for what the database calls an "event."** The
+> commands and all new code say rite; the `events` table, the `event`
+> `content_type` and the `eventimages` bucket keep the old name until a
+> migration. See [CARD_RENDERING.md](CARD_RENDERING.md#naming-rite-vs-event).
 
 | Command | Access | Parameters |
 |---|---|---|
-| `/create_hero` | 🔒 | `name`, `text`, `r`, `g`, `b` |
-| `/update_hero` | 🔒 | `name`*, `new_name?`, `text?`, `r?`, `g?`, `b?`, `regenerate_image?` |
-| `/get_hero` | — | `name` |
-| `/delete_hero` | 🔒 | `name` |
-| `/render_hero` | — | `name` |
+| `/create_rite` | 🔒 | `name`, `text`, `foresight`, `deck?`*, `quantity?` |
+| `/update_rite` | 🔒 | `name`*, `new_name?`, `text?`, `foresight?`, `regenerate_image?` |
+| `/delete_rite` | 🔒 | `name` |
 
-`r`/`g`/`b` are 0–255 and set the hero's colour.
+## Heroes ⚠️ RETIRED
+
+All `/*_hero` commands were unregistered 2026-08-26. `azoth_commands/heroes.py`
+still exists but its attacher is **deliberately** not called from
+`azoth_commands/__init__.py` — unlike the rituals/consumables case, this is not
+an oversight to fix. Hero cards were also never ported to the new renderer, so
+`/render_hero` would draw the wrong frame.
 
 ---
 
@@ -78,8 +122,8 @@ out.
 | `/update_deck` | 🔒 | `name`*, `new_name?`, `description?`, `type?`*, `usage_type?`*, `archived?` |
 | `/delete_deck` | 🔒 | `name`* — hard delete if empty, soft delete if in use |
 | `/get_deck` | — | `name`* — details plus contents |
-| `/render_deck` | — | `name`* — renders every item (60s timeout) |
-| `/render_hand` | — | `name`*, `hand_size?` (default 6) — a sample draw |
+| `/render_deck` | — | `name`* — every card, tiled, static (120s timeout) |
+| `/render_hand` | — | `name`*, `hand_size?` (default 6) — a fanned sample draw, static |
 
 `type` / `content_type` / `usage_type` autocomplete from `deck_types`,
 `deck_content_types` and `deck_usage_types`. ⚠️ Those three tables read as empty
@@ -130,10 +174,62 @@ Both take a JSON object keyed by table name, with a list of records per table.
 `name`** and applies partial field updates (use `new_name` to rename).
 
 Neither is transactional — rows are applied one at a time and a failure part-way
-leaves earlier rows written. Both report per-row errors, capped at 15 lines in
-the Discord reply with the rest going to the bot console.
+leaves earlier rows written.
+
+Both reply with an embed describing the action: `/bulk_update` gives a per-record
+field diff **and renders the updated items**; `/bulk_insert` lists each new row
+with its id and attributes but does **not** render, because art is uploaded after
+an insert. Errors are listed with the rest, and any truncation is announced. See
+[CONTENT_PIPELINE.md](CONTENT_PIPELINE.md#what-the-reply-tells-you).
 
 Full format specification and workflow: [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md).
+
+---
+
+## Search
+
+| Command | Access | Parameters |
+|---|---|---|
+| `/search` | — | `query?`, `content_type?`, `element?`, `valence?`, `subtype?`*, `card_type?`*, `action?`*, `sort?`, `limit?` |
+
+Finds cards, aspects and rites and renders the matches as a grid. Every filter is
+optional and they AND together.
+
+**`query` mirrors the Codex's search** (`content_search.gd` in the game repo): it
+scans name, rules text, type, subtypes, valence and attunement — **and deep-
+searches the `actions` / `triggers` / `properties` JSON**. That last part is the
+useful bit: `query: Magnify` finds every card carrying that property even though
+the word appears in no flat column, and `query: {link.size}` finds every card
+using that placeholder.
+
+`subtype`, `card_type` and `action` autocomplete from live content, so a new
+subtype or action shows up without a code change. `action` walks nested actions
+and triggers, so a `Recall` inside a `Split` inside a trigger still matches. It
+does **not** match properties — the free-text query is what reaches those.
+
+Results are **static**, like `/render_deck`: twenty animated cards would be tens
+of megabytes and unreadable at grid scale. Default 20 results, hard cap 40 —
+rendering is ~0.7s per item on a cold cache. Truncation is always reported
+(`showing 20 of 47`), never silent.
+
+---
+
+## Cache
+
+| Command | Access | Parameters |
+|---|---|---|
+| `/cache status` | — | — |
+| `/cache clear` | 🔒 | `which?` — everything / renders only / art only |
+
+The on-disk render cache (`cache/`, gitignored). `status` shows both caches
+against their size caps; `clear` drops them — always safe, but the next render of
+each item pays full price again.
+
+Eviction is automatic and size-capped, so clearing by hand is for forcing a
+redraw rather than for reclaiming space. **`renders` alone is usually the one you
+want** — art is expensive to re-download and bounded anyway, while a render is
+what you would want to force. Full policy:
+[CARD_RENDERING.md § Eviction](CARD_RENDERING.md#eviction).
 
 ---
 
@@ -173,7 +269,8 @@ sections say "unavailable" rather than silently reporting zero. See
 
 ## Quick index
 
-**Open to any guild member:** every `get_*` and `render_*`, and all of `/stats`.
+**Open to any guild member:** `/get`, `/render`, `/search`, `/get_deck`,
+`/render_deck`, `/render_hand`, `/cache status`, and all of `/stats`.
 
 **Authorized users only:** every `create_*`, `update_*`, `delete_*`, all deck
 mutation, `/bulk_insert`, `/bulk_update`, `/daily_update`.
@@ -181,5 +278,6 @@ mutation, `/bulk_insert`, `/bulk_update`, `/daily_update`.
 **Removed 2026-08-26:** all 10 ritual and consumable commands, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).
 
-**Does not exist despite having code:** `/render_aspect`, commented out at
-`aspects.py:201`.
+**Retired 2026-08-26:** all `/*_hero` commands. `heroes.py` is deliberately not
+attached in `azoth_commands/__init__.py` — see
+[CARD_RENDERING.md § Retired](CARD_RENDERING.md#retired).

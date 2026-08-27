@@ -20,5 +20,14 @@ python-dotenv==1.0.1
 numpy>=1.24.0
 matplotlib>=3.6.0
 
+# Eigenfunction card art. azoth_logic/eigenfunction_art.py imports cv2 at module
+# scope for its EXR reader, and card_render imports that -- so without OpenCV the
+# COG WILL NOT IMPORT and the bot does not start at all.
+# Headless: the bot never opens a window, and the GUI build pulls in Qt/GTK.
+opencv-python-headless>=4.9
+
 # Tests (dev only)
 pytest>=8.0
+# tests/test_command_registration.py shells out to pyflakes to catch names that
+# do not exist at runtime -- the /create_card NameError class of bug.
+pyflakes>=3.0

@@ -50,6 +50,26 @@ are registered.
 
 Python 3.11 (`.python-version`).
 
+### Directories that have to be there
+
+| Path | Why | If missing |
+|---|---|---|
+| `eigenfunctions/` | ~95 `.npy`/`.npz` files, loaded at import by the art generator | Startup crash |
+| `assets/card_art/` | Vendored borders, symbols and the shader-exported backgrounds the renderer draws from | Renders fail with a `FileNotFoundError` naming the file; the reply says how to restore it |
+| `assets/fonts/` | `Aldrich-Regular.ttf` | Every render fails |
+| `cache/` | Created on demand | Nothing — it rebuilds |
+
+`cache/` is the render cache (`azoth_logic/art_cache.py`). It is gitignored and
+**safe to delete at any time** — deleting it costs the next render of each item
+its cached copy, nothing more.
+
+It is **self-limiting**: eviction is size-capped and runs on write, so it cannot
+exceed **700 MB** total (art 300 + renders 400). Budget disk for that, not for the
+~30 MB it sits at after light use. `/cache status` reports the current figure, and
+no periodic cleanup job is needed — that was a deliberate choice, since a timer on
+a hand-started bot may not fire for weeks. See
+[CARD_RENDERING.md § Eviction](CARD_RENDERING.md#eviction).
+
 ### Updating
 
 ```bash
@@ -57,6 +77,13 @@ git pull
 pip install -r requirements.txt   # only if requirements changed
 # restart the process
 ```
+
+> **The 2026-08-26 render rewrite added a dependency.** `opencv-python-headless`
+> is imported at module scope by `azoth_logic/eigenfunction_art.py`, which
+> `card_render` imports, which the cog imports — so skipping the reinstall on this
+> update does not degrade rendering, it stops the bot from starting at all. The
+> failure is `ModuleNotFoundError: No module named 'cv2'` before either success
+> line prints.
 
 There is nothing else — no build step, no migrations from this side.
 
@@ -103,8 +130,9 @@ Two things stand between a Discord user and the production database:
 
 Consequences to keep in mind:
 
-- **Anyone in the guild can read.** All `get_*`, all `render_*`, and all of
-  `/stats` are unrestricted. `/stats` exposes player names and full run history.
+- **Anyone in the guild can read.** `/get`, `/render`, `/search`, the deck
+  read/render commands and all of `/stats` are unrestricted. `/stats` exposes
+  player names and full run history.
 - **Anyone on `AUTHORIZED_USER_IDS` can destroy content.** `/delete_card` has no
   confirmation step and no database-level backstop.
 - **There are no backups configured from this repo.** Deletions rely on whatever
@@ -134,5 +162,16 @@ almost any host works. What would need attention:
   file with no locking; two instances would double-send.
 - **`eigenfunctions/` must be present.** ~95 `.npy`/`.npz` files, loaded at import.
   A missing directory is a startup crash.
-- **Rendering is CPU-bound** and blocks the event loop. Anything that renders decks
-  regularly wants real CPU, not the smallest instance tier.
+- **`assets/card_art/` must be present too.** Same as `eigenfunctions/`: it is
+  vendored art the renderer reads at draw time, and the shader-exported
+  backgrounds in it cannot be regenerated without a Godot checkout.
+- **Rendering is CPU-bound.** It no longer blocks the event loop — every render
+  path goes through `asyncio.to_thread` — but that moves the work to a thread, it
+  does not make it cheaper. A `/render_deck` is ~27s of real CPU and download, so
+  anything that renders decks regularly wants real CPU, not the smallest instance
+  tier.
+- **`cache/` wants a persistent disk, and 700 MB of it.** On an ephemeral
+  filesystem every deploy throws the render cache away, turning a 0.00s repeat
+  render back into 1.77s. It is a cache, so that is a slowdown rather than a
+  fault. It evicts itself, so no cleanup job is needed — but size the volume for
+  the cap, not for current usage.

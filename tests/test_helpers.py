@@ -112,3 +112,93 @@ def test_download_path_strips_the_version_suffix(remote, expected_base):
 ])
 def test_snake_case(raw, expected):
     assert to_snake_case(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# Embed packing
+# ---------------------------------------------------------------------------
+# A field caps at 1024 characters, but the WHOLE embed caps at 6000 across title
+# + description + every field + footer. Going over is a 400 on send, which loses
+# the ENTIRE reply -- so /bulk_update's report used to vanish on a large payload
+# while reporting nothing about why.
+
+from azoth_commands.helpers import (embed_char_count, pack_fields_into_embeds,
+                                    missing_asset_hint, MAX_FIELD_CHARS)
+
+
+def _fields(n, size=900):
+    return [(f"field {i}", "x" * size, False) for i in range(n)]
+
+
+def test_a_small_report_stays_in_one_embed():
+    embeds = pack_fields_into_embeds(_fields(3, 100), "Bulk update", 0x2ecc71)
+    assert len(embeds) == 1
+    assert len(embeds[0].fields) == 3
+
+
+def test_a_large_report_splits_rather_than_truncating():
+    """24 full fields is ~24k against a 6000 limit. Every field must survive."""
+    embeds = pack_fields_into_embeds(_fields(24), "Bulk update", 0x2ecc71)
+    assert len(embeds) > 1
+    assert sum(len(e.fields) for e in embeds) == 24, "no field may be dropped"
+
+
+def test_no_embed_exceeds_discord_s_limit():
+    for embed in pack_fields_into_embeds(_fields(40), "Bulk update", 0x2ecc71):
+        assert embed_char_count(embed) <= 6000
+
+
+def test_no_embed_exceeds_discord_s_field_count():
+    for embed in pack_fields_into_embeds(_fields(40, size=10), "Bulk update", 0x2ecc71):
+        assert len(embed.fields) <= 25
+
+
+def test_an_overlong_field_is_truncated_not_dropped():
+    embeds = pack_fields_into_embeds([("f", "y" * 5000, False)], "T", 0)
+    value = embeds[0].fields[0].value
+    assert len(value) <= MAX_FIELD_CHARS
+    assert value.endswith("...")
+
+
+def test_continuation_embeds_are_labelled():
+    embeds = pack_fields_into_embeds(_fields(24), "Bulk update", 0x2ecc71)
+    assert embeds[0].title == "Bulk update"
+    assert all(e.title.endswith("(cont.)") for e in embeds[1:])
+
+
+def test_the_footer_lands_on_the_last_embed():
+    """It reads as the end of the report, not the end of page one."""
+    embeds = pack_fields_into_embeds(_fields(24), "Bulk insert", 0, footer="why no art")
+    assert embeds[-1].footer.text == "why no art"
+    assert all(e.footer.text is None for e in embeds[:-1])
+
+
+def test_no_fields_still_returns_an_embed():
+    """A bulk action with nothing to report must still reply."""
+    assert len(pack_fields_into_embeds([], "Bulk update", 0)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Missing-asset guidance
+# ---------------------------------------------------------------------------
+# Two different things go missing under assets/card_art/, restored by two
+# different tools. Sending someone to sync_assets for a shader-exported
+# background points them at a script that cannot produce it.
+
+def test_a_missing_background_points_at_the_godot_exporter():
+    err = FileNotFoundError("assets/card_art/backgrounds/rite_background_rest.png")
+    hint = missing_asset_hint(err)
+    assert "BackgroundExportTool" in hint
+    # It names sync_assets only to say it CANNOT help -- never as the instruction.
+    assert "cannot produce it" in hint
+    assert "Run `python -m tools.sync_assets" not in hint
+
+
+def test_a_missing_symbol_points_at_sync_assets():
+    assert "sync_assets" in missing_asset_hint(FileNotFoundError("symbols/1life.png"))
+
+
+def test_windows_paths_are_recognised():
+    """The bot is deployed on Windows, where the separator is a backslash."""
+    err = FileNotFoundError(r"C:\bot\assets\card_art\backgrounds\aspect_background.png")
+    assert "BackgroundExportTool" in missing_asset_hint(err)

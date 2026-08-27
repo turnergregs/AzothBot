@@ -1,23 +1,19 @@
-import os
 import json
 import nextcord
-from nextcord.ext import commands
 from nextcord import SlashOption, Interaction
-from azoth_commands.helpers import safe_interaction, generate_and_upload_image, record_to_json, to_snake_case
+from azoth_commands.helpers import safe_interaction, record_to_json
 from azoth_commands.autocomplete import autocomplete_from_table
-from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_RENDER_PATHS, ASSET_BUCKET_NAMES, ASSET_DOWNLOAD_PATHS
+from constants import DEV_GUILD_ID, BOT_PLAYER_ID, ASSET_BUCKET_NAMES
 from supabase_helpers import fetch_all, update_record
-from supabase_storage import download_image
-
-from azoth_logic.fate_renderer import FateRenderer
-renderer = FateRenderer()
+from azoth_logic import content_index
 
 TABLE_NAME = "aspects"
 MODEL_NAME = "aspect"
 
+# Aspects take an EXISTING image name in this bucket rather than generating art
+# (`create_aspect`'s `image` parameter), so nothing here uploads. `/render` draws
+# aspects via fate_render.
 bucket = ASSET_BUCKET_NAMES[MODEL_NAME]
-render_dir = ASSET_RENDER_PATHS[MODEL_NAME]
-download_dir = ASSET_DOWNLOAD_PATHS[MODEL_NAME]
 
 def add_aspect_commands(cls):
 
@@ -47,6 +43,8 @@ def add_aspect_commands(cls):
 		if image: create_data["image"] = image
 
 		created = create_record(TABLE_NAME, create_data)
+		# A new item must be autocompletable now, not after the index TTL.
+		content_index.invalidate()
 		if not created:
 			return f"❌ Failed to create {MODEL_NAME}."
 
@@ -130,55 +128,11 @@ def add_aspect_commands(cls):
 		if not result:
 			return f"❌ Failed to update {MODEL_NAME} `{name}`."
 
-		final_name = new_name if new_name else name
-		snake_name = to_snake_case(final_name)
-		render_path = f"{render_dir}/{snake_name}.png"
-
-		# Delete the cached rendered image if it exists
-		# if os.path.exists(render_path):
-		# 	try:
-		# 		render_path.unlink()
-		# 		print(f"Deleted cached render: {render_path}")
-		# 	except Exception as e:
-		# 		print(f"Warning: Could not delete cached render for {final_name}: {e}")
-
-		# Optional re-download + render
-		# if regenerate_image:
-		# 	download_success, local_path = download_image(file_path, bucket, download_dir)
-		# 	if download_success:
-		# 		record["fate_type"] = MODEL_NAME
-		# 		render_path = renderer.render_fate(record, output_dir=render_dir)
-		# 		await interaction.followup.send(
-		# 			content=f"✅ Updated `{name}` and regenerated image!",
-		# 			file=nextcord.File(render_path)
-		# 		)
-		# 		return None
+		# A rename changes what /get, /render and /search autocomplete on.
+		if new_name:
+			content_index.invalidate()
 
 		return f"✅ Updated `{name}`:\n```json\n{record_to_json(result[0])}\n```"
-
-
-	@nextcord.slash_command(name="get_aspect", description="Get aspect details.", guild_ids=[DEV_GUILD_ID])
-	@safe_interaction(timeout=5, error_message="❌ Failed to get aspect.")
-	async def get_aspect_cmd(self, interaction: Interaction, name: str):
-		
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
-
-		record = matches[0]
-
-		# Look up decks that use this aspect
-		deck_contents = fetch_all("deck_contents", filters={"content_id": record["id"], "content_type": MODEL_NAME})
-		deck_ids = [df["deck_id"] for df in deck_contents]
-
-		usages = []
-		if deck_ids:
-			decks = fetch_all("decks", filters={"id": deck_ids})
-			usages = [d["name"] for d in decks]
-
-		record["usages"] = usages
-
-		return f"```json\n{record_to_json(record)}\n```"
 
 
 	@nextcord.slash_command(name="delete_aspect", description="Delete an aspect.", guild_ids=[DEV_GUILD_ID])
@@ -192,38 +146,17 @@ def add_aspect_commands(cls):
 
 		record = matches[0]
 		success = delete_record(TABLE_NAME, record["id"])
+		content_index.invalidate()
 		if not success:
 			return f"❌ Failed to delete {MODEL_NAME} `{name}`."
 
 		return f"🗑️ Deleted {MODEL_NAME} `{name}`."
 
 
-	# @nextcord.slash_command(name="render_aspect", description="Render an aspect and return the image.", guild_ids=[DEV_GUILD_ID])
-	# @safe_interaction(timeout=10, error_message="❌ Failed to render aspect.")
-	# async def render_aspect_cmd(self, interaction: Interaction, name: str = SlashOption(description="Aspect name", autocomplete=True)):
-		
-	# 	matches = fetch_all(TABLE_NAME, filters={"name": name})
-	# 	if len(matches) == 0:
-	# 		return f"❌ Could not find {MODEL_NAME} named `{name}`."
-
-	# 	record = matches[0]
-
-	# 	# Download the art from Supabase
-	# 	image_success, image_result = download_image(record["image"], bucket, download_dir)
-	# 	if not image_success:
-	# 		return f"⚠️ Could not load image for `{name}`:\n{image_result}"
-
-	# 	record["fate_type"] = MODEL_NAME
-	# 	render_path = renderer.render_fate(record)
-	# 	await interaction.followup.send(file=nextcord.File(render_path))
-
-
 	# Autocomplete Helpers
 
 	@update_aspect_cmd.on_autocomplete("name")
 	@delete_aspect_cmd.on_autocomplete("name")
-	@get_aspect_cmd.on_autocomplete("name")
-	# @render_aspect_cmd.on_autocomplete("name")
 	async def autocomplete_aspect_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
 		matches = autocomplete_from_table(TABLE_NAME, input)
@@ -246,6 +179,4 @@ def add_aspect_commands(cls):
 
 	cls.create_aspect_cmd = create_aspect_cmd
 	cls.update_aspect_cmd = update_aspect_cmd
-	cls.get_aspect_cmd 	= get_aspect_cmd
 	cls.delete_aspect_cmd = delete_aspect_cmd
-	# cls.render_aspect_cmd = render_aspect_cmd

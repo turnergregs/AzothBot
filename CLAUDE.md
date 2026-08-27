@@ -42,7 +42,9 @@ All docs live in `docs/`. Read before changing a system.
 | `DB_SCHEMA.md` | **Full schema mirror.** Read the query caveats before writing ANY query |
 | `ANALYTICS.md` | `/stats` views, the daily report, and their defects |
 | `CONTENT_PIPELINE.md` | Idea → JSON → database row |
-| `RENDERING.md` | Eigenfunction art generation, card compositing, Storage buckets |
+| `CARD_RENDERING.md` | **How `/render` draws cards, aspects and rites.** Layout, symbols, animation, caching, and the vendored assets |
+| `RENDERING.md` | ⚠️ Legacy renderers. Still current for art *generation* and the Storage buckets |
+| `TESTING.md` | The pytest suite, what it guards, and how it was mutation-tested |
 | `DEPLOYMENT.md` | Where it runs, config, security posture |
 
 ## Key Architecture Decisions
@@ -65,6 +67,20 @@ All docs live in `docs/`. Read before changing a system.
   and `name_column_for(content_type)`.
 - **Art generation is random and destructive.** Uploads are flat-named and
   upserting, so regenerating destroys the previous image. No history, no seed.
+  Because the name does not change, `art_cache.forget_art()` must be called at
+  every upload site or the bot keeps drawing the old art for up to 7 days.
+- **Two commands cover all content lookup.** `/get` and `/render` dispatch on an
+  encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
+  `/render_*` commands were retired 2026-08-26.
+- **The render cache evicts on write, not on a timer.** Size-capped LRU
+  (`art_cache._evict`). A daily sweep was rejected: the bot is hand-started, so a
+  timer may not fire for weeks, and growth is bursty rather than
+  time-proportional. `mtime` means *last used* for renders (touched on hit) and
+  *last fetched* for art (never touched — `ART_TTL` measures it). Don't unify them.
+- **Renders must not run on the event loop.** They download art and run PIL/numpy
+  for seconds at a time. `asyncio.wait_for` cannot interrupt blocking work, so a
+  render left inline starves the gateway heartbeat *and* defeats its own timeout.
+  Every render path goes through `asyncio.to_thread`.
 
 ## Running the Bot
 
@@ -82,7 +98,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 109 tests, all offline** (`docs/TESTING.md`):
+**pytest, 399 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest
@@ -90,8 +106,18 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 Mostly regression tests for real production bugs, each naming its incident. The
 suite is mutation-tested — reintroduce a bug and confirm the tests go red before
-trusting them. Uncovered: the nextcord command layer, the renderers, and the
-turn-grain queries against live data. No CI.
+trusting them.
+
+`test_command_registration.py` is the one to know about: it checks **what the cog
+actually exposes** and that **no name in the command layer is undefined**. Both
+bug classes shipped in the 2026-08-26 overhaul, and nothing else can see either —
+a command with no `cls.x = x` imports cleanly, and a deleted module-level name
+only raises when someone runs the command in Discord. It shells out to `pyflakes`
+and fails on undefined names only.
+
+Still uncovered: command BODIES are never executed, renders are not compared
+against Godot, and the turn-grain queries have never run against live data. No
+CI. See `docs/TESTING.md` § Gaps.
 
 ## Writing Queries
 
@@ -139,3 +165,8 @@ See `docs/CONTENT_PIPELINE.md`.
 - Don't change the schema from here — it originates in the game repo's
   `db/migrations/`
 - Don't commit `.env`
+- Don't add a command without assigning it onto the cog — `test_command_registration.py`
+  will fail, and that is the point
+- Don't run a render inline on the event loop; use `asyncio.to_thread`
+- Don't tell anyone to run `sync_assets` for a missing aspect/rite background —
+  those are shader output and it cannot produce them (`missing_asset_hint`)

@@ -46,7 +46,8 @@ everything. See [DB_SCHEMA.md § Which key you are holding](docs/DB_SCHEMA.md#az
 | [DB_SCHEMA.md](docs/DB_SCHEMA.md) | Full schema mirror, RLS posture, and the query caveats |
 | [ANALYTICS.md](docs/ANALYTICS.md) | The `/stats` views, the daily report, and their known defects |
 | [CONTENT_PIPELINE.md](docs/CONTENT_PIPELINE.md) | How content gets from an idea to a database row |
-| [RENDERING.md](docs/RENDERING.md) | Card/ritual image generation and Supabase Storage |
+| [CARD_RENDERING.md](docs/CARD_RENDERING.md) | How `/render` draws cards, aspects and rites, and animates their art |
+| [RENDERING.md](docs/RENDERING.md) | Legacy renderer: procedural art generation and Supabase Storage |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Where it runs, how to restart it, what to do when it's down |
 | [TESTING.md](docs/TESTING.md) | The pytest suite, what it guards, and how it was mutation-tested |
 

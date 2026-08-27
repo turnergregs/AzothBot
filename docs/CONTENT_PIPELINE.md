@@ -31,7 +31,7 @@ different match semantics.
 
 ## Slash-command route
 
-`/create_card`, `/create_aspect`, `/create_event`, `/create_hero` (and, once
+`/create_card`, `/create_aspect`, `/create_rite` (and, once
 registered, `/create_ritual` and `/create_consumable`).
 
 Each one:
@@ -110,6 +110,36 @@ Five rules that catch people:
 To replace a repeated field, send the whole new array (`"triggers": [...]`
 overwrites); to clear one, send `[]`.
 
+### What the reply tells you
+
+Both commands report what the action actually did, not just a count.
+
+**`/bulk_update`** shows a **per-record diff** — the fields that changed, old → new
+— and **renders the updated items** as a grid (up to 12). It has both rows to
+hand: the pre-update record it matched by name, and the row the write returned.
+
+- `updated_at`, `created_at`, `created_by` and `id` are excluded. `updated_at`
+  changes on every write, so reporting it would put a spurious line on every
+  record.
+- `actions`, `triggers`, `properties`, `upgrades`, `image_data` and `split`
+  report their **shape** (`2 entries → 3 entries`), not their contents — an
+  actions array runs to hundreds of characters and would bury everything else.
+- Long values truncate, and truncation is **always announced**. Silent
+  truncation in a write report reads as "that is everything that changed" when
+  it is not.
+
+**`/bulk_insert`** lists each new row with its id and identifying attributes —
+`• **Newbie** #501 — Sol · v3 · Wild · no art` — so a wrong element or a missing
+valence is visible without opening anything.
+
+It **does not render**, on purpose: art is uploaded *after* an insert, not with
+it, so every card would come back with a hole in the middle. That reads as a
+broken renderer rather than as "no art yet". The per-row summary flags `no art`
+instead, and the footer says why.
+
+Both invalidate the content index, so new or renamed items are selectable in
+`/get`, `/render` and `/search` immediately.
+
 ### Bulk gotchas
 
 - **Not transactional.** Rows apply one at a time. A failure part-way leaves
@@ -177,7 +207,7 @@ fallback snapshot knows about it.
 3. Upload via `/bulk_insert` or `/bulk_update`.
 4. **Read the reply.** Partial success is normal; the summary is the only place
    per-row failures appear.
-5. Verify with `/get_card` (or the relevant `get_*`) — note it strips `actions`,
+5. Verify with `/get` — note it omits `actions`,
    `triggers` and `properties`, so check those in the database directly.
 6. Add to a deck if it should be draftable — `/add_to_deck`, or the `deck`
    parameter on a `create_*` command. **Content not in a deck never appears in

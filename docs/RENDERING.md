@@ -1,5 +1,16 @@
 # Rendering
 
+> ## ⚠️ Legacy
+>
+> **The renderers described on this page were superseded on 2026-08-26.** Both are
+> archives now — unreachable at runtime, kept as the record of a card template the
+> game has replaced. For how cards are drawn TODAY, read
+> [CARD_RENDERING.md](CARD_RENDERING.md).
+>
+> What is still current on this page: **art generation** (`image_generator.py` →
+> `eigenfunction_generator.py`) and the **Storage bucket** layout. `create_*` and
+> `update_* regenerate_image=True` still go through them.
+
 How AzothBot turns a database row into a card image, and where those images live.
 
 Two independent renderers, both in `azoth_logic/`, both compositing with Pillow at
@@ -27,8 +38,10 @@ title, rules text, valence shape, element icons and typography into a finished
 card face. **Deterministic** given the same inputs.
 
 Generation happens on `create_*`, and on `update_*` only when
-`regenerate_image=True`. Rendering happens on every `render_*` call and doesn't
-touch the database.
+`regenerate_image=True`. **That half is still live.** The rendering half is not:
+`/render` goes through `card_render.py` / `fate_render.py` now, and nothing calls
+`CardRenderer` or `FateRenderer` at all — see
+[CARD_RENDERING.md](CARD_RENDERING.md).
 
 ## Where the art comes from
 
@@ -134,10 +147,18 @@ experiments. Neither is used at runtime.
 
 ## Adding a renderable content type
 
+Steps 1–3 are about ART GENERATION and still apply. Step 4 is where this page
+stops being current — drawing a card face is
+[CARD_RENDERING.md](CARD_RENDERING.md)'s subject now.
+
 1. Add entries to all three maps in `constants.py`.
 2. Create the Supabase Storage bucket.
-3. Call `generate_and_upload_image(record, bucket)` from the `create_*` command.
-4. Call the appropriate renderer in the `render_*` command.
+3. Call `generate_and_upload_image(record, bucket)` from the `create_*` command,
+   then `art_cache.forget_art(bucket, file_path)` — uploads are flat-named and
+   upserting, so the cache cannot see that the bytes changed.
+4. Give the type a layout module and a render function, add it to
+   `content_index.TABLES` so `/get` and `/render` can reach it, and to
+   `deck_render._bucket_for` / `_still_for` so it can appear in a `/search` grid.
 
 `generate_and_upload_image` in `azoth_commands/helpers.py` wraps generate → read
 bytes → upload, and takes an optional `ritual_side` to pick
@@ -152,10 +173,10 @@ bytes → upload, and takes an optional `ritual_side` to pick
   is a startup crash, not a command-time error.
 - **Rendering is CPU-bound and synchronous.** It blocks the event loop; the bot
   cannot respond to anything else while a deck renders.
-- **`/render_aspect` is commented out** (`aspects.py:201`), and aspects take an
+- **Aspects have no `regenerate_image`** — its parameter is commented out, and aspects take an
   existing image name rather than generating art.
 - **The fate renderer's name is historical.** It was `RitualRenderer` until
   2026-08-26. Rituals were the precursor to Aspects; the content type is retired
-  but this renderer was never ritual-specific — `aspects.py` and `events.py` have
-  always used it. Its `render_card_sides` / `render_ritual_card` methods still
+  but this renderer was never ritual-specific — `aspects.py` and `rites.py` (then
+  `events.py`) always used it. Its `render_card_sides` / `render_ritual_card` methods still
   carry the old vocabulary internally.

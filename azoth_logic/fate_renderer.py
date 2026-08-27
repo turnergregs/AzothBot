@@ -13,6 +13,11 @@ FONT_PATH = os.path.join("assets", "fonts", "Aldrich-Regular.ttf")
 DOWNLOAD_DIR = os.path.join("assets", "downloaded_images")
 
 
+# ARCHIVE. Nothing imports this.
+#
+# Superseded 2026-08-26 by fate_render.py, which targets the current
+# aspect_card.tscn / event_card.tscn. Kept alongside card_renderer.py as the
+# record of the previous templates; do not wire it back up.
 class FateRenderer:
     """Renders "fate" content -- aspects and events -- as two-sided cards.
 

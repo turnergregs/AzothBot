@@ -26,6 +26,9 @@ venv/
 
 # Logs and local state
 daily_update_state.json
+
+# Render/art cache -- safe to delete at any time (azoth_logic/art_cache.py)
+cache/
 # *.log
 # *.pid
 # *.seed
@@ -64,5 +67,16 @@ daily_update_state.json
 # .mypy_cache/
 # .dmypy.json
 # dmypy.json
+
+# Generated images: art the bot produces, downloads or renders. None of it is
+# recoverable from the repo by design -- see supabase_storage.upload_image.
 *.png
+
+# ...but assets/card_art/ is SOURCE, not output. It is the game's own art,
+# vendored so the bot renders without a Godot checkout (docs/CARD_RENDERING.md).
+# Without this negation the blanket *.png above silently drops 157 of its 159
+# files, and a fresh clone cannot draw a single card -- the borders and symbols
+# would need `tools/sync_assets.py` and an azoth checkout, and the shader-exported
+# backgrounds would need Godot itself.
+!assets/card_art/**/*.png
 
