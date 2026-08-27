@@ -269,16 +269,22 @@ def _comparison_sides(items, kinds, art, width: int, animate: bool,
     reason); an aspect face does not, because `render_aspect` already cropped.
     Scaling both to one box without cropping first therefore drew the card
     visibly smaller than the aspect beside it.
-    """
-    scale = width / L.CARD_W
-    size = (width, round(L.CARD_H * scale))
 
+    EACH SIDE KEEPS ITS OWN ASPECT RATIO. Only the width is fixed; the height
+    follows from the crop. Deriving the height from CARD_W x CARD_H instead --
+    which is what this did at first -- squeezes the card, because the crop is
+    NOT that shape: a 552x766 crop (0.72) forced into a 380x609 box (0.624)
+    loses 13% of its width. The whole point of cropping is that the face is no
+    longer the full canvas, so the full canvas cannot supply the target shape.
+    """
     sides = []
     for index, (item, kind) in enumerate(zip(items, kinds)):
         frames = (_frames_for(item, kind, art.get(id(item)), duration, fps)
                   if animate else [_still_for(item, kind, art.get(id(item)))])
         box = card_render.alpha_bbox(frames)
-        frames = [f.crop(box).resize(size, Image.LANCZOS) for f in frames]
+        cropped = [f.crop(box) for f in frames]
+        height = max(1, round(cropped[0].height * width / cropped[0].width))
+        frames = [f.resize((width, height), Image.LANCZOS) for f in cropped]
 
         # After the resize, not before: the sheen is a smooth gradient, so
         # there is nothing to lose by computing it over four times fewer pixels.
@@ -331,7 +337,12 @@ def render_comparison(items, kinds, labels, holo_levels=None,
 
     sides = _comparison_sides(items, kinds, art, card_width, moving, duration, fps,
                               holo_levels)
-    cw, ch = sides[0][0].size
+    cw = card_width
+    # A card crop and an aspect crop are different shapes, so the faces can
+    # differ in height. The row is as tall as the tallest and the others are
+    # centred in it -- stretching either to match would put back exactly the
+    # distortion the per-side aspect ratio removed.
+    ch = max(side[0].height for side in sides)
     pages = max(len(side) for side in sides)
 
     # The labels never change, so they are drawn ONCE onto a background that
@@ -358,9 +369,10 @@ def render_comparison(items, kinds, labels, holo_levels=None,
         sheet = board.copy()
         for i, side in enumerate(sides):
             # A still side holds its single frame while the other one moves.
-            sheet.alpha_composite(side[index % len(side)],
+            face = side[index % len(side)]
+            sheet.alpha_composite(face,
                                   (COMPARE_GUTTER + i * (cw + COMPARE_GUTTER),
-                                   COMPARE_GUTTER))
+                                   COMPARE_GUTTER + (ch - face.height) // 2))
         return sheet
 
     if pages == 1:

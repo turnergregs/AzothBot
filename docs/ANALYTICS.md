@@ -87,6 +87,19 @@ would be a striking and completely false statistic.
 The rendered card withholds a **win rate** below 5 finished runs: "50%" over two
 runs is one win wearing a decimal point.
 
+**Rites are excluded from "Most drafted"** (`2026-08-27_most_drafted_excludes_rites.sql`).
+They are an *injected* pool, not a drafted one:
+`CardLogic._shuffle_in_injected_pools()` mixes them into every pack from a
+weighted budget shared with reactants ([CONTENT_LOADING.md](../../azoth/docs/CONTENT_LOADING.md)),
+so a rite is **offered** far more often than any single card. Including them
+measured that injection rate rather than the player's choices — and it showed:
+before the filter, two of the three players with a `most_drafted` had a **rite**
+as the answer.
+
+`draft_picks` is filtered the same way on purpose. It backs the "N picks, nothing
+picked twice" message, so counting rites there while the search ignored them
+would have described a different set than the one searched.
+
 "Most drafted" is **dropped entirely** when there is nothing to show. ⚠️ That
 also swallows the `draft_picks = 0` case, which is not the same news: no picks at
 all means draft rows are missing for those runs — a recording fault rather than a

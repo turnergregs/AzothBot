@@ -290,5 +290,5 @@ fixed; the rest are still open.
 | Six pseudo-docstrings placed above `def` | `supabase_helpers.py` | Not real docstrings; `help()` shows nothing |
 | Stale comment | `supabase_storage.py` `download_image` | Says "timestamped filename"; it writes a flat name |
 | `add_to_deck` never sets `position` or `weight` | `supabase_helpers.py` | Bot-added deck entries take column defaults; `weight` appears to be draft probability |
-| ~~No tests, no linter config~~ | — | **Fixed 2026-08-26/27** — 615 pytest tests; `test_command_registration.py` runs `pyflakes` over the whole tree. Still no CI |
+| ~~No tests, no linter config~~ | — | **Fixed 2026-08-26/27** — 617 pytest tests; `test_command_registration.py` runs `pyflakes` over the whole tree. Still no CI |
 | ~~The render cache grows without bound~~ | — | **Fixed 2026-08-27** — size-capped LRU eviction on write (art 300 MB, renders 400 MB), and `/cache` now reaches `stats()` / `clear()`. See [CARD_RENDERING.md § Eviction](CARD_RENDERING.md#eviction) |

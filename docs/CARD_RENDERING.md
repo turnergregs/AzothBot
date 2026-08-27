@@ -121,6 +121,14 @@ in a grid: a card face carries ~63px of empty canvas above and below (which
 scaling both to one box without cropping drew the card visibly smaller than the
 aspect beside it.
 
+⚠️ **Only the width is fixed; each face's height follows from its own crop.**
+Deriving the height from `CARD_W x CARD_H` — which this did at first — squeezes
+the card, because the crop is not that shape: a 552x766 crop (0.72) forced into a
+380x609 box (0.624) loses **13% of its width**. The point of cropping is that the
+face is no longer the full canvas, so the full canvas cannot supply the target
+shape. A card crop and an aspect crop are also different shapes, so the row is as
+tall as the tallest face and shorter ones are centred in it.
+
 `COMPARE_GIF_COLORS = 128`, double the single-card 64, because one palette now
 covers two colour schemes — an orange card beside a pink aspect. That is the same
 budget per side, and costs about 15% on the file.

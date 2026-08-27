@@ -394,3 +394,47 @@ def test_a_zero_level_skips_the_sheen(sides, monkeypatch):
     deck_render.render_comparison(items, ["card", "card"], ["Base", "Upgraded"],
                                   holo_levels=[0.0, 0.15], animate=True)
     assert calls == [0.15]
+
+
+def test_a_face_keeps_its_own_aspect_ratio(sides, monkeypatch):
+    """REGRESSION: the comparison squeezed both cards horizontally.
+
+    Each side is cropped to its own alpha box, then was resized to a height
+    derived from the FULL CARD_W x CARD_H canvas. The crop is not that shape --
+    a card's is ~552x766 (0.72) against the canvas's 0.624 -- so forcing it into
+    the canvas ratio lost 13% of its width. The whole point of cropping is that
+    the face is no longer the full canvas, so the canvas cannot supply the
+    target shape.
+    """
+    tall = Image.new("RGBA", (400, 300), (200, 60, 60, 255))   # 4:3, unlike a card
+    monkeypatch.setattr(deck_render, "_frames_for", lambda *a, **k: [tall])
+    monkeypatch.setattr(deck_render, "_still_for", lambda *a, **k: tall)
+    monkeypatch.setattr(deck_render, "_animates", lambda *a, **k: False)
+
+    faces = deck_render._comparison_sides(
+        [_card("A")], ["card"], {}, 380, False, 4.0, 15)
+    out = faces[0][0]
+    assert out.width == 380
+    assert abs(out.width / out.height - 400 / 300) < 0.01, "aspect must survive"
+
+
+def test_faces_of_different_shapes_are_centred_not_stretched(sides, monkeypatch):
+    """A card crop and an aspect crop are different shapes. The row is as tall
+    as the tallest; stretching the shorter one to match would put the
+    distortion straight back."""
+    shapes = {"card": Image.new("RGBA", (400, 600), (200, 60, 60, 255)),
+              "aspect": Image.new("RGBA", (400, 300), (60, 60, 200, 255))}
+    monkeypatch.setattr(deck_render, "_still_for",
+                        lambda item, kind, art: shapes[kind])
+    monkeypatch.setattr(deck_render, "_animates", lambda *a, **k: False)
+
+    faces = deck_render._comparison_sides(
+        [_card("A"), _card("B")], ["card", "aspect"], {}, 380, False, 4.0, 15)
+    tall, short = faces[0][0], faces[1][0]
+    assert tall.height != short.height, "different shapes keep different heights"
+    assert abs(short.width / short.height - 400 / 300) < 0.01
+
+    data, _ = deck_render.render_comparison(
+        [_card("A"), _card("B")], ["card", "aspect"], ["Base", "Upgraded"])
+    sheet = Image.open(io.BytesIO(data))
+    assert sheet.height >= tall.height, "the row fits the tallest face"
