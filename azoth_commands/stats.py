@@ -131,11 +131,11 @@ def add_stats_commands(cls):
         embed.add_field(name="Highest Ritual", inline=True,
                         value=sf.value("max_ritual", row.get("max_ritual")))
 
+        embed.add_field(name="Max Reached", inline=False, value=sf.reached(row))
         embed.add_field(name="Links per turn", inline=False,
                         value=sf.links_table(acts, row))
         embed.add_field(name="Patterns cleared", inline=False,
                         value=sf.clearing_table(acts, row))
-        embed.add_field(name="Max Reached", inline=False, value=sf.reached(row))
 
         drafted = sf.most_drafted(row)
         if drafted:
