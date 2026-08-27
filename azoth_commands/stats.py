@@ -104,6 +104,21 @@ def add_stats_commands(cls):
         if not records:
             return f"❌ No stats found for `{player}`."
 
+        # A second view, because the act breakdown is one row PER ACT and this
+        # card is one row per player. Filtered server-side rather than fetched
+        # whole and sliced -- see fetch_all's note on the 1000-row cap.
+        #
+        # Caught, and ONLY here: if the act migration has not been applied the
+        # table is missing and PostgREST says so with PGRST205. That should not
+        # take down the whole card for the sake of one section -- but it is
+        # named in the reply rather than rendered as "no data", because "not
+        # migrated" and "no turns yet" are different problems.
+        try:
+            acts = fetch_all("player_act_view", filters={"player": player},
+                             sort=["act"])
+        except SupabaseError:
+            acts = None
+
         # One row, and hand-grouped rather than a field per column: the view
         # carries 22 columns and a flat dump of them is the JSON blob again with
         # nicer punctuation.
@@ -113,19 +128,18 @@ def add_stats_commands(cls):
         embed.add_field(name="Runs", inline=True, value=sf.record(row))
         embed.add_field(name="Best combo", inline=True,
                         value=sf.value("best_combo", row.get("best_combo")))
-        embed.add_field(name="Ritual", inline=True,
+        embed.add_field(name="Highest Ritual", inline=True,
                         value=sf.value("max_ritual", row.get("max_ritual")))
 
         embed.add_field(name="Links per turn", inline=False, value=sf.links(row))
-        embed.add_field(name="Reached", inline=True, value=sf.reached(row))
-        embed.add_field(name="Deck", inline=True,
-                        value=sf.value("avg_deck_size", row.get("avg_deck_size")))
+        embed.add_field(name="Links per turn, by act", inline=False,
+                        value=sf.act_table(acts))
+        embed.add_field(name="Patterns cleared", inline=False, value=sf.clearing(row))
+        embed.add_field(name="Max Reached", inline=False, value=sf.reached(row))
 
-        # Always shown. A missing field reads as "this player drafts nothing",
-        # when the truth is either "too few runs" or "the drafts are not being
-        # recorded" -- and the second one is worth noticing.
-        embed.add_field(name="Most drafted", inline=False,
-                        value=sf.most_drafted(row))
+        drafted = sf.most_drafted(row)
+        if drafted:
+            embed.add_field(name="Most drafted", inline=False, value=drafted)
 
         embed.set_footer(text=sf.footer(records, note=sf.last_played(row)))
         await interaction.followup.send(embed=embed)

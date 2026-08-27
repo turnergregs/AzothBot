@@ -87,15 +87,39 @@ would be a striking and completely false statistic.
 The rendered card withholds a **win rate** below 5 finished runs: "50%" over two
 runs is one win wearing a decimal point.
 
-"Most drafted" is **always shown**, because a missing field reads as "this player
-drafts nothing":
+"Most drafted" is **dropped entirely** when there is nothing to show. ⚠️ That
+also swallows the `draft_picks = 0` case, which is not the same news: no picks at
+all means draft rows are missing for those runs — a recording fault rather than a
+small sample. Nothing has that shape today, but if draft capture ever breaks,
+this is where the silence would come from.
 
-| Case | Card says |
-|---|---|
-| An item repeated | `Ablution — picked 2×` (`each` only with more than one name) |
-| Picks, none repeated | `Nothing picked twice yet — 6 picks across 2 runs, every one different` |
-| No picks at all | `No draft picks recorded for these runs` |
-| View predates `draft_picks` | `Not available` — neither claim can be made, so neither is |
+### Per-act links and pattern clearing (`2026-08-27_player_act_and_pattern_clearing.sql`)
+
+`player_act_view` is one row per (player, act): links per regular turn and per
+boss turn, each with the turn count behind it. Turn counts are in the table
+rather than a footnote — "4.9 links in act 3" can rest on three turns, and a
+difference between acts is only a difference if the samples are real.
+
+`player_info_view` gains the pattern-clearing columns: links and seconds either
+side of the first node where `patterns_after = 0`. That column already excludes
+Ascender's Bane, so no extra filter is needed for it.
+
+Three things make it honest, and all three are load-bearing:
+
+1. **Right-censored.** Turns that never clear contribute no numerator, so a bare
+   mean is biased optimistic exactly where difficulty is highest.
+   `cleared_turns` / `clearable_turns` travel with it, and the card says
+   *"cleared on 7 of 9 turns (78%)"*. A player who never cleared gets
+   *"Never cleared"*, not an average over an empty set.
+2. **Turns with nothing to clear are excluded** (`starting_patterns = 0`). Such
+   a turn "clears" at node one having done nothing, and counting it drags every
+   before-average toward zero.
+3. **Regular turns only.** Every pattern question in `DB_SCHEMA.md` filters
+   `boss_id is null`, and a boss turn is a different activity.
+
+The clearing NODE counts as *before* — it is the link that finished the job. The
+boundary in time is the start of the *next* node, since the clear happened during
+the clearing one, so the two phases partition the turn exactly.
 
 Autocomplete sources: `active_players_view` for players, `heroes` for heroes, and
 `game_stats` for versions — ⚠️ **`game_stats` does not exist**, so the version

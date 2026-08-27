@@ -82,7 +82,7 @@ def value(column: str, raw) -> str:
             return str(raw)
 
     if column == "max_ritual":
-        return f"{raw} *(highest reached)*"
+        return str(raw)
 
     if column in ("max_combo", "highest_combo", "combo", "combo_numeric"):
         try:
@@ -220,9 +220,85 @@ def links(row: dict) -> str:
     return "\n".join(parts)
 
 
+def act_table(rows: list) -> str:
+    """Links per turn per act, as a code-fenced table.
+
+    Turn counts are in the table, not a footnote: with a handful of turns spread
+    over three acts, "4.9 in act 3" can rest on two turns, and the difference
+    between acts is only a difference if the samples are real.
+    """
+    if rows is None:
+        return "*unavailable — `player_act_view` is not migrated*"
+    if not rows:
+        return "*no act data yet*"
+    body = []
+    for r in sorted(rows, key=lambda x: x.get("act") or 0):
+        body.append([
+            str(r.get("act")),
+            value("x", r.get("avg_links_regular")),
+            str(r.get("regular_turns") or 0),
+            value("x", r.get("avg_links_boss")),
+            str(r.get("boss_turns") or 0),
+        ])
+    heads = ["Act", "Reg", "n", "Boss", "n"]
+    widths = [max(len(heads[i]), *(len(b[i]) for b in body)) for i in range(len(heads))]
+
+    def line(cells):
+        return "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
+
+    return block("\n".join([line(heads), "  ".join("-" * w for w in widths)]
+                           + [line(b) for b in body]))
+
+
+def clearing(row: dict) -> str:
+    """Links and seconds either side of clearing the turn's patterns.
+
+    RIGHT-CENSORED, and reported as two numbers because of it: turns that never
+    clear contribute no numerator, so the mean is biased optimistic exactly
+    where difficulty is highest. "3.2 links" alone is not the honest statement --
+    "3.2 links, on the 78% of turns that cleared" is.
+
+    Turns that began with no patterns are already excluded by the view; they
+    would "clear" at node one having done nothing.
+    """
+    cleared = row.get("cleared_turns")
+    clearable = row.get("clearable_turns")
+    if not clearable:
+        return "*no turn-level data yet*"
+    if not cleared:
+        return f"*Never cleared* — 0 of {_plural(clearable, 'turn')} with patterns to solve"
+
+    before = (f"**{value('x', row.get('avg_links_before_clear'))}** links, "
+              f"{_seconds(row.get('avg_seconds_before_clear'))}")
+    after = (f"**{value('x', row.get('avg_links_after_clear'))}** links, "
+             f"{_seconds(row.get('avg_seconds_after_clear'))}")
+    share = f"{round(100 * cleared / clearable)}%" if clearable else "?"
+    return (f"Before: {before}\nAfter: {after}\n"
+            f"*cleared on {cleared} of {_plural(clearable, 'turn')} ({share})*")
+
+
+def _seconds(raw) -> str:
+    if raw is None:
+        return "—"
+    try:
+        total = float(raw)
+    except (TypeError, ValueError):
+        return str(raw)
+    if total < 60:
+        return f"{total:.0f}s"
+    return f"{int(total // 60)}m {round(total % 60):02d}s"
+
+
 def reached(row: dict) -> str:
-    return (f"act **{value('avg_act', row.get('avg_act'))}** (max {row.get('max_act')})\n"
-            f"level **{value('avg_level', row.get('avg_level'))}** (max {row.get('max_level')})")
+    """Furthest reached, with the average in parentheses.
+
+    Max leads because it is the unambiguous number -- "act 3" is a fact about a
+    run that happened. The average needs its label to be readable at all, which
+    is why it is the one wearing `avg`.
+    """
+    return (f"Act **{row.get('max_act')}** (avg {value('avg_act', row.get('avg_act'))})\n"
+            f"Level **{row.get('max_level')}** (avg {value('avg_level', row.get('avg_level'))})\n"
+            f"Deck size **{value('avg_deck_size', row.get('avg_deck_size'))}** (avg)")
 
 
 def most_drafted(row: dict) -> str:
@@ -250,17 +326,15 @@ def most_drafted(row: dict) -> str:
         suffix = " each" if "," in str(names) else ""
         return f"{names} — picked **{count}×**{suffix}"
 
-    picks = row.get("draft_picks")
-    if picks is None:
-        return "*Not available*"
-    if picks == 0:
-        return "*No draft picks recorded for these runs*"
-
-    runs = row.get("game_count") or 0
-    if picks == 1:
-        return "*Nothing picked twice yet* — only 1 pick so far"
-    return (f"*Nothing picked twice yet* — {_plural(picks, 'pick')} across "
-            f"{_plural(runs, 'run')}, every one different")
+    # Nothing to show -> no field at all. The caller drops it rather than
+    # printing a placeholder.
+    #
+    # NOTE this also hides the `draft_picks == 0` case, which is not the same
+    # news: no picks AT ALL means draft rows are missing for those runs, a
+    # recording fault rather than a small sample. Nothing has that shape today
+    # (every player has picks), so it is hidden with the rest -- but that is the
+    # one case worth un-hiding if draft capture ever breaks.
+    return ""
 
 
 def last_played(row: dict) -> str:

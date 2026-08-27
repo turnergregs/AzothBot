@@ -258,37 +258,105 @@ def test_each_is_only_used_when_there_is_more_than_one():
     assert sf.most_drafted({**PLAYER, "most_drafted": "Conjunction, Echo"}).endswith("each")
 
 
-def test_nothing_picked_twice_explains_itself():
-    """An empty "Most drafted" reads as "this player drafts nothing". The real
-    answer is that the sample is too small for anything to repeat, and the pick
-    count is what says how small."""
-    out = sf.most_drafted({**PLAYER, "most_drafted": None, "draft_picks": 6})
-    assert "Nothing picked twice" in out
-    assert "6 picks" in out and "3 runs" in out
+def test_an_empty_most_drafted_renders_nothing():
+    """The card drops the field rather than printing a placeholder.
+
+    ⚠️ This also swallows `draft_picks == 0`, which is a DIFFERENT thing: no
+    picks at all means draft rows are missing, a recording fault rather than a
+    small sample. Nothing has that shape today. If draft capture ever breaks,
+    this is where the silence would come from.
+    """
+    assert sf.most_drafted({**PLAYER, "most_drafted": None, "draft_picks": 6}) == ""
+    assert sf.most_drafted({**PLAYER, "most_drafted": None, "draft_picks": 0}) == ""
 
 
-def test_no_picks_at_all_is_a_different_message():
-    """Picks-but-no-repeats is expected on a small sample. NO picks means draft
-    rows are missing, which is a recording problem — the same blank space would
-    hide it behind the expected case."""
-    out = sf.most_drafted({**PLAYER, "most_drafted": None, "draft_picks": 0})
-    assert "No draft picks recorded" in out
-    assert "twice" not in out
+def test_the_ritual_value_is_bare():
+    """The field is named "Highest Ritual", so the value does not repeat it."""
+    assert sf.value("max_ritual", 10) == "10"
 
 
-def test_a_single_pick_does_not_claim_they_were_all_different():
-    out = sf.most_drafted({**PLAYER, "most_drafted": None, "draft_picks": 1})
-    assert "only 1 pick" in out
-    assert "different" not in out
+def test_max_leads_and_the_average_is_labelled():
+    """`act 3 (max 3)` gave no clue which number was which."""
+    out = sf.reached(PLAYER)
+    assert "Act **3** (avg 2.3)" in out
+    assert "Deck size" in out
 
 
-def test_an_older_view_claims_neither():
-    """`draft_picks` arrived with the 2026-08-27 migration. Without it there is
-    no way to tell the two causes apart, so neither is asserted."""
-    row = {k: v for k, v in PLAYER.items() if k != "draft_picks"}
-    assert sf.most_drafted({**row, "most_drafted": None}) == "*Not available*"
+# ---------------------------------------------------------------------------
+# Per-act links, and pattern clearing
+# ---------------------------------------------------------------------------
+
+ACTS = [{"act": 1, "avg_links_regular": 4.1, "regular_turns": 6,
+         "avg_links_boss": 6.0, "boss_turns": 2},
+        {"act": 2, "avg_links_regular": 4.6, "regular_turns": 7,
+         "avg_links_boss": 9.5, "boss_turns": 2},
+        {"act": 3, "avg_links_regular": 4.9, "regular_turns": 3,
+         "avg_links_boss": None, "boss_turns": 0}]
 
 
-def test_the_ritual_level_is_labelled_as_a_maximum():
-    """Bare, `10` reads as the ritual they usually play."""
-    assert "highest" in sf.value("max_ritual", 10)
+def test_the_act_table_shows_the_turn_count_behind_each_average():
+    """"4.9 in act 3" can rest on three turns. A difference between acts is only
+    a difference if the samples are real."""
+    out = sf.act_table(ACTS)
+    assert "4.9" in out and "3" in out
+    assert "Reg" in out and "Boss" in out
+
+
+def test_acts_are_ordered_even_when_the_rows_are_not():
+    out = sf.act_table(list(reversed(ACTS)))
+    body = [l for l in out.splitlines() if l and l[0].isdigit()]
+    assert [l[0] for l in body] == ["1", "2", "3"]
+
+
+def test_an_act_with_no_boss_turns_shows_a_dash_not_a_zero():
+    """Act 3 has no boss turns recorded. `0.0` would claim they fought a boss
+    and played no links."""
+    out = sf.act_table([ACTS[2]])
+    assert "—" in out
+    assert "0.0" not in out
+
+
+def test_no_act_data_says_so():
+    assert "no act data" in sf.act_table([])
+
+
+def test_a_missing_view_is_named_rather_than_shown_as_no_data():
+    """`None` means the fetch failed — most likely the migration has not run.
+    "No act data" would blame the dataset for a deployment problem."""
+    assert "not migrated" in sf.act_table(None)
+
+
+CLEAR = {"avg_links_before_clear": 3.2, "avg_links_after_clear": 1.1,
+         "avg_seconds_before_clear": 41.0, "avg_seconds_after_clear": 12.0,
+         "cleared_turns": 7, "clearable_turns": 9}
+
+
+def test_clearing_reports_both_sides():
+    out = sf.clearing(CLEAR)
+    assert "Before" in out and "After" in out
+    assert "3.2" in out and "1.1" in out
+
+
+def test_clearing_is_reported_with_its_censoring():
+    """Right-censored: turns that never clear contribute no numerator, so the
+    mean is biased optimistic exactly where difficulty is highest. "3.2 links"
+    alone is not the honest statement."""
+    out = sf.clearing(CLEAR)
+    assert "7 of 9 turns" in out and "78%" in out
+
+
+def test_never_clearing_is_not_reported_as_an_average():
+    """Zero cleared turns means every average is over an empty set."""
+    out = sf.clearing({**CLEAR, "cleared_turns": 0})
+    assert "Never cleared" in out
+    assert "3.2" not in out
+
+
+def test_no_clearable_turns_says_so():
+    assert "no turn-level data" in sf.clearing({"clearable_turns": 0})
+
+
+@pytest.mark.parametrize("seconds, expected", [(41.0, "41s"), (60.0, "1m 00s"),
+                                               (185.0, "3m 05s"), (None, "—")])
+def test_durations_read_as_time(seconds, expected):
+    assert sf._seconds(seconds) == expected
