@@ -23,14 +23,18 @@ Three facts govern everything below.
 return zero rows with an HTTP 200 under an anon key — not an error. See
 [DB_SCHEMA.md § Which key you are holding](DB_SCHEMA.md#azothbot-which-key-you-are-holding).
 
-**2. `0.8.2` is the analytics cutoff**, and as of the 2026-08-26 rebuild every
-game-facing view enforces it via `analytics_cutoff()`. Bump that one function to
-move the cutoff; don't edit WHERE clauses.
+**2. `0.9.0` is the analytics cutoff** (raised from `0.8.2` on 2026-08-28 —
+`db/migrations/2026-08-28_bump_analytics_cutoff.sql` in the game repo), and as of
+the 2026-08-26 rebuild every game-facing view enforces it via
+`analytics_cutoff()`. Bump that one function to move the cutoff; don't edit WHERE
+clauses. `azoth_logic/stats_format.CUTOFF_VERSION` mirrors it for the footer and
+must move with it, or the footer states a threshold the views aren't enforcing.
 
-**3. The trustworthy dataset is currently tiny.** As of 2026-08-26 there are
-roughly **2 games** at `version >= '0.8.2'`, out of ~6,500 total. Any `/stats`
-number that looks substantial is drawn almost entirely from data the cutoff exists
-to exclude.
+**3. The trustworthy dataset is currently tiny.** As of 2026-08-28 there are
+**2 games** at `0.9.0`, out of ~6,500 total — the bump cost 17 of the 19 that
+qualified at `0.8.2`. Any `/stats` number that looks substantial is drawn almost
+entirely from data the cutoff exists to exclude, and most replies will be thin or
+empty until there is play at `0.9.0`.
 
 ---
 
@@ -139,8 +143,8 @@ imply the act 3 boss fell, and neither depends on turn rows existing.
 `full_clears` counts `result = 'victory'` — the act 5 boss ([main.gd:1478](../../azoth/scripts/main.gd:1478)).
 
 ⚠️ **Turn rows only exist from 0.8.0**, so `run_cleared` is false for anything
-older. Everything below the `0.8.2` cutoff is already excluded, so this costs
-nothing today — but lowering the cutoff would make pre-0.8.0 clears invisible.
+older. Everything below the cutoff is already excluded, so this costs nothing
+today — but lowering the cutoff below 0.8.0 would make those clears invisible.
 
 ### Per-act links and pattern clearing (`2026-08-27_player_act_and_pattern_clearing.sql`)
 
@@ -212,7 +216,7 @@ Three helper functions now carry the rules:
 | Function | Purpose |
 |---|---|
 | `version_key(text)` | Numeric sort key — `0.8.2` → `8002`. Returns NULL on anything unparseable instead of raising, which is what the old inline `split_part(...)::integer` did on a two-component version string |
-| `analytics_cutoff()` | The cutoff, in one place. Was duplicated across seven WHERE clauses, which is why it went stale |
+| `analytics_cutoff()` | The cutoff, in one place — `9000` (`0.9.0`) since 2026-08-28. Was duplicated across seven WHERE clauses, which is why it went stale |
 | `combo_numeric(text)` | `highest_combo` as numeric, or NULL if malformed — so one bad row can't take down every combo view |
 
 #### The combo fix
@@ -238,7 +242,7 @@ today. Same quantity; revisit when turn rows are plentiful.
 | `hero_info_view` returns one row | The data, not the SQL — see below |
 | `draft_deck_view.combo` definition | Counts cards with NULL element; AzothBot's `merge_staging` used NULL element **and** NULL valence. The two disagree, and which is right is a content question. `/merge_staging` was hidden 2026-08-27, so nothing acts on the second definition today — but it is the one to reconcile against if the command comes back |
 | `most_drafted` has no denominator | Still a comma-joined label on `player_info_view`. Per-item numbers live in `draft_rates_view` now |
-| The trustworthy dataset is ~2 games | Nothing to do but wait for play at `0.8.2`+ |
+| The trustworthy dataset is ~2 games | Nothing to do but wait for play at `0.9.0`+ |
 
 ### A note on `hero_info_view`
 

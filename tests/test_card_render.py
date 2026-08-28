@@ -476,9 +476,9 @@ def test_split_second_valence_lands_inside_the_card():
 # ---------------------------------------------------------------------------
 # Transparent animated output
 # ---------------------------------------------------------------------------
-# Animated cards used to be flattened onto DISCORD_BG (#313338) because GIF
-# alpha is 1 bit. That is Discord's *Dark* theme colour -- on Darker, Midnight
-# or Light it read as a grey rectangle around the card.
+# Animated cards used to be flattened onto #313338 because GIF alpha is 1 bit.
+# That is Discord's *Dark* theme colour -- on Darker, Midnight or Light it read
+# as a grey rectangle around the card.
 
 def _frames(n=6, size=(120, 200)):
     """RGBA frames shaped like a card: a ROUNDED body inset in empty canvas,

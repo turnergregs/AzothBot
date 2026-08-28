@@ -44,6 +44,8 @@ def _facts(kind: str, row: dict) -> list:
       * `upgrades` -- a nested blob that dwarfs everything else on the card
       * `actions` / `triggers` / `properties` -- jsonb, and past Discord's
         2000-char limit on their own
+      * `attunement` on aspects -- every live aspect is 1, so it distinguishes
+        nothing (dropped 2026-08-28)
 
     Empty and null values are dropped rather than shown as `null`, which is most
     of what made the old JSON dump hard to read.
@@ -63,9 +65,6 @@ def _facts(kind: str, row: dict) -> list:
             split = row["split"]
             facts.append(("Split", f"{str(split.get('element','?')).capitalize()} "
                                    f"valence {split.get('valence','?')}"))
-    elif kind == "aspect":
-        if row.get("attunement") is not None:
-            facts.append(("Attunement", str(row["attunement"])))
     elif kind == "rite":
         if row.get("foresight") is not None:
             facts.append(("Foresight", str(row["foresight"])))
@@ -147,7 +146,9 @@ def add_content_commands(cls):
     ):
         kind, row = await asyncio.to_thread(ci.resolve, name)
         if not row:
-            return f"❌ Could not find `{name}`."
+            # A miss is not always a missing row: retired content resolves to
+            # nothing on purpose, and says so rather than claiming to be gone.
+            return await asyncio.to_thread(ci.absence_reason, name)
 
         embed = nextcord.Embed(
             title=row.get("name") or "(unnamed)",
@@ -172,7 +173,9 @@ def add_content_commands(cls):
     ):
         kind, row = await asyncio.to_thread(ci.resolve, name)
         if not row:
-            return f"❌ Could not find `{name}`."
+            # A miss is not always a missing row: retired content resolves to
+            # nothing on purpose, and says so rather than claiming to be gone.
+            return await asyncio.to_thread(ci.absence_reason, name)
 
         # Opt-in. The plain single face is what `/render` is usually for, and
         # the comparison costs a second face's art and drawing -- and gives up
@@ -216,7 +219,9 @@ def add_content_commands(cls):
     ):
         kind, row = await asyncio.to_thread(ci.resolve, name)
         if not row:
-            return f"❌ Could not find `{name}`."
+            # A miss is not always a missing row: retired content resolves to
+            # nothing on purpose, and says so rather than claiming to be gone.
+            return await asyncio.to_thread(ci.absence_reason, name)
 
         mechanics = _mechanics(row)
         if not mechanics:

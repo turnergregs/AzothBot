@@ -73,6 +73,12 @@ All docs live in `docs/`. Read before changing a system.
 - **Two commands cover all content lookup.** `/show` and `/render` dispatch on an
   encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
   `/render_*` commands were retired 2026-08-26.
+- **Only LIVE content is findable** (2026-08-28). `cards`/`aspects`/`events` have
+  no `archived_at`, so liveness is inferred as *in at least one unarchived deck*
+  — 233 of 626 rows. `content_index` caches the deck membership beside the name
+  index and every lookup path filters on it. Two invariants: `/add_to_deck` is
+  NOT filtered (it is the only way back), and an empty live set means a failed
+  read, so it filters nothing rather than hiding everything.
 - **The render cache evicts on write, not on a timer.** Size-capped LRU
   (`art_cache._evict`). A daily sweep was rejected: the bot is hand-started, so a
   timer may not fire for weeks, and growth is bursty rather than
@@ -124,8 +130,9 @@ CI. See `docs/TESTING.md` § Gaps.
 
 **Read `docs/DB_SCHEMA.md` § Query caveats first.** The ones that bite most:
 
-- Filter `version >= '0.8.2'`. Earlier rows are a different dataset — no turn
-  rows, `result` NULL on most, dominated by developer testing.
+- Filter `version_key(version) >= analytics_cutoff()` — `0.9.0` since
+  2026-08-28. Earlier rows are a different dataset — no turn rows, `result`
+  NULL on most, dominated by developer testing.
 - **Never `avg()` a combo.** Exponentially growing BigNum stored as `text`. Use
   `turn_nodes.combo_log10`.
 - `no_boss_key` counts as a **win**, with `victory`.
@@ -135,8 +142,9 @@ CI. See `docs/TESTING.md` § Gaps.
   participant.
 - Report censored metrics as two numbers: "cleared in 2.3 links, 78% of the time".
 
-Note the trustworthy dataset is currently ~2 games (`version >= '0.8.2'`). Almost
-everything `/stats` reports comes from data the cutoff exists to exclude.
+Note the trustworthy dataset is currently ~2 games (`0.9.0`, measured
+2026-08-28; it was 19 at the old `0.8.2` cutoff). Almost everything `/stats`
+reports comes from data the cutoff exists to exclude.
 
 ## Authoring Content
 
@@ -171,7 +179,11 @@ See `docs/CONTENT_PIPELINE.md`.
 - Don't re-add a `/delete_*` command. All four were removed 2026-08-27 —
   `cards`/`aspects`/`events` have no `archived_at`, so those deletes were
   unrecoverable and also pruned the game's offline snapshot. Retire content
-  with `/remove_from_deck` instead; see `docs/COMMANDS.md` § Deletion
+  with `/remove_from_deck` instead — since 2026-08-28 that also hides it from
+  every lookup command; see `docs/COMMANDS.md` § Deletion
+- Don't filter `/add_to_deck`'s item picker to live content. Every other lookup
+  is filtered; that one is the only route back for a retired row, and there is
+  no `/delete_*` left to undo a mistake
 - Don't uncomment `/stage`, `/postpone` or `/merge_staging` without first
   fixing their hardcoded deck IDs (21 is archived, 22 is not the aspect deck)
 - Don't commit `.env`

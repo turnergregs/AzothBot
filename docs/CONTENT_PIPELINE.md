@@ -120,12 +120,31 @@ Both commands report what the action actually did, not just a count.
 — and **renders the updated items** as a grid (up to 12). It has both rows to
 hand: the pre-update record it matched by name, and the row the write returned.
 
+The diff is **two tiers**, since 2026-08-28. Before that it was flat, and a real
+nine-card update came back 36 lines long, 27 of which were blob shape:
+
+- **Player-facing fields print `old → new`** — `text`, `name`, `element`,
+  `valence`, `subtypes`, `split`, and anything else not listed below. The
+  fallback direction is deliberate: a column nobody anticipated is *shown*, not
+  silently dropped.
+- **The mechanic blobs are quiet.** `actions`, `triggers`, `properties`,
+  `upgrades` and `image_data` never print a diff of their own. They collapse
+  into one trailing note — *`actions, triggers updated`* — and that note appears
+  **only when the rules text did not change**, because an edit to `actions` is
+  already visible as an edit to `text`.
+  - ⚠️ **The corollary:** when the text *did* change, a blob edit is not
+    reported at all. A payload that rewrites the text and clears `properties` by
+    accident reads as a plain text edit. That is the cost of the collapse; the
+    game is the check, not the report.
+  - `split` is **not** in that group. It is a jsonb column, but it *is* a second
+    element and valence, so it diffs as a face: `∅ → Sol valence 4`.
 - `updated_at`, `created_at`, `created_by` and `id` are excluded. `updated_at`
   changes on every write, so reporting it would put a spurious line on every
   record.
-- `actions`, `triggers`, `properties`, `upgrades`, `image_data` and `split`
-  report their **shape** (`2 entries → 3 entries`), not their contents — an
-  actions array runs to hundreds of characters and would bury everything else.
+- **The table is named once.** A record's field label is just its name; the
+  table moves to the footer ("All records are in cards."). It goes back onto
+  every label — `Recall · cards` — when the payload spans more than one table,
+  because names collide across types.
 - Long values truncate, and truncation is **always announced**. Silent
   truncation in a write report reads as "that is everything that changed" when
   it is not.

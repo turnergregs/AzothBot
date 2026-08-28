@@ -196,9 +196,9 @@ def add_rite_commands(cls):
 
 	@update_rite_cmd.on_autocomplete("name")
 	# @delete_rite_cmd.on_autocomplete("name")
+	# Live rites only -- see the note in cards.py.
 	async def autocomplete_rite_name(self, interaction: Interaction, input: str):
-		from azoth_commands.autocomplete import autocomplete_from_table
-		matches = autocomplete_from_table(TABLE_NAME, input)
+		matches = content_index.names("rite", input)
 		await interaction.response.send_autocomplete(matches[:25])
 
 

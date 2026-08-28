@@ -123,7 +123,7 @@ Five of them filter with a **numeric** encoding rather than a string compare:
 
 That already solves the `0.10.0`-sorts-below-`0.9.0` problem this document warns
 about under **The analytics cutoff** above. Two real
-problems remain: the **threshold is stale** (`6007` should be `8002`), and
+problems remain: the **threshold is stale** (`6007` should be `9000`), and
 `split_part('0.6','.',3)` returns `''`, which **raises** on `::integer` — a
 two-component version string takes these views down. NULL versions are safe;
 NULL propagates and the row is excluded.
@@ -146,8 +146,8 @@ NULL propagates and the row is excluded.
 
 | Function | Purpose |
 |---|---|
-| `version_key(text)` | Numeric sort key for a dotted version string; NULL if unparseable. `0.8.2` → `8002` |
-| `analytics_cutoff()` | The cutoff in one place — currently `8002`. Bump this, not seven WHERE clauses |
+| `version_key(text)` | Numeric sort key for a dotted version string; NULL if unparseable. `0.9.0` → `9000` |
+| `analytics_cutoff()` | The cutoff in one place — currently `9000` (`0.9.0`, raised 2026-08-28). Bump this, not seven WHERE clauses |
 | `combo_numeric(text)` | Safe numeric read of the BigNum-backed combo column; NULL rather than an error |
 | `run_cleared(uuid)` | True when the run beat the **act 3 boss** — the milestone that grants the next ritual. Independent of how the run ended, so a run that cleared act 3 and died in act 4 is still cleared |
 | `bulk_apply(jsonb, text)` | **All-or-nothing bulk insert/update for AzothBot.** See below |
@@ -223,9 +223,15 @@ from pg_stat_user_tables order by pg_total_relation_size(relid) desc;
 
 ---
 
-## ⚑ The analytics cutoff is `0.8.2`
+## ⚑ The analytics cutoff is `0.9.0`
 
-**Game version `0.8.2` is where trustworthy turn-grain analytics begins.**
+**Game version `0.9.0` is the current cutoff** — raised from `0.8.2` on
+2026-08-28 to track the game's shipped `config/version`, so `/stats` describes
+the build being played rather than pooling across a balance boundary. It cost 17
+of the 19 games that qualified at `0.8.2`; expect thin or empty replies until
+there is play at `0.9.0`.
+
+`0.8.2` remains the floor below which the data is not merely older but *wrong*:
 
 - **`0.8.0`** introduced `turns`, `turn_nodes` and `levelups`, fixed
   `games.ritual` and froze `boss_fights` — but its rollout took several rounds
@@ -240,16 +246,17 @@ from pg_stat_user_tables order by pg_total_relation_size(relid) desc;
 Filter every analytics query with:
 
 ```sql
-where g.version >= '0.8.2'
+where version_key(g.version) >= analytics_cutoff()
 ```
 
-Everything before it is a different dataset: no turn rows at all, `ritual`
+Everything before `0.8.2` is a different dataset: no turn rows at all, `ritual`
 reading 0 on all non-restart runs, `result` NULL on ~67% of rows, and a
 population dominated by developer testing (median `turns_played` of 1). Pooling
 across the boundary produces confident nonsense.
 
 `version` is a `text` column, so a bare `>=` is a lexicographic compare. That is
-correct through `0.9.x` but breaks at `0.10.0`, which sorts *below* `0.9.0`.
+correct through `0.9.x` but breaks at `0.10.0`, which sorts *below* `0.9.0` — and
+the current cutoff sits one minor release away from that trap.
 
 **In SQL, use the helpers instead** (added 2026-08-26):
 
@@ -304,7 +311,7 @@ A checklist that covers most mistakes. Details for each are in
 
 1. **Filter `version_key(g.version) >= analytics_cutoff()`.** Always. Earlier
    rows are a different dataset, not older data. The helpers avoid the
-   lexicographic trap that breaks a bare `>= '0.8.2'` at `0.10.0`.
+   lexicographic trap that breaks a bare `>= '0.9.0'` at `0.10.0`.
 2. **Decide regular vs boss turns.** `t.boss_id is null` for regular. They are
    not comparable — a boss turn runs until someone dies and holds many times
    the nodes.
@@ -381,7 +388,7 @@ replacement turns out to be wrong is unrecoverable on this plan.
    from games g
    join (select game_uuid, max(act) as act_reached, sum(hero_activations) as hero_acts
          from turns group by game_uuid) d on d.game_uuid = g.uuid
-   where g.version >= '0.8.2';
+   where version_key(g.version) >= analytics_cutoff();
    ```
    Non-zero mismatches mean turn rows are being lost, not that the derivation is
    wrong — investigate before proceeding.
@@ -519,7 +526,7 @@ select g.ritual, t.act, t.turn_index, n.node_index
 from turn_nodes n
 join turns t on t.uuid = n.turn_uuid
 join games g on g.uuid = t.game_uuid
-where n.banes_purged > 0 and g.version >= '0.8.2'
+where n.banes_purged > 0 and version_key(g.version) >= analytics_cutoff()
 order by t.act, t.turn_index;
 ```
 
@@ -772,7 +779,7 @@ Distinguish "abandoned" from "in progress" by the last turn's timestamp:
 ```sql
 select g.uuid, max(t.started_at) as last_turn
 from games g join turns t on t.game_uuid = g.uuid
-where g.result is null and g.version >= '0.8.2'
+where g.result is null and version_key(g.version) >= analytics_cutoff()
 group by g.uuid
 having max(t.started_at) < now() - interval '1 day';
 ```
@@ -917,6 +924,7 @@ popular purely because they're offered more.
 
 | Date | Change |
 |---|---|
+| 2026-08-28 | **Analytics cutoff `0.8.2` → `0.9.0`** (`2026-08-28_bump_analytics_cutoff.sql`), tracking the game's `config/version`. `analytics_cutoff()` alone; no view touched. 19 eligible games → 2. |
 | 2026-08-26 | **Captured the nine views into `db/migrations/`**; they had existed only in the live database. |
 | 2026-08-26 | **Rebuilt the eight analytics views.** Cutoff `0.6.7` → `0.8.2`, `restart`/co-op excluded, `avg_combo` → `avg_combo_log10`, `draft_rates_view` reshaped to one row per item. 1,836 games → 2. |
 | 2026-08-26 | Added `version_key()`, `analytics_cutoff()`, `combo_numeric()`. |

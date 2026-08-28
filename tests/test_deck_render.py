@@ -54,17 +54,75 @@ def test_grid_is_a_png_of_the_expected_shape():
     data = deck_render.render_grid(CARDS, columns=3, card_width=100)
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     img = Image.open(io.BytesIO(data))
-    ch = round(L.CARD_H * 100 / L.CARD_W)
+    # Tile height comes from the FACE, not from CARD_H -- see
+    # test_grid_tiles_are_the_face_shape_not_the_canvas_shape.
+    ch = deck_render._faces(CARDS[:1], 100)[0].height
     assert img.width == 3 * 100 + deck_render.GRID_GUTTER * 4
     assert img.height == 3 * ch + deck_render.GRID_GUTTER * 4   # 7 cards -> 3 rows
 
 
-def test_grid_preserves_card_aspect():
+def test_grid_tiles_are_the_face_shape_not_the_canvas_shape():
+    """The tile is the card's VISIBLE extent, not `CARD_H / CARD_W`.
+
+    A card face is the full 560x897 viewport with ~63px of empty canvas above
+    and below. Sizing the tile from the canvas keeps that emptiness, which drew
+    the card smaller than an aspect beside it -- and stretched the aspect, whose
+    face is already cropped to a different shape. `test_single_card_hand_is_not_
+    rotated` has made the same distinction for the hand since it was written.
+    """
+    face = deck_render._faces(CARDS[:1], 200)[0]
     data = deck_render.render_grid(CARDS[:1], columns=1, card_width=200)
     img = Image.open(io.BytesIO(data))
     inner_w = img.width - deck_render.GRID_GUTTER * 2
     inner_h = img.height - deck_render.GRID_GUTTER * 2
-    assert inner_h / inner_w == pytest.approx(L.CARD_H / L.CARD_W, rel=0.01)
+    assert (inner_w, inner_h) == face.size
+    assert inner_h / inner_w == pytest.approx(face.height / face.width, rel=0.01)
+    assert inner_h / inner_w != pytest.approx(L.CARD_H / L.CARD_W, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# A mixed sheet: cards, aspects and rites at one size
+# ---------------------------------------------------------------------------
+# `/search` draws all three side by side, and until 2026-08-28 every face was
+# resized to `(width, CARD_H * width / CARD_W)`. A card face IS that shape, so
+# cards looked right; an aspect face is a 544x759 crop (1.395) and came out
+# stretched to 1.602 -- 15% too tall -- and, having no empty canvas to spend,
+# visibly larger than the card beside it. Both defects, one line.
+
+ASPECT = {"name": "Readiness", "text": "+1 Starting Hand Size",
+          "image_data": {"primary_color": [246, 83, 83],
+                         "secondary_color": [9, 242, 210], "departure": 0.1}}
+RITE = {"name": "Echo", "text": "Duplicate a card in your deck"}
+
+
+def test_a_mixed_sheet_gives_every_kind_the_same_tile():
+    faces = deck_render._faces([CARDS[0], ASPECT, RITE], 200,
+                               ["card", "aspect", "rite"])
+    assert len({f.size for f in faces}) == 1, \
+        f"tiles must be identical, got {[f.size for f in faces]}"
+
+
+@pytest.mark.parametrize("kind,item", [("aspect", ASPECT), ("rite", RITE)])
+def test_no_kind_is_stretched_to_reach_the_card_shape(kind, item):
+    """The face's own ratio has to survive the resize. Forcing 1.395 into the
+    card canvas's 1.602 is the stretch this fixes -- and padding, not scaling,
+    is what absorbs the last 1% of difference between the two silhouettes.
+    """
+    face = deck_render._still_for(item, kind, None)
+    own = face.height / face.width
+    tile = deck_render._faces([item], 200, [kind])[0]
+    drawn = tile.getbbox()
+    assert (drawn[3] - drawn[1]) / (drawn[2] - drawn[0]) == pytest.approx(own, rel=0.01)
+
+
+def test_a_mixed_sheet_lays_out_on_one_row_height():
+    """The sheet's height must follow the shared tile, or the rows overlap."""
+    items = [CARDS[0], ASPECT, RITE]
+    data = deck_render.render_grid(items, columns=3, card_width=120,
+                                   kinds=["card", "aspect", "rite"])
+    img = Image.open(io.BytesIO(data))
+    ch = deck_render._faces(items, 120, ["card", "aspect", "rite"])[0].height
+    assert img.height == ch + deck_render.GRID_GUTTER * 2
 
 
 def test_grid_refuses_an_oversized_deck():
@@ -80,10 +138,51 @@ def test_grid_rejects_an_empty_deck():
 
 
 def test_grid_is_opaque():
-    """Flattened onto Discord's background: a transparent card edge reads as a
+    """Flattened onto the sheet background: a transparent card edge reads as a
     hole against a light theme."""
     img = Image.open(io.BytesIO(deck_render.render_grid(CARDS[:2], columns=2, card_width=80)))
     assert img.mode == "RGB"
+
+
+# ---------------------------------------------------------------------------
+# The sheet background is black
+# ---------------------------------------------------------------------------
+# Sheets used to arrive as a grey slab, and worse, as TWO greys: the grid filled
+# with (30,31,34) while every tile on it was flattened onto (49,51,56), so each
+# card wore a faintly lighter rectangle. Both are Discord dark-theme colours that
+# match no theme exactly. Black, everywhere, 2026-08-28.
+
+def test_the_grid_gutter_is_black():
+    """The corner is gutter, never a card -- the sheet's own fill."""
+    img = Image.open(io.BytesIO(
+        deck_render.render_grid(CARDS[:2], columns=2, card_width=80))).convert("RGB")
+    assert img.getpixel((0, 0)) == (0, 0, 0)
+    assert img.getpixel((img.width - 1, img.height - 1)) == (0, 0, 0)
+
+
+def test_the_grid_has_no_second_background_behind_its_tiles():
+    """`_flatten` matting a tile onto a DIFFERENT colour than the sheet is what
+    put a visible rectangle around every card. One grey short of the other is
+    invisible in code and obvious in Discord."""
+    assert deck_render.SHEET_BG == (0, 0, 0)
+    img = Image.open(io.BytesIO(
+        deck_render.render_grid(CARDS[:2], columns=2, card_width=80))).convert("RGB")
+    a = np.asarray(img, dtype=int)
+    # Every non-black pixel must belong to a card face, so the darkest greys the
+    # old matte produced cannot survive anywhere: nothing sits at exactly the two
+    # retired background colours.
+    for retired in ((30, 31, 34), (49, 51, 56)):
+        assert not (a == np.array(retired, dtype=int)).all(axis=-1).any(), \
+            f"{retired} is back on the sheet"
+
+
+def test_the_hand_flattens_onto_black():
+    """The hand is bbox-cropped, so its corners are the fan's empty triangles --
+    background, not card."""
+    img = Image.open(io.BytesIO(
+        deck_render.render_hand(CARDS, 5, seed=3, card_width=100))).convert("RGB")
+    assert img.getpixel((0, 0)) == (0, 0, 0)
+    assert img.getpixel((img.width - 1, 0)) == (0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +228,6 @@ def test_hand_cards_do_not_clip():
     edge means a card was cut off."""
     data = deck_render.render_hand(CARDS, 5, seed=3, card_width=120)
     a = np.asarray(Image.open(io.BytesIO(data)).convert("RGB"), dtype=int)
-    bg = np.array(deck_render.card_render.DISCORD_BG, dtype=int)
     # After the bbox crop, content reaches the edges by construction; what
     # matters is that no card is truncated mid-face. A truncated card leaves a
     # long straight run of card-interior colour along an edge.

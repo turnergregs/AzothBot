@@ -198,7 +198,10 @@ def add_hero_commands(cls):
 	@render_hero_cmd.on_autocomplete("name")
 	async def autocomplete_hero_name(self, interaction: Interaction, input: str):
 		from azoth_commands.autocomplete import autocomplete_from_table
-		matches = autocomplete_from_table(TABLE_NAME, input)
+		# Unarchived heroes only. 19 of the 20 rows are archived, and all 20
+		# were being offered -- `heroes` HAS an `archived_at`, unlike cards.
+		matches = autocomplete_from_table(TABLE_NAME, input,
+										  filters={"archived_at": None})
 		await interaction.response.send_autocomplete(matches[:25])
 
 

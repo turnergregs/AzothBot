@@ -29,12 +29,10 @@ ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
 BORDER_DIR = ASSET_ROOT / "card_art" / "borders"
 FONT_PATH = ASSET_ROOT / "fonts" / L.FONT_FILE
 
-# Discord's dark-theme message background. Still used by the multi-card SHEETS
-# (deck_render), which are opaque RGB by design -- a grid reads better with a
-# background separating the cards.
-#
-# Single cards no longer use it: they carry real transparency. See to_gif().
-DISCORD_BG = (49, 51, 56)
+# Discord's dark-theme message background, (49, 51, 56). REMOVED 2026-08-28 and
+# deliberately not replaced. Single cards carry real transparency (see to_gif),
+# and the multi-item sheets moved to black (`deck_render.SHEET_BG`) -- matching
+# one theme's grey meant missing on the other three.
 
 # --- Animated output -------------------------------------------------------
 #
@@ -304,9 +302,9 @@ def _global_palette(frames, colors: int):
 
 
 def _on_black(frame: Image.Image) -> Image.Image:
-    """RGB for quantisation. Black, not DISCORD_BG: pixels below the cutoff are
-    replaced by the transparent index anyway, so the matte only has to be a
-    colour that does not pull the palette toward a background nobody sees."""
+    """RGB for quantisation. Black: pixels below the cutoff are replaced by the
+    transparent index anyway, so the matte only has to be a colour that does not
+    pull the palette toward a background nobody sees."""
     return Image.alpha_composite(
         Image.new("RGBA", frame.size, (0, 0, 0, 255)), frame).convert("RGB")
 

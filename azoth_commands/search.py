@@ -17,6 +17,7 @@ from nextcord import Interaction, SlashOption
 from azoth_commands.helpers import safe_interaction, missing_asset_hint
 from constants import DEV_GUILD_ID
 from supabase_helpers import fetch_all, SupabaseError
+from azoth_logic import content_index as ci
 from azoth_logic import content_search as cs
 from azoth_logic import deck_render
 
@@ -33,17 +34,40 @@ SEARCH_CARD_WIDTH = 260
 
 
 def _pool():
-    """Every searchable item as (row, kind) pairs.
+    """Every searchable item as (row, kind) pairs -- LIVE content only.
 
     Three tables, one pass. At 626 rows this is well under a second and simpler
     than pushing filters into PostgREST -- and the deep JSON search could not be
     expressed there anyway.
+
+    The liveness filter cuts that 626 to 233: a row in no unarchived deck cannot
+    be drafted, summoned or drawn, so a search that returned it would be
+    answering about content that does not exist in the game. See
+    `content_index` § Liveness. When the deck read fails, `live_ids` comes back
+    empty and this filters nothing -- a search that silently returned zero rows
+    because of a bad key would be worse than one that over-answers.
     """
+    live = ci.live_ids()
     pool = []
     for kind, table in cs.KIND_TABLE.items():
+        ids = live.get(kind) if any(live.values()) else None
         for row in fetch_all(table, limit=1000):
-            pool.append((row, kind))
+            if ids is None or row.get("id") in ids:
+                pool.append((row, kind))
     return pool
+
+
+def _live_rows(table: str, kind: str, columns: list) -> list:
+    """Rows of one table, live only -- for the vocabulary autocompletes.
+
+    They exist to suggest values that `/search` can actually match, so they have
+    to be drawn from the same pool it searches. Offering a subtype that survives
+    only on retired cards is offering a guaranteed empty result.
+    """
+    live = ci.live_ids()
+    ids = live.get(kind) if any(live.values()) else None
+    return [r for r in fetch_all(table, columns, limit=1000)
+            if ids is None or r.get("id") in ids]
 
 
 def add_search_commands(cls):
@@ -118,10 +142,11 @@ def add_search_commands(cls):
     @search_cmd.on_autocomplete("subtype")
     async def autocomplete_subtype(self, interaction: Interaction, input: str):
         # Derived from live content rather than a hardcoded list, so a new
-        # subtype appears without a code change.
+        # subtype appears without a code change -- and scoped to the same pool
+        # `/search` covers, so no suggestion can return zero results.
         def collect():
             found = set()
-            for row in fetch_all("cards", ["subtypes"], limit=1000):
+            for row in _live_rows("cards", "card", ["id", "subtypes"]):
                 for s in row.get("subtypes") or []:
                     if s and (not input or input.lower() in str(s).lower()):
                         found.add(str(s))
@@ -133,7 +158,7 @@ def add_search_commands(cls):
     async def autocomplete_action(self, interaction: Interaction, input: str):
         def collect():
             found = set()
-            for row in fetch_all("cards", ["actions"], limit=1000):
+            for row in _live_rows("cards", "card", ["id", "actions"]):
                 for a in row.get("actions") or []:
                     name = a.get("name") if isinstance(a, dict) else None
                     if name and (not input or input.lower() in str(name).lower()):

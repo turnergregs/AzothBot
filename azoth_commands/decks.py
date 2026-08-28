@@ -711,6 +711,15 @@ def add_deck_commands(cls):
 	@add_to_deck_cmd.on_autocomplete("item_name")
 	# @stage_cmd.on_autocomplete("item_name")
 	async def autocomplete_item_name(self, interaction: Interaction, input: str):
+		"""EVERY row, live or not -- deliberately not filtered.
+
+		`/show`, `/render`, `/rules`, `/search` and the `/update_*` pickers hide
+		content that sits in no unarchived deck (see `content_index` § Liveness).
+		This one must not: adding a card to a deck is precisely what makes it
+		live again, and filtering here would make retired content unrecoverable
+		through the bot -- with no `/delete_*` commands left to undo it either.
+		This picker IS the way back.
+		"""
 		from supabase_helpers import encode_item_ref, make_item_label
 
 		input_lower = input.lower()

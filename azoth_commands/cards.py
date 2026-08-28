@@ -247,8 +247,10 @@ def add_card_commands(cls):
 
 	@update_card_cmd.on_autocomplete("name")
 	# @delete_card_cmd.on_autocomplete("name")
+	# Live cards only -- editing one the player cannot encounter is editing
+	# nothing. `/add_to_deck` is the way back for a retired card.
 	async def autocomplete_card_name(self, interaction: Interaction, input: str):
-		matches = autocomplete_from_table(TABLE_NAME, input)
+		matches = content_index.names("card", input)
 		await interaction.response.send_autocomplete(matches[:25])
 
 

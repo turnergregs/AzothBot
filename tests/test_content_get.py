@@ -42,8 +42,10 @@ def test_card_shows_its_defining_attributes():
     assert _value("card", CARD, "Subtypes") == "Sacred"
 
 
-def test_aspect_shows_attunement():
-    assert _labels("aspect", {"attunement": 2}) == ["Attunement"]
+def test_aspect_attunement_is_not_shown():
+    """Every live aspect has attunement 1, so the row distinguished nothing.
+    Dropped 2026-08-28."""
+    assert _labels("aspect", {"attunement": 2}) == []
 
 
 def test_rite_shows_foresight():
@@ -100,8 +102,8 @@ def test_zero_valence_is_shown_not_treated_as_absent():
     assert _value("card", {**CARD, "valence": 0}, "Valence") == "0"
 
 
-def test_zero_attunement_is_shown():
-    assert _labels("aspect", {"attunement": 0}) == ["Attunement"]
+def test_zero_attunement_is_not_shown_either():
+    assert _labels("aspect", {"attunement": 0}) == []
 
 
 # ---------------------------------------------------------------------------

@@ -189,7 +189,10 @@ without it is an open door to production content. Verify this on every review.
 them turn a query that runs cleanly into one that answers the wrong question. The
 ones that bite most often:
 
-- Filter `version >= '0.8.2'` — everything earlier is a different dataset.
+- Filter `version_key(version) >= analytics_cutoff()` — `0.9.0` since
+  2026-08-28. Everything earlier is a different dataset.
+- Content lookups are scoped to LIVE content — in an unarchived deck. See
+  `content_index` § Liveness; `/add_to_deck` is the deliberate exception.
 - Never `avg()` a combo. It is an exponentially growing BigNum stored as `text`.
   Use `turn_nodes.combo_log10`.
 - `no_boss_key` counts as a **win**, alongside `victory`.

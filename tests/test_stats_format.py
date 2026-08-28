@@ -152,7 +152,7 @@ def test_the_cutoff_is_stated_by_default():
 
 def test_the_cutoff_can_be_denied():
     """`version_info_view` is the one view with no cutoff — comparing versions
-    is its whole job. Claiming `>= 0.8.2` on a table visibly showing 0.7.0 rows
+    is its whole job. Claiming the cutoff on a table visibly showing 0.7.0 rows
     is worse than claiming nothing."""
     text = sf.footer(ROWS, cutoff=False)
     assert sf.CUTOFF_VERSION not in text

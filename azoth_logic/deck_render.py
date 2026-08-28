@@ -34,7 +34,20 @@ DOWNLOAD_WORKERS = 12
 GRID_COLUMNS = 10
 GRID_CARD_WIDTH = 200
 GRID_GUTTER = 10
-GRID_BG = (30, 31, 34)
+
+# Every multi-item sheet -- grid, comparison, hand -- sits on black.
+#
+# It used to be two different greys: the grid on (30,31,34) and the hand
+# flattened onto `card_render.DISCORD_BG` (49,51,56), Discord's *Dark* theme
+# colour. Neither matched the client on any other theme, so a sheet arrived as a
+# grey slab with a slightly different grey inside it. Black is the one
+# background that reads as deliberate on all four themes rather than as a
+# near-miss of one of them.
+#
+# Single cards are transparent instead (see `card_render.to_gif`); a sheet
+# cannot be, because the gaps between tiles would show the theme through and
+# make the grid look like holes rather than a sheet.
+SHEET_BG = (0, 0, 0)
 
 # A deck bigger than this is refused rather than silently truncated.
 MAX_GRID_CARDS = 200
@@ -139,19 +152,52 @@ def _still_for(item, kind, art):
 
 
 def _faces(cards, width: int, kinds=None):
-    """Render each item once, scaled to `width`.
+    """Render each item once, cropped to its silhouette and scaled to `width`.
 
     `kinds` parallels `cards`; without it everything is treated as a card, which
     is what the deck and hand paths want.
+
+    Two steps, and both are load-bearing on a MIXED sheet -- `/search` draws
+    cards, aspects and rites side by side:
+
+    **Crop first.** A card face is the full 560x897 canvas with ~63px of empty
+    canvas above and below; an aspect or rite face arrives already cropped to
+    its 544x759 silhouette. Scaling both to one box without cropping draws the
+    card visibly SMALLER than the aspect beside it, because the card is spending
+    a seventh of its height on nothing.
+
+    **Then scale by width, keeping each face's own ratio.** Deriving the height
+    from `CARD_W x CARD_H` -- which this did until 2026-08-28 -- stretches
+    anything that is not that shape. An aspect's 1.395 crop forced into the
+    card canvas's 1.602 came out **15% too tall**, which is what made aspects
+    and rites look squished next to cards.
+
+    Cropped, the two silhouettes agree to within 1% (552x766 against 544x759),
+    so the faces come out the same size and shape without either being
+    distorted to get there. `_comparison_sides` has done this since it was
+    written; the grid and hand were left on the old scaling.
     """
     art = fetch_art_many(cards, kinds=kinds)
-    scale = width / L.CARD_W
-    size = (width, round(L.CARD_H * scale))
-    out = []
+    scaled = []
     for i, card in enumerate(cards):
         kind = kinds[i] if kinds else "card"
         face = _still_for(card, kind, art.get(id(card)))
-        out.append(face.resize(size, Image.LANCZOS))
+        face = face.crop(card_render.alpha_bbox([face]))
+        height = max(1, round(face.height * width / face.width))
+        scaled.append(face.resize((width, height), Image.LANCZOS))
+
+    # A grid needs uniform tiles -- `render_grid` sizes every cell from the
+    # first face. The residual 1% of height difference is padded, never scaled
+    # away: stretching to match is the distortion this function just removed.
+    tall = max(f.height for f in scaled)
+    out = []
+    for face in scaled:
+        if face.height == tall:
+            out.append(face)
+            continue
+        tile = Image.new("RGBA", (width, tall), (0, 0, 0, 0))
+        tile.alpha_composite(face, (0, (tall - face.height) // 2))
+        out.append(tile)
     return out
 
 
@@ -176,7 +222,7 @@ def render_grid(cards, columns: int = GRID_COLUMNS, card_width: int = GRID_CARD_
         "RGB",
         (columns * cw + GRID_GUTTER * (columns + 1),
          rows * ch + GRID_GUTTER * (rows + 1)),
-        GRID_BG,
+        SHEET_BG,
     )
     for i, face in enumerate(faces):
         x = GRID_GUTTER + (i % columns) * (cw + GRID_GUTTER)
@@ -264,11 +310,13 @@ def _comparison_sides(items, kinds, art, width: int, animate: bool,
     Cropped to the side's OWN alpha box -- computed across all of its frames at
     once, so the crop cannot jitter mid-animation.
 
-    Cropping matters more here than in a grid. A card face carries ~63px of
-    empty canvas above and below (`render_png` crops it for exactly this
-    reason); an aspect face does not, because `render_aspect` already cropped.
-    Scaling both to one box without cropping first therefore drew the card
-    visibly smaller than the aspect beside it.
+    A card face carries ~63px of empty canvas above and below (`render_png`
+    crops it for exactly this reason); an aspect face does not, because
+    `render_aspect` already cropped. Scaling both to one box without cropping
+    first therefore drew the card visibly smaller than the aspect beside it.
+    `_faces` does the same thing for the grid and the hand -- it did not until
+    2026-08-28, and mixed `/search` sheets carried the bug this comment
+    describes.
 
     EACH SIDE KEEPS ITS OWN ASPECT RATIO. Only the width is fixed; the height
     follows from the crop. Deriving the height from CARD_W x CARD_H instead --
@@ -352,7 +400,7 @@ def render_comparison(items, kinds, labels, holo_levels=None,
         "RGBA",
         (len(sides) * cw + COMPARE_GUTTER * (len(sides) + 1),
          ch + COMPARE_GUTTER * 2 + COMPARE_LABEL_BAND),
-        GRID_BG + (255,),
+        SHEET_BG + (255,),
     )
     draw = ImageDraw.Draw(board)
     font = card_render._font(COMPARE_LABEL_SIZE)
@@ -443,13 +491,13 @@ def render_hand(cards, hand_size: int = 6, seed=None,
 
 
 def _flatten(img: Image.Image) -> Image.Image:
-    """Composite onto Discord's dark background.
+    """Composite onto the sheet background.
 
     Sheets are PNG so alpha would survive, but a transparent card edge reads as a
-    hole against a light theme; the single-card path flattens for the same
-    reason.
+    hole against a light theme. Matches `SHEET_BG` exactly -- when it did not,
+    every tile carried a faintly lighter rectangle around it.
     """
     if img.mode != "RGBA":
         return img.convert("RGB")
-    bg = Image.new("RGBA", img.size, card_render.DISCORD_BG + (255,))
+    bg = Image.new("RGBA", img.size, SHEET_BG + (255,))
     return Image.alpha_composite(bg, img).convert("RGB")

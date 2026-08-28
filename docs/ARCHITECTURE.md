@@ -48,7 +48,8 @@ azoth_logic/
   fate_render.py            Composites aspect and rite faces
   deck_render.py            Deck grid, fanned sample hand, upgrade comparison
   art_cache.py              On-disk caches for art and animated renders
-  content_index.py          Cached (kind, id, name) index behind /show and /render
+  content_index.py          Cached (kind, id, name) index behind /show and /render,
+                            plus the deck-membership liveness filter
   content_search.py         The filters behind /search
   bulk_report.py            Diffs and summaries for /bulk_insert and /bulk_update
   bulk_apply.py             The transactional write itself -- one RPC, one transaction

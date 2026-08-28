@@ -175,9 +175,9 @@ def add_aspect_commands(cls):
 
 	@update_aspect_cmd.on_autocomplete("name")
 	# @delete_aspect_cmd.on_autocomplete("name")
+	# Live aspects only -- see the note in cards.py.
 	async def autocomplete_aspect_name(self, interaction: Interaction, input: str):
-		from azoth_commands.autocomplete import autocomplete_from_table
-		matches = autocomplete_from_table(TABLE_NAME, input)
+		matches = content_index.names("aspect", input)
 		await interaction.response.send_autocomplete(matches[:25])
 
 

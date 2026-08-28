@@ -27,7 +27,9 @@ MAX_TABLE_WIDTH = 56
 MOBILE_TABLE_WIDTH = 24
 
 # The analytics cutoff, mirrored from `analytics_cutoff()` for the footer.
-CUTOFF_VERSION = "0.8.2"
+# Display only -- the DB function is what actually filters. Bump both together
+# or the footer will state a threshold the views are not enforcing.
+CUTOFF_VERSION = "0.9.0"
 
 # Below this, a win RATE is theatre: one win in two runs is not "50%".
 MIN_RUNS_FOR_A_RATE = 5

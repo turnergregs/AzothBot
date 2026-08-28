@@ -33,13 +33,46 @@ ref still encodes `event:82`, matching the naming boundary.
 
 Autocomplete is served from an in-process index
 (`azoth_logic/content_index.py`) with a 60s TTL — Discord fires it on every
-keystroke and reading the three tables live costs 0.85–2.3s. `create_*` and
+keystroke and reading the tables live costs 0.85–2.3s. `create_*` and
 `update_*` invalidate it, so new content is selectable immediately; the TTL is
 the backstop for edits made in the Codex or by direct SQL.
 
+### ⚑ Only live content is findable
+
+Since 2026-08-28, `/show`, `/render`, `/rules`, `/search` and the `/update_*`
+name pickers cover **only content that is reachable in game**. That is
+**233 of 626 rows** — 154 of 400 cards, 58 of 149 aspects, 21 of 77 rites. The
+rest is retired work that nobody can encounter, and it used to fill two thirds
+of every autocomplete.
+
+`cards`, `aspects` and `events` have **no `archived_at`** — they hard-delete,
+and an unused row just sits there. So liveness is inferred:
+
+> **live == in at least one deck whose `archived_at` is null**
+
+which is exactly what the game does: it reaches all of its content through
+`decks_with_contents` and drops archived decks on sync
+([CONTENT_LOADING.md](../../azoth/docs/CONTENT_LOADING.md)). The deck membership
+is read alongside the index, cached in the same snapshot, and costs ~0.4s per
+refresh.
+
+- **`/add_to_deck` is deliberately NOT filtered.** Adding a card to a deck is
+  what makes it live, so that picker still offers every row — it is the way
+  back, and the only one, since the `/delete_*` commands were retired.
+- **A retired item does not read as missing.** Pasting its ref into `/show`
+  answers *"X is not in any active deck… add it to a deck to bring it back"*,
+  not "could not find" — which for a row that plainly exists would read as data
+  loss.
+- **If the deck read fails, nothing is filtered.** An empty live set means "the
+  bot cannot see the decks", not "no content is live"; concluding the latter
+  would hide the entire catalogue behind a message that is false for all 626
+  rows. Same stance the game's importer takes on an empty reconcile set.
+- **Heroes filter their own `archived_at`** — 19 of 20 hero rows are archived
+  and all 20 were being offered.
+
 `/show` returns a **detail embed**, accented in the item's own colour: rules text
 as the body, and only the attributes that define the thing — element, valence,
-subtypes, split face, attunement or foresight, whichever apply. Empty and null
+subtypes, split face or foresight, whichever apply. Empty and null
 values are dropped rather than printed.
 
 It used to dump the raw database row as JSON. Deliberately **not** shown now:
@@ -50,6 +83,7 @@ It used to dump the raw database row as JSON. Deliberately **not** shown now:
 | `created_at` / `updated_at` / `created_by` | Audit metadata |
 | `image` / `image_data` | Rendering internals — `/render` is the view |
 | `actions` / `triggers` / `properties` | `jsonb`, and past Discord's 2000-char limit on their own |
+| `attunement` (aspects) | Every live aspect is 1 — it distinguishes nothing (dropped 2026-08-28) |
 
 `type` is shown only when it is *not* `spell` — 328 of 400 cards are spells, so
 printing it on each is noise; a catalyst is the exception worth naming. A null
@@ -185,13 +219,18 @@ snapshot in `assets/game_data/` (game repo,
 `soft_delete_record` — and went with the others for consistency. **Archiving a
 deck is still possible:** `/update_deck` takes an `archived` parameter.
 
-**To retire content, pull it from the draft decks** with `/remove_from_deck`.
-That is what the balance workflow was for; it leaves the row intact and
-recoverable. Restoring a delete command means deciding what "delete" should mean
-first: the honest version adds `archived_at` to the three content tables,
-switches the commands to `soft_delete_record`, filters archived rows out of
-`content_index` / `/search`, and teaches the game's `prune_content_dirs()` to
-read the column instead of inferring deletion from a missing row.
+**To retire content, pull it from the every unarchived deck** with
+`/remove_from_deck`. That is what the balance workflow was for; it leaves the
+row intact and recoverable, and since 2026-08-28 it also **hides the item from
+every lookup command** — see [Only live content is
+findable](#-only-live-content-is-findable). Removing from the last live deck is
+now the closest thing to a delete, and `/add_to_deck` undoes it.
+
+Restoring a real delete command means deciding what "delete" should mean first:
+the honest version adds `archived_at` to the three content tables and switches
+the commands to `soft_delete_record`. The `content_index` / `/search` filtering
+that entry also called for **is now done** — by deck membership rather than by a
+column, since the column still does not exist.
 
 ---
 
@@ -311,7 +350,9 @@ failure at record 40 left 39 rows written — with no command able to remove the
 once `/delete_*` was retired the same day.
 
 Both reply with an embed describing the action: `/bulk_update` gives a per-record
-field diff **and renders the updated items**; `/bulk_insert` lists each new row
+field diff of the **player-facing** fields — the mechanic blobs (`actions`,
+`triggers`, `properties`, `upgrades`) collapse into one note, and only when the
+rules text did not move — **and renders the updated items**; `/bulk_insert` lists each new row
 with its id and attributes but does **not** render, because art is uploaded after
 an insert. Errors are listed with the rest, and any truncation is announced. See
 [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md#what-the-reply-tells-you).
@@ -327,7 +368,8 @@ Full format specification and workflow: [CONTENT_PIPELINE.md](CONTENT_PIPELINE.m
 | `/search` | — | `query?`, `content_type?`, `element?`, `valence?`, `subtype?`*, `card_type?`*, `action?`*, `sort?`, `limit?` |
 
 Finds cards, aspects and rites and renders the matches as a grid. Every filter is
-optional and they AND together.
+optional and they AND together. The pool is **live content only** (233 rows, not
+626) — see [Only live content is findable](#-only-live-content-is-findable).
 
 **`query` mirrors the Codex's search** (`content_search.gd` in the game repo): it
 scans name, rules text, type, subtypes, valence and attunement — **and deep-
@@ -337,7 +379,8 @@ the word appears in no flat column, and `query: {link.size}` finds every card
 using that placeholder.
 
 `subtype`, `card_type` and `action` autocomplete from live content, so a new
-subtype or action shows up without a code change. `action` walks nested actions
+subtype or action shows up without a code change — and they are scoped to the
+same live pool `/search` covers, so a suggestion cannot return zero results. `action` walks nested actions
 and triggers, so a `Recall` inside a `Split` inside a trigger still matches. It
 does **not** match properties — the free-text query is what reaches those.
 
@@ -394,7 +437,7 @@ Three things the formatting fixes rather than decorates:
 - **Every reply carries a footer** naming the cutoff and how many games are
   behind the number. `/stats version` says **"all versions"** instead —
   `version_info_view` is the one view with no cutoff, because comparing versions
-  is its whole job, and claiming `>= 0.8.2` over a table showing 0.7.0 rows
+  is its whole job, and claiming the cutoff over a table showing 0.7.0 rows
   would be a lie.
 - **Dropped columns are named.** A table too wide for a phone loses columns from
   the right, and the footer says which — the same rule `/search` follows when it
@@ -411,12 +454,12 @@ in the game repo widened the view to `usage_type in ('draft', 'rite')`; the Rite
 deck (id 36, 21 events) is `usage_type = 'rite'` and was excluded by a filter
 that predates that usage type. Until that migration runs, `events` reads 0.
 
-> The views behind `/stats` were rebuilt on 2026-08-26 — cutoff enforced at
-> `0.8.2`, `restart` runs and co-op duplicates excluded, and combo averaged in
+> The views behind `/stats` were rebuilt on 2026-08-26 — a cutoff enforced in
+> one place, `restart` runs and co-op duplicates excluded, and combo averaged in
 > log space as **`avg_combo_log10`** (an order of magnitude, not a linear mean).
-> Read [ANALYTICS.md](ANALYTICS.md) before quoting a number: the trustworthy
-> dataset is still only a couple of runs deep, so most of these will be thin or
-> empty until there is play at `0.8.2`+.
+> The cutoff moved to `0.9.0` on 2026-08-28. Read [ANALYTICS.md](ANALYTICS.md)
+> before quoting a number: the trustworthy dataset is still only a couple of runs
+> deep, so most of these will be thin or empty until there is play at `0.9.0`+.
 
 `/daily_update` is per-channel: enabling it in a channel registers that channel
 with its own send time, and the report covers the previous day (CST). Disabling

@@ -27,11 +27,12 @@ async def _send_bulk_report(interaction, title, total, groups, error_lines,
     each but the whole embed caps at 6000, and going over is a 400 that loses the
     entire reply. `pack_fields_into_embeds` splits instead of truncating, because
     a write report that silently drops rows is worse than a second message.
+
+    The labelling lives in `bulk_report` rather than here so the tests can reach
+    it -- command bodies are never executed by the suite.
     """
-    fields = []
-    for (table, name), lines in groups.items():
-        label = f"{name} · {table}" if name else f"{table} ({len(lines)})"
-        fields.append((label, bulk_report.fit(lines) if lines else f"*{empty_note}*", False))
+    fields = bulk_report.report_fields(groups, empty_note)
+    notes = [n for n in (bulk_report.table_note(groups), footer) if n]
 
     if error_lines:
         fields.append((f"Errors ({len(error_lines)})", bulk_report.fit(error_lines), False))
@@ -47,7 +48,10 @@ async def _send_bulk_report(interaction, title, total, groups, error_lines,
                 [k for _, k in renderable])
             image = nextcord.File(io.BytesIO(data), filename="updated.png")
             if len(touched) > len(renderable):
-                footer = f"Showing {len(renderable)} of {len(touched)} updated items."
+                # Appended, not assigned. It used to overwrite the caller's
+                # footer, which was harmless only because the one caller that
+                # passes a footer never renders.
+                notes.append(f"Showing {len(renderable)} of {len(touched)} updated items.")
         except Exception as e:
             fields.append(("Render", f"⚠️ could not render: {e}", False))
 
@@ -55,7 +59,7 @@ async def _send_bulk_report(interaction, title, total, groups, error_lines,
         fields,
         title=f"{title} — {total} record{'' if total == 1 else 's'}",
         colour=0x2ecc71 if not error_lines else 0xe67e22,
-        footer=footer,
+        footer=" · ".join(notes) or None,
     )
 
     # The image rides with the LAST embed, after every field it summarises.

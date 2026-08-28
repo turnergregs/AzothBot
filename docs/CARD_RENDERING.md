@@ -115,11 +115,14 @@ animated-card-into-flat-aspect case still animates on the left. When no side
 animates it returns a PNG (16 of 197 cards).
 
 Each side is cropped to its **own** alpha box, computed across all of its frames
-at once so the crop cannot jitter mid-animation. Cropping matters more here than
-in a grid: a card face carries ~63px of empty canvas above and below (which
-`render_png` crops for exactly this reason) and an aspect face does not, so
-scaling both to one box without cropping drew the card visibly smaller than the
-aspect beside it.
+at once so the crop cannot jitter mid-animation. A card face carries ~63px of
+empty canvas above and below (which `render_png` crops for exactly this reason)
+and an aspect face does not, so scaling both to one box without cropping drew the
+card visibly smaller than the aspect beside it.
+
+This paragraph used to open "cropping matters more here than in a grid". It does
+not — the grid had the identical bug and kept it until 2026-08-28. See
+[One tile shape for every kind](#one-tile-shape-for-every-kind).
 
 ⚠️ **Only the width is fixed; each face's height follows from its own crop.**
 Deriving the height from `CARD_W x CARD_H` — which this did at first — squeezes
@@ -311,12 +314,41 @@ explicitly overrides the outline to white.
 
 ## Deck and hand layouts
 
-`/render_deck` tiles every card in a deck; `/render_hand` fans a random sample.
-Both are **static, opaque PNGs** — unlike a single card, a sheet reads better
-with a background separating the tiles, which is what `DISCORD_BG` is still used
-for. A 110-card deck animating at 60 frames each would be
-tens of megabytes and unreadable at thumbnail size, so animation stays on
-`/render`, where one card fills the message.
+`/render_deck` tiles every card in a deck; `/render_hand` fans a random sample;
+`/search` and `/render` on a deck reuse the same grid. All are **static, opaque
+PNGs** — unlike a single card, a sheet reads better with a background separating
+the tiles, and it cannot be transparent: the gutters between tiles would show
+the theme through and the grid would read as holes. A 110-card deck animating at
+60 frames each would be tens of megabytes and unreadable at thumbnail size, so
+animation stays on `/render`, where one card fills the message.
+
+### One tile shape for every kind
+
+`/search` draws cards, aspects and rites on one sheet, and until 2026-08-28
+`_faces` resized every face to `(width, CARD_H × width / CARD_W)`. A card face
+**is** that shape, so cards looked correct and the bug stayed invisible on a
+deck sheet, which is cards only. A mixed sheet showed both halves of it:
+
+| | Face | Forced to | Result |
+|---|---|---|---|
+| Card | 560×897 canvas (1.602) | 1.602 | Right shape, but ~63px of empty canvas scaled down with it — the body drew **smaller** |
+| Aspect / rite | 544×759 crop (1.395) | 1.602 | **15% too tall**, and filling the whole tile, so it drew **larger** |
+
+`_faces` now crops each face to its own silhouette first, then scales by width
+with that face's own ratio — the same two steps `_comparison_sides` has always
+done. Cropped, the two silhouettes agree to within 1% (552×766 against
+544×759), so the tiles come out the same size and shape without either being
+distorted to get there. The residual pixel or two of height is **padded**, never
+scaled away; stretching to match is the defect this removes.
+
+**That background is black** (`deck_render.SHEET_BG`), since 2026-08-28. It was
+two different greys before: the sheet filled with `(30, 31, 34)` while every
+tile on it was flattened onto `card_render.DISCORD_BG` `(49, 51, 56)`, so each
+card wore a faintly lighter rectangle around it — visible in Discord, invisible
+in the code, because the two constants lived in different modules. Both were
+Discord dark-theme colours, matching no theme exactly on a client set to Darker,
+Midnight or Light. `DISCORD_BG` had no callers left afterwards and was removed.
+The comparison sheet behind `/show` shares `SHEET_BG`, label band included.
 
 **Art fetching is the bottleneck, not drawing** — measured at 0.68s per card
 downloading versus 0.04s rendering. `deck_render.fetch_art_many()` parallelises
