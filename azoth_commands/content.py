@@ -166,19 +166,19 @@ def add_content_commands(cls):
         self,
         interaction: Interaction,
         name: str = SlashOption(description="Card, aspect or rite", autocomplete=True),
-        compare: bool = SlashOption(
-            description="Show the upgraded version beside it (default: on when there is one)",
+        show_upgrade: bool = SlashOption(
+            description="Show the upgraded version beside it (default: off)",
             required=False),
     ):
         kind, row = await asyncio.to_thread(ci.resolve, name)
         if not row:
             return f"❌ Could not find `{name}`."
 
-        # Auto: compare when there is something to compare against. 197 of 400
-        # cards have an upgrade, and for those the comparison is the more useful
-        # default -- it is the only view that shows what the upgrade DOES.
+        # Opt-in. The plain single face is what `/render` is usually for, and
+        # the comparison costs a second face's art and drawing -- and gives up
+        # the animation on any card whose upgrade does not animate.
         upgradeable = upgrades.has_upgrade(row)
-        comparing = upgradeable if compare is None else (compare and upgradeable)
+        comparing = bool(show_upgrade) and upgradeable
 
         # Downloading art and drawing are both blocking and can run for seconds.
         # On the event loop they starve the gateway heartbeat, and `wait_for`
@@ -195,10 +195,10 @@ def add_content_commands(cls):
 
         note = None
         if comparing:
-            # Say what was traded away, once, rather than leaving someone to
-            # wonder why an animated card came back still.
             note = f"🖼️ **{row['name']}** — base and upgraded."
-        elif compare and not upgradeable:
+        elif show_upgrade and not upgradeable:
+            # Asked for a comparison against nothing. Saying so beats returning
+            # one face and leaving someone to wonder which one it is.
             note = f"🖼️ **{row['name']}** has no upgrade to compare against."
 
         await interaction.followup.send(

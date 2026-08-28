@@ -4,8 +4,8 @@
 GIF** for cards with eigenfunction art, a PNG for the rest. The same command
 covers aspects and rites; see [COMMANDS.md](COMMANDS.md#content-lookup).
 
-A card that has an **upgrade** renders as a static side-by-side comparison
-instead — see [Upgrade comparison](#upgrade-comparison) below.
+`show_upgrade:True` renders a side-by-side against the card's upgraded state —
+see [Upgrade comparison](#upgrade-comparison) below. Off by default.
 
 Rewritten 2026-08-26. The previous renderer targeted a card template the game had
 since replaced.

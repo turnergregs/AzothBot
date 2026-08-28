@@ -16,7 +16,7 @@ no database-level guard. See [ARCHITECTURE.md § safe_interaction](ARCHITECTURE.
 | Command | Access | Parameters |
 |---|---|---|
 | `/show` | — | `name`* — any card, aspect or rite |
-| `/render` | — | `name`*, `compare?` — any card, aspect or rite |
+| `/render` | — | `name`*, `show_upgrade?` — any card, aspect or rite |
 | `/rules` | — | `name`* — the mechanics JSON, as a file |
 
 **One command each, across all content types.** Replaced the six typed
@@ -57,10 +57,17 @@ element reads as **Colourless** rather than blank, which is what 64 cards have.
 
 ### `/render` and the upgrade comparison
 
-When a card has an upgrade, `/render` draws it **beside its upgraded state**,
-captioned `Base` / `Upgraded`. 197 of 400 cards have one, and for those the
-comparison is the only view that shows what the upgrade actually does. A card
-with no upgrade renders exactly as before.
+`/render` draws the single face by default. **`show_upgrade:True`** draws it
+**beside its upgraded state**, captioned `Base` / `Upgraded` — the only view that
+shows what an upgrade actually does. 197 of 400 cards have one.
+
+Opt-in rather than automatic: the plain face is what `/render` is usually for,
+and a comparison costs a second face's art and drawing. `show_upgrade:True` on a
+card with no upgrade says so rather than returning one face and leaving you to
+wonder which one it is.
+
+(Discord option names are lowercase with no spaces, so the flag reads
+`show_upgrade` rather than `Show Upgrade`.)
 
 **A card can upgrade into an aspect** — it transforms and moves to the aspect
 bar — so the upgraded face is drawn by the *aspect* renderer and captioned
@@ -77,8 +84,7 @@ faces, not a hundred. Measured across 60 comparisons — **largest GIF 0.71 MB
 against Discord's 10 MB cap, slowest render 4.5s against a 30s timeout.** GIFs
 are cached like any other animated render, so a repeat is instant.
 
-`compare:False` gives the single face on its own; `compare:True` on a card with
-no upgrade says so rather than silently rendering one face.
+`show_upgrade:False` is the default and gives the single face on its own.
 
 The merge follows the engine exactly (`GameContentData.apply_upgrade`):
 `_added` keys append and everything else replaces, replacements land before
