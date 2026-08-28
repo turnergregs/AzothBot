@@ -156,6 +156,16 @@ A turn that never cleared is **kept as a row** with `clear_index IS NULL`.
 Dropping it would right-censor the average silently, which is the failure
 `DB_SCHEMA.md` calls out by name.
 
+**Tables are built for a phone.** `MOBILE_TABLE_WIDTH = 24`, measured from a
+wrapped screenshot: a 24-character header survived, a 36-character one did not.
+A wrapped monospace table is worse than no table — the columns stop lining up and
+every row breaks somewhere different. The clearing breakdown is therefore **two**
+narrow tables (links, then seconds) rather than one wide one.
+
+⚠️ The four generic `/stats` tables are **not** yet within that budget:
+`leaderboard` 49, `active_players` 39, `hero` 52, `version` 54 characters. They
+wrap on a phone today.
+
 `player_act_view` is one row per (player, act): links per regular and boss turn,
 plus the same clearing split. It `FULL JOIN`s the two halves — an act can have
 link data with no clearable turns (every turn started with nothing to solve), and

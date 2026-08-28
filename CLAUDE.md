@@ -99,7 +99,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 617 tests, all offline** (`docs/TESTING.md`):
+**pytest, 620 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest

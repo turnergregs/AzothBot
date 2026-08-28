@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 617 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 620 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash

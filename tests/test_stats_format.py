@@ -386,8 +386,30 @@ CLEAR = {"avg_links_before_clear": 3.2, "avg_links_after_clear": 1.1,
 
 def test_clearing_reports_both_sides_per_act():
     out = sf.clearing_table(ACTS, OVERALL)
-    assert "Before" in out and "After" in out
+    assert "Bef" in out and "Aft" in out
     assert "3.1" in out and "4.8" in out
+
+
+def test_clearing_splits_links_and_seconds_into_two_tables():
+    """One table carrying links, seconds and the ratio came to 36 characters,
+    which wraps on a phone and takes the column alignment with it — the only
+    reason to use a monospace table at all."""
+    out = sf.clearing_table(ACTS, OVERALL)
+    assert "links" in out and "seconds" in out
+    assert "5m 02s" in out and "3.1" in out
+
+
+@pytest.mark.parametrize("render", ["links_table", "clearing_table"])
+def test_the_player_tables_fit_a_phone(render):
+    """REGRESSION (2026-08-28): the clearing table wrapped on mobile.
+
+    Measured from the wrapped screenshot: a 24-character header survived, a
+    36-character one did not. A wrapped monospace table is worse than no table —
+    the columns stop lining up and every row breaks somewhere different.
+    """
+    out = getattr(sf, render)(ACTS, OVERALL)
+    widest = max(len(l) for l in out.replace("```", "").splitlines() if l.strip())
+    assert widest <= sf.MOBILE_TABLE_WIDTH, f"{widest} chars wraps on a phone"
 
 
 def test_clearing_carries_its_censoring_on_every_row():

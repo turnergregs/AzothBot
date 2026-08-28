@@ -20,6 +20,12 @@ MAX_DESCRIPTION = 4096
 MAX_FIELD = 1024
 MAX_TABLE_WIDTH = 56
 
+# What actually fits an embed code block on a PHONE, measured from a wrapped
+# screenshot: a 24-character header survived, a 36-character one wrapped. A
+# wrapped monospace table is worse than no table -- the columns stop lining up
+# and every row breaks in a different place.
+MOBILE_TABLE_WIDTH = 24
+
 # The analytics cutoff, mirrored from `analytics_cutoff()` for the footer.
 CUTOFF_VERSION = "0.8.2"
 
@@ -233,6 +239,17 @@ def links(row: dict) -> str:
     return "\n".join(parts)
 
 
+def _rows(title: str, heads: list, body: list) -> str:
+    """An aligned table with a rule under the header, as plain text."""
+    widths = [max(len(heads[i]), *(len(row[i]) for row in body)) for i in range(len(heads))]
+
+    def line(cells):
+        return "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
+
+    out = [line(heads), "  ".join("-" * w for w in widths)] + [line(row) for row in body]
+    return (f"{title}\n" if title else "") + "\n".join(out)
+
+
 def _grid(heads: list, body: list) -> str:
     """A code-fenced table with a rule under the header."""
     widths = [max(len(heads[i]), *(len(row[i]) for row in body)) for i in range(len(heads))]
@@ -297,31 +314,45 @@ def clearing_table(acts: list, row: dict) -> str:
     if acts is None:
         return "*unavailable — `player_act_view` is not migrated*"
 
-    def cells(r):
+    def rows_for(r, label):
         cleared, clearable = r.get("cleared_turns"), r.get("clearable_turns")
         if not clearable:
             return None
         if not cleared:
-            return ["—", "—", f"0/{clearable}"]
-        return [f"{value('x', r.get('avg_links_before_clear'))}, "
-                f"{_seconds(r.get('avg_seconds_before_clear'))}",
-                f"{value('x', r.get('avg_links_after_clear'))}, "
-                f"{_seconds(r.get('avg_seconds_after_clear'))}",
-                f"{cleared}/{clearable}"]
+            return ([label, "—", "—", f"0/{clearable}"], [label, "—", "—"])
+        return (
+            [label,
+             value("x", r.get("avg_links_before_clear")),
+             value("x", r.get("avg_links_after_clear")),
+             f"{cleared}/{clearable}"],
+            [label,
+             _seconds(r.get("avg_seconds_before_clear")),
+             _seconds(r.get("avg_seconds_after_clear"))],
+        )
 
-    body = []
+    links, times = [], []
     for r in _sorted_acts(acts or []):
-        made = cells(r)
+        made = rows_for(r, str(r.get("act")))
         if made:
-            body.append([str(r.get("act"))] + made)
+            links.append(made[0])
+            times.append(made[1])
 
-    overall = cells(row)
+    overall = rows_for(row, "All")
     if overall:
-        body.append(["All"] + overall)
+        links.append(overall[0])
+        times.append(overall[1])
 
-    if not body:
+    if not links:
         return "*no turn-level data yet*"
-    return _grid(["Act", "Before", "After", "Cleared"], body)
+
+    # TWO narrow tables rather than one wide one. Links, seconds and the clear
+    # ratio in a single row came to 36 characters, which wraps on a phone and
+    # takes the column alignment with it. Split, each fits inside
+    # MOBILE_TABLE_WIDTH and the alignment survives -- which is the only reason
+    # to use a monospace table at all.
+    return (block(_rows("links", ["Act", "Bef", "Aft", "Cleared"], links))
+            + "\n"
+            + block(_rows("seconds", ["Act", "Bef", "Aft"], times)))
 
 
 def clearing(row: dict) -> str:
