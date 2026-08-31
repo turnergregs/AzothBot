@@ -174,6 +174,47 @@ def add_stats_commands(cls):
         await _send_table(interaction, "Versions", records, COLUMNS["version"],
                           cutoff=False, colour=0x9B59B6)
 
+    # --- Turn Scoreboard ---
+    @stats_cmd.subcommand(name="scoreboard", description="End-of-turn bonus thresholds, by act")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch scoreboard stats.")
+    async def stats_scoreboard(self, interaction: Interaction):
+        # No sort: turn_scoreboard_view carries `order by act nulls last, axis`,
+        # and asking PostgREST for `act.asc` would sort the rollup row (act
+        # NULL) to the top. The renderer re-orders anyway; this just avoids
+        # fighting the view.
+        #
+        # Caught the way player_act_view is on /stats player: an unmigrated view
+        # is PGRST205, and "not migrated" is a different answer from "no turns
+        # yet". Naming the file is the whole value of catching it.
+        try:
+            records = fetch_all("turn_scoreboard_view")
+        except SupabaseError:
+            return ("❌ `turn_scoreboard_view` is not migrated — run "
+                    "`db/migrations/2026-08-31_turn_scoreboard.sql`.")
+
+        if not records:
+            return ("❌ No turn scoreboards recorded yet. These columns postdate "
+                    "`0.9.1`, so runs played before that build carry none.")
+
+        embed = nextcord.Embed(title="Turn scoreboard", colour=0xE91E63)
+        embed.add_field(name="Threshold hit rate", inline=False,
+                        value=sf.scoreboard_hits(records))
+        embed.add_field(name="Average count / threshold", inline=False,
+                        value=sf.scoreboard_counts(records))
+        embed.add_field(name="Which axis paid", inline=False,
+                        value=sf.scoreboard_paid(records))
+
+        # cutoff=False: this is the ONE view besides version_info_view that does
+        # not filter on analytics_cutoff(). It filters `bonus_key is not null`
+        # instead — the columns date themselves, and bumping the cutoff for an
+        # additive change would have emptied every other /stats reply. Claiming
+        # a cutoff the view is not enforcing is worse than claiming none.
+        turns = sf.scoreboard_sample(records)
+        embed.set_footer(text=sf.footer(
+            records, note=f"{turns} regular turn{'' if turns == 1 else 's'} scored",
+            cutoff=False))
+        await interaction.followup.send(embed=embed)
+
     # --- Draft Deck Data ---
     @stats_cmd.subcommand(name="draft_pool", description="Draft pool composition data")
     @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft pool data.")
@@ -274,5 +315,6 @@ def add_stats_commands(cls):
     cls.stats_player = stats_player
     cls.stats_hero = stats_hero
     cls.stats_version = stats_version
+    cls.stats_scoreboard = stats_scoreboard
     cls.stats_draft_pool = stats_draft_pool
     cls.stats_draft_rates = stats_draft_rates

@@ -50,12 +50,24 @@ So with an anon key:
 
 …which is indistinguishable from "there is no data yet".
 
-Two distinct causes, both verified 2026-08-26 (see [RLS posture](#rls-posture)):
+Three distinct causes (the first two verified 2026-08-26, see
+[RLS posture](#rls-posture)):
 
 | Cause | Tables |
 |---|---|
 | **INSERT-only policy** — anon may write, never read | `turns`, `turn_nodes`, `levelups`, `reports` |
 | **RLS enabled with no policy at all** — deny-all | `rituals`, `consumables` |
+| **`security_invoker` view, granted to `service_role` only** (2026-08-31) | `turn_clearing_view`, `player_act_view`, `player_info_view`, `turn_scoreboard_view` |
+
+That third row is new, and it is the *fix* for a hole rather than a design
+choice: those views read `turns` with no invoker flag and a `select` grant to
+anon, so they ran as their owner and handed out the rows the INSERT-only policy
+withholds — `turn_clearing_view` at one row per turn. Closing it means anon
+cannot read them either, which is why they are guarded here.
+
+`player_info_view` is the one that would have degraded to a **wrong answer**
+rather than a missing one: `/stats player` replies "No stats found for X" on an
+empty result, which reads as a player who has never played.
 
 The six taxonomy tables that used to fill that second row — `card_attributes`,
 `card_elements`, `card_types`, `deck_types`, `deck_content_types`,
@@ -101,6 +113,7 @@ verbatim with their defects annotated but not fixed.
 | `version_info_view` | 5 | `version`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |
 | `turn_clearing_view` | — | One row per regular turn with patterns to solve: `clear_index`, `links_before/after`, `seconds_before/after`. NULL `clear_index` = never cleared, kept so the denominator survives |
 | `player_act_view` | — | `player`, `act`, `avg_links_regular`, `avg_links_boss`, `regular_turns`, `boss_turns`. Added 2026-08-27 |
+| `turn_scoreboard_view` | — | One row per (`act`, `axis`) plus an `act IS NULL` rollup per axis: `turns_sampled`, `avg_count`, `avg_threshold`, `times_hit`, `hit_rate`, `times_won`, `won_rate`, `avg_life_when_won`. Added 2026-08-31; surfaced by `/stats scoreboard`. **Do not `sum(turns_sampled)`** — each turn appears once per axis plus once in the rollup |
 | `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, `events`, element and valence breakdowns, `combo`. Covers base, non-archived decks with `usage_type in ('draft', 'rite')` — the rite half added 2026-08-27, before which `events` was always 0. Surfaced by `/stats draft_pool` |
 | `draft_rates_view` | 1 | Pre-formatted comma-joined strings of most/least picked items |
 | `decks_with_contents` | — | **Not used by AzothBot.** Deck rows with contents inlined as JSON; consumed by the game / Codex editor |
@@ -128,17 +141,28 @@ problems remain: the **threshold is stale** (`6007` should be `9000`), and
 two-component version string takes these views down. NULL versions are safe;
 NULL propagates and the row is excluded.
 
-### None of them sets `security_invoker`
+### Only the turn-grain views set `security_invoker`
 
-`reloptions` is NULL on all nine, so each runs with its **owner's** privileges and
-**bypasses RLS** on the tables beneath it. Both directions matter:
+`reloptions` is NULL on the rest, so each runs with its **owner's** privileges
+and **bypasses RLS** on the tables beneath it. Both directions matter:
 
 - It is the mechanism for serving aggregates to a restricted role without
-  exposing rows — available today, unused.
+  exposing rows.
 - **A view over `turns`, `turn_nodes`, `levelups` or `reports` silently becomes
   anon-readable**, defeating the INSERT-only policy those tables rely on. Set
   `security_invoker = true` on any new view over them unless that exposure is
   intended.
+
+**Three views were doing exactly that until 2026-08-31**, when the game repo's
+`db/migrations/2026-08-31_turn_view_rls.sql` flipped the flag on
+`turn_clearing_view`, `player_act_view` and `player_info_view` and dropped their
+anon grants. `turn_scoreboard_view` was built with it. Nothing changed for the
+bot, which reads with the service key.
+
+They had to move together: `player_info_view` and `player_act_view` select *from*
+`turn_clearing_view`, and a definer view reading an invoker view resolves the
+inner one against the outer view's owner — so flipping only the inner view leaves
+the exposure open through the outer two while looking fixed.
 
 ---
 

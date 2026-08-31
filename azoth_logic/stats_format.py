@@ -357,6 +357,194 @@ def clearing_table(acts: list, row: dict) -> str:
             + block(_rows("seconds", ["Act", "Bef", "Aft"], times)))
 
 
+# The bonus axes, in the order turn_bonus.gd declares them -- which is also its
+# tie-break order, so two columns read side by side are being compared the way
+# the game compares them. Labels are four characters because three tables share
+# one width and `precision`/`overdraw`/`overload` do not fit a phone.
+SCOREBOARD_AXES = [("precision", "Prec"), ("overdraw", "Draw"), ("overload", "Load")]
+
+
+def _scoreboard_index(rows: list) -> dict:
+    """{act -> {axis -> row}}. The view's rollup row has act NULL, so it keys
+    under None and needs no special case anywhere below."""
+    by_act = {}
+    for row in rows or []:
+        by_act.setdefault(row.get("act"), {})[row.get("axis")] = row
+    return by_act
+
+
+def _scoreboard_acts(by_act: dict) -> list:
+    """Act keys in order, rollup last. `All` belongs at the bottom of the column
+    it summarises, exactly as links_table puts it."""
+    acts = sorted(a for a in by_act if a is not None)
+    return acts + ([None] if None in by_act else [])
+
+
+def scoreboard_sample(rows: list) -> int:
+    """Turns behind the whole table.
+
+    NOT `sum(turns_sampled)`. Every scored turn produces one row PER AXIS and
+    contributes to the rollup as well, so summing the column counts each turn
+    six times over. The rollup row of any single axis is the honest total --
+    all three carry the same number, because every scored turn scores all three.
+    """
+    rollup = _scoreboard_index(rows).get(None) or {}
+    for key, _ in SCOREBOARD_AXES:
+        row = rollup.get(key)
+        if row and row.get("turns_sampled") is not None:
+            return int(row["turns_sampled"])
+    return 0
+
+
+def _scoreboard_grid(rows: list, cell, tail_head: str = None, tail_cell=None):
+    """Acts down the side, bonus axes across the top.
+
+    One shape reused for every scoreboard question, because they ARE one shape --
+    three axes measured identically. Three hand-built tables would drift apart
+    the first time an axis is added or renamed, which is a thing this data is
+    explicitly expected to survive.
+
+    Returns None when there is nothing to draw, so callers can say "no data yet"
+    in their own words rather than rendering an empty frame.
+    """
+    by_act = _scoreboard_index(rows)
+    acts = _scoreboard_acts(by_act)
+    if not acts:
+        return None
+
+    heads = ["Act"] + [label for _, label in SCOREBOARD_AXES]
+    if tail_head:
+        heads.append(tail_head)
+
+    body = []
+    for act in acts:
+        axes = by_act[act]
+        line = ["All" if act is None else str(act)]
+        line += [cell(axes.get(key)) for key, _ in SCOREBOARD_AXES]
+        if tail_head:
+            line.append(tail_cell(axes))
+        body.append(line)
+
+    return _grid(heads, body)
+
+
+def _rate_cell(column: str):
+    def cell(row):
+        if not row or row.get(column) is None:
+            return "—"
+        try:
+            return f"{float(row[column]):.0f}%"
+        except (TypeError, ValueError):
+            return "—"
+    return cell
+
+
+def _count_cell(row) -> str:
+    if not row or row.get("avg_count") is None:
+        return "—"
+    return f"{float(row['avg_count']):g}"
+
+
+def _threshold_caption(rows: list) -> str:
+    """The thresholds those counts were measured against, as one line under the
+    table rather than a `12.4/10` in every cell -- which pushed the table past
+    the width a phone renders without wrapping, for a number that is the same
+    down the whole column.
+
+    Read off the ROLLUP row, and averaged there rather than picked, so a run
+    that actually raised a threshold surfaces as a fractional value instead of
+    hiding behind today's default. Precision is absent on purpose: its threshold
+    is structurally zero.
+    """
+    rollup = _scoreboard_index(rows).get(None) or {}
+    parts = []
+    for key, label in SCOREBOARD_AXES:
+        row = rollup.get(key)
+        if not row or row.get("avg_threshold") is None:
+            continue
+        try:
+            threshold = float(row["avg_threshold"])
+        except (TypeError, ValueError):
+            continue
+        if threshold == 0:
+            continue
+        parts.append(f"{label} {threshold:g}")
+    return "*thresholds — " + " · ".join(parts) + "*" if parts else ""
+
+
+def _act_turns(axes: dict) -> int:
+    """Turns behind one act's row. Identical across the three axes -- every
+    scored turn scores all three -- so it is one number, not three."""
+    for key, _ in SCOREBOARD_AXES:
+        row = axes.get(key)
+        if row and row.get("turns_sampled") is not None:
+            return int(row["turns_sampled"])
+    return 0
+
+
+def _sample_caption(rows: list) -> str:
+    """Turns behind each act, as a line under the table.
+
+    The denominator is not optional -- "62% in act 3" can rest on four turns,
+    and every other table in this module carries its counts for that reason.
+    It sits in a caption rather than a fifth column only because the column put
+    the table one character past what a phone renders without wrapping, and a
+    wrapped monospace table loses its alignment entirely.
+    """
+    by_act = _scoreboard_index(rows)
+    parts = []
+    for act in _scoreboard_acts(by_act):
+        turns = _act_turns(by_act[act])
+        parts.append(f"{'all' if act is None else act}: {turns}")
+    return "*turns — " + " · ".join(parts) + "*" if parts else ""
+
+
+def scoreboard_hits(rows: list) -> str:
+    """How often each axis crossed its threshold, per act.
+
+    The question the view exists for. The turn counts behind each row are in the
+    caption underneath -- see _sample_caption for why they are not a column.
+
+    The hit test is `count > threshold`, not `>=` -- turn_bonus.gd pays
+    `max(0, count - threshold)`, so landing exactly on the number scores nothing.
+    The view applies it; this only renders what it returns.
+    """
+    grid = _scoreboard_grid(rows, _rate_cell("hit_rate"))
+    if not grid:
+        return "*no scoreboard data yet*"
+    caption = _sample_caption(rows)
+    return grid + ("\n" + caption if caption else "")
+
+
+def scoreboard_counts(rows: list) -> str:
+    """What each axis measured, over the threshold in force.
+
+    The tuning number, and the one a hit rate cannot give you: a rate says
+    whether the threshold is being met, this says by how far it is being missed,
+    which is what tells you where to move it.
+
+    The threshold comes off the turn rather than from today's default, because
+    content can raise it mid-run and because the whole point of storing it was
+    that a retune leaves history readable. It sits in a caption under the table;
+    see _threshold_caption.
+    """
+    grid = _scoreboard_grid(rows, _count_cell)
+    if not grid:
+        return "*no scoreboard data yet*"
+    caption = _threshold_caption(rows)
+    return grid + ("\n" + caption if caption else "")
+
+
+def scoreboard_paid(rows: list) -> str:
+    """Which axis actually paid, per act.
+
+    Only the winner pays, never the sum, so a row adds to 100% bar rounding. A
+    high hit rate on an axis that never pays means it is being crowded out by
+    another -- which reads as a healthy axis in the hits table alone.
+    """
+    return _scoreboard_grid(rows, _rate_cell("won_rate")) or "*no scoreboard data yet*"
+
+
 def clearing(row: dict) -> str:
     """Links and seconds either side of clearing the turn's patterns.
 

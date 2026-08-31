@@ -419,6 +419,7 @@ what you would want to force. Full policy:
 | `/stats player` | — | `player`* — a full player card |
 | `/stats hero` | — | — |
 | `/stats version` | — | — |
+| `/stats scoreboard` | — | — |
 | `/stats draft_pool` | — | — |
 | `/stats draft_rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/event) |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
@@ -445,6 +446,27 @@ Three things the formatting fixes rather than decorates:
 
 Big combos are compacted (`652.3K`, `53.3T`), playtime reads as time (`13m`,
 `2.1h`), and an empty value is `—` rather than `None`.
+
+`/stats scoreboard` (2026-08-31) reports the end-of-turn bonus axes — Precision,
+Overdraw, Overload — as three tables of act x axis: how often each crossed its
+threshold, what it averaged against the threshold in force, and which one
+actually paid. Only the winner pays, never the sum, so the "which axis paid"
+row sums to 100%: an axis can clear its threshold constantly and still never pay
+because another crowds it out, which is invisible in the hit rates alone.
+
+It reads `turn_scoreboard_view` and is the **second** command after
+`/stats version` whose footer does not claim the cutoff. The view filters
+`bonus_key is not null` rather than a version — the columns postdate `0.9.1`
+and are NULL on every earlier run, so they date themselves. An unmigrated view
+is named in the reply rather than shown as "no data": "not migrated" and "no
+turns yet" are different problems.
+
+The turn counts sit in a caption under the hit-rate table instead of a fifth
+column, and the thresholds under the counts table, purely for width — both
+tables land at 21 characters, inside the measured wrap point. `sum()` of
+`turns_sampled` is NOT the sample size: every scored turn produces one row per
+axis plus a rollup row, so the column totals six times the real count.
+`stats_format.scoreboard_sample()` reads it off a single rollup row instead.
 
 `/stats draft_pool` was `/stats draft_deck` until 2026-08-27. It still reads
 `draft_deck_view` — the command was renamed, the view was not, so the bot works

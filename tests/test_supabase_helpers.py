@@ -34,6 +34,35 @@ def test_no_policy_tables_are_refused_under_anon(monkeypatch, table):
     assert "no SELECT policy" in str(e.value)
 
 
+@pytest.mark.parametrize("view", sorted(h.SERVICE_ROLE_ONLY_VIEWS))
+def test_turn_grain_views_are_refused_under_anon(monkeypatch, view):
+    """REGRESSION (2026-08-31): these were readable by anon.
+
+    A view over the INSERT-only turn tables WITHOUT `security_invoker` runs as
+    its owner and hands out exactly the rows the policy withholds -- and
+    `turn_clearing_view` is one row per turn. They are invoker-run and
+    service_role-only now, which means an anon key cannot read them either, so
+    they belong in the guard for the same reason the tables do.
+    """
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "anon")
+    with pytest.raises(h.SupabaseUnreadableError) as e:
+        h.fetch_all(view)
+    assert "service_role only" in str(e.value)
+    assert view in str(e.value)
+
+
+def test_the_player_card_view_fails_loudly_rather_than_reading_empty(monkeypatch):
+    """The one that would otherwise become a WRONG ANSWER, not a missing one.
+
+    `/stats player` replies "No stats found for X" on an empty result. Under an
+    anon key that would read as a player who has never played, rather than as a
+    key that cannot see them -- the precise failure this guard exists to stop.
+    """
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "anon")
+    with pytest.raises(h.SupabaseUnreadableError):
+        h.fetch_all("player_info_view")
+
+
 def test_service_role_may_read_everything(monkeypatch, fake_supabase):
     monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
     monkeypatch.setattr(h, "supabase", fake_supabase({"turns": [{"uuid": "t1"}]}))

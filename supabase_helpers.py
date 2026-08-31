@@ -40,6 +40,21 @@ ANON_NO_POLICY = frozenset({
 	"rituals", "consumables",
 })
 
+# Views over the INSERT-only turn-grain tables. They are `security_invoker` and
+# granted to service_role ONLY, so anon cannot read them either -- which is the
+# point: a view without the invoker flag runs as its owner and hands out the very
+# rows the INSERT-only policy withholds. See the game repo's
+# db/migrations/2026-08-31_turn_view_rls.sql.
+#
+# Listed here for the same reason the tables are. `player_info_view` in
+# particular fails ALL the way to a wrong answer: /stats player would reply
+# "No stats found for X" on an anon key, which reads as a player who has never
+# played rather than as a key that cannot see them.
+SERVICE_ROLE_ONLY_VIEWS = frozenset({
+	"turn_clearing_view", "player_act_view", "player_info_view",
+	"turn_scoreboard_view",
+})
+
 # The six taxonomy tables that used to live here -- `card_attributes`,
 # `card_elements`, `card_types`, `deck_types`, `deck_content_types`,
 # `deck_usage_types` -- were DROPPED 2026-08-27. Their vocabularies moved into
@@ -50,7 +65,7 @@ ANON_NO_POLICY = frozenset({
 # and listing it here would report a permissions problem for what is really a
 # gone table.
 
-ANON_UNREADABLE = ANON_INSERT_ONLY | ANON_NO_POLICY
+ANON_UNREADABLE = ANON_INSERT_ONLY | ANON_NO_POLICY | SERVICE_ROLE_ONLY_VIEWS
 
 
 def _assert_readable(table_name: str):
@@ -65,11 +80,13 @@ def _assert_readable(table_name: str):
 	if table_name not in ANON_UNREADABLE:
 		return
 
-	reason = (
-		"it is INSERT-only for anon (the game writes it; nothing reads it back)"
-		if table_name in ANON_INSERT_ONLY
-		else "RLS is enabled on it with no SELECT policy (deny-all)"
-	)
+	if table_name in ANON_INSERT_ONLY:
+		reason = "it is INSERT-only for anon (the game writes it; nothing reads it back)"
+	elif table_name in SERVICE_ROLE_ONLY_VIEWS:
+		reason = ("it is a security_invoker view over the INSERT-only turn tables, "
+		          "granted to service_role only")
+	else:
+		reason = "RLS is enabled on it with no SELECT policy (deny-all)"
 	raise SupabaseUnreadableError(
 		f"Cannot read `{table_name}` with a `{SUPABASE_ROLE}` key: {reason}. "
 		f"PostgREST would return an empty result with HTTP 200, which looks "

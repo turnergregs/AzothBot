@@ -436,3 +436,122 @@ def test_no_clearable_turns_says_so():
                                                (185.0, "3m 05s"), (None, "—")])
 def test_durations_read_as_time(seconds, expected):
     assert sf._seconds(seconds) == expected
+
+
+# ---------------------------------------------------------------------------
+# Turn scoreboard
+# ---------------------------------------------------------------------------
+# `turn_scoreboard_view` returns one row per (act, axis) plus an `act IS NULL`
+# rollup row per axis. See db/migrations/2026-08-31_turn_scoreboard.sql.
+
+
+def _sb(act, axis, turns, count, threshold, hit_rate, won_rate):
+    return {"act": act, "axis": axis, "turns_sampled": turns,
+            "avg_count": count, "avg_threshold": threshold,
+            "hit_rate": hit_rate, "won_rate": won_rate}
+
+
+SCOREBOARD = [
+    _sb(1, "precision", 22, 1.8, 0, 61.5, 54.2),
+    _sb(1, "overdraw", 22, 12.4, 10, 38.1, 31.0),
+    _sb(1, "overload", 22, 9.1, 18, 4.5, 14.8),
+    _sb(3, "precision", 9, 0.6, 0, 22.2, 18.0),
+    _sb(3, "overdraw", 9, 15.0, 10, 66.7, 55.0),
+    _sb(3, "overload", 9, 20.2, 18, 55.6, 27.0),
+    _sb(None, "precision", 31, 1.4, 0, 51.6, 43.0),
+    _sb(None, "overdraw", 31, 13.2, 10, 46.1, 38.0),
+    _sb(None, "overload", 31, 12.3, 18, 19.4, 19.0),
+]
+
+
+def test_the_scoreboard_shows_every_axis_per_act():
+    """The question the view exists for: is a threshold met more in act 3 than
+    act 1. Both acts and all three axes have to be on one table to see it."""
+    out = sf.scoreboard_hits(SCOREBOARD)
+    assert "Prec" in out and "Draw" in out and "Load" in out
+    assert "62%" in out and "67%" in out
+
+
+def test_the_scoreboard_rollup_row_is_labelled_all_and_comes_last():
+    """`act IS NULL` is the view's GROUPING SETS rollup, not a missing act. It
+    belongs at the bottom of the column it summarises, as links_table does."""
+    lines = [l for l in sf.scoreboard_hits(SCOREBOARD).splitlines() if l.strip()]
+    table = [l for l in lines if not l.startswith("`") and not l.startswith("*")]
+    assert table[-1].startswith("All")
+    assert "52%" in table[-1]
+
+
+def test_the_scoreboard_overall_is_not_a_mean_of_the_act_rows():
+    """Acts have different turn counts, so averaging their rates would be a mean
+    of means. The rollup comes from the view; 51.6 is not the mean of 61.5 and
+    22.2 (41.9), which is what a client-side average would have produced."""
+    assert "52%" in sf.scoreboard_hits(SCOREBOARD)
+    assert "42%" not in sf.scoreboard_hits(SCOREBOARD)
+
+
+def test_the_scoreboard_carries_its_denominator():
+    """"62% in act 3" can rest on four turns. Every other table in this module
+    carries its counts; this one does it in the caption, for width."""
+    out = sf.scoreboard_hits(SCOREBOARD)
+    assert "1: 22" in out and "3: 9" in out and "all: 31" in out
+
+
+def test_the_scoreboard_sample_is_not_a_sum_of_the_column():
+    """Every scored turn produces one row PER AXIS and one more in the rollup,
+    so summing `turns_sampled` counts each turn six times. 31, not 186."""
+    assert sf.scoreboard_sample(SCOREBOARD) == 31
+
+
+def test_the_scoreboard_sample_is_zero_without_a_rollup_row():
+    assert sf.scoreboard_sample([_sb(1, "precision", 5, 1.0, 0, 20.0, 20.0)]) == 0
+
+
+def test_the_thresholds_are_shown_as_measured_not_as_defaults():
+    """Content can raise a threshold mid-run, which is why the column is stored
+    per turn at all. A raised one has to be visible or the counts above it
+    cannot be read."""
+    raised = [dict(r) for r in SCOREBOARD]
+    for row in raised:
+        if row["axis"] == "overdraw":
+            row["avg_threshold"] = 13.5
+    assert "Draw 13.5" in sf.scoreboard_counts(raised)
+
+
+def test_precision_has_no_threshold_in_the_caption():
+    """Its threshold is structurally zero — any unspent node pays — so listing
+    it reads as a real number the player could miss."""
+    caption = sf.scoreboard_counts(SCOREBOARD).splitlines()[-1]
+    assert "Prec" not in caption
+    assert "Draw 10" in caption and "Load 18" in caption
+
+
+def test_the_paid_shares_are_separate_from_the_hit_rates():
+    """An axis can clear its threshold constantly and never pay, because only
+    the winner pays. That reads as a healthy axis in the hits table alone."""
+    hits = sf.scoreboard_hits(SCOREBOARD)
+    paid = sf.scoreboard_paid(SCOREBOARD)
+    assert "56%" in hits          # overload hit rate, act 3
+    assert "27%" in paid          # ...but it only paid on 27%
+
+
+def test_a_missing_axis_row_is_a_dash_not_a_zero():
+    """A zero would say the axis never scored; the truth is it was not returned."""
+    out = sf.scoreboard_hits([_sb(1, "precision", 5, 1.0, 0, 20.0, 20.0)])
+    assert "—" in out
+
+
+@pytest.mark.parametrize("render",
+                         ["scoreboard_hits", "scoreboard_counts", "scoreboard_paid"])
+def test_no_scoreboard_data_says_so(render):
+    assert getattr(sf, render)([]) == "*no scoreboard data yet*"
+
+
+@pytest.mark.parametrize("render",
+                         ["scoreboard_hits", "scoreboard_counts", "scoreboard_paid"])
+def test_the_scoreboard_tables_fit_a_phone(render):
+    """Same measurement as test_the_player_tables_fit_a_phone. Only the fenced
+    table has to fit — the captions are prose and wrap harmlessly."""
+    out = getattr(sf, render)(SCOREBOARD)
+    table = out.split("```")[1]
+    widest = max(len(l) for l in table.splitlines() if l.strip())
+    assert widest <= sf.MOBILE_TABLE_WIDTH, f"{widest} chars wraps on a phone"
