@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 620 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 687 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -13,34 +13,35 @@ Added 2026-08-26. Before that there was no suite at all.
 
 | File | Tests | Covers |
 |---|---|---|
-| `tests/test_card_render.py` | 63 | The card face: geometry from `card.tscn`, symbol tokens, wrapping, split borders, the measured constants |
-| `tests/test_fate_render.py` | 56 | Aspects and rites: backgrounds, mask recolouring, the reversed aspect palette, the rite/event naming boundary |
-| `tests/test_supabase_helpers.py` | 45 | The access layer: the RLS pre-flight guard, raise-don't-swallow, query construction, deck item refs |
-| `tests/test_daily_update.py` | 40 | The daily report: turn-grain aggregation, send/claim ordering, state file, scheduling, embed limits |
+| `tests/test_card_render.py` | 74 | The card face: geometry from `card.tscn`, symbol tokens, wrapping, split borders, the measured constants |
+| `tests/test_fate_render.py` | 58 | Aspects and rites: backgrounds, mask recolouring, the reversed aspect palette, the rite/event naming boundary |
+| `tests/test_supabase_helpers.py` | 46 | The access layer: the RLS pre-flight guard, raise-don't-swallow, query construction, deck item refs |
+| `tests/test_daily_update.py` | 45 | The daily report: turn-grain aggregation, send/claim ordering, state file, scheduling, embed limits, and the due-channel sweep surviving a failure |
 | `tests/test_helpers.py` | 35 | Key-role detection, autocomplete degradation, filename slugging, embed packing, missing-asset guidance |
 | `tests/test_search.py` | 30 | `/search` filters, the deep `actions`/`triggers`/`properties` scan, sort orders |
-| `tests/test_bulk_report.py` | 24 | Bulk diffs: changed-fields-only, jsonb shape not contents, announced truncation |
-| `tests/test_command_registration.py` | 22 | **What the cog actually exposes**, and that no name in it is undefined at runtime |
-| `tests/test_art_cache.py` | 21 | Both caches: content-hash render keys, art TTL, invalidation after a re-upload |
+| `tests/test_bulk_report.py` | 45 | Bulk diffs: changed-fields-only, jsonb shape not contents, announced truncation |
+| `tests/test_command_registration.py` | 35 | **What the cog actually exposes**, and that no name in it is undefined at runtime |
+| `tests/test_art_cache.py` | 32 | Both caches: content-hash render keys, art TTL, invalidation after a re-upload |
 | `tests/test_content_get.py` | 31 | The `/show` embed: which fields show, which are deliberately omitted — plus `/rules`, which carries exactly the four `jsonb` fields `/show` drops |
-| `tests/test_stats_format.py` | 27 | `/stats` rendering: `avg_combo_log10` as an order of magnitude, compacted combos, and a footer that never omits the denominator |
+| `tests/test_stats_format.py` | 79 | `/stats` rendering: `avg_combo_log10` as an order of magnitude, compacted combos, and a footer that never omits the denominator |
 | `tests/test_holo.py` | 18 | The holographic sheen: constants taken from the MATERIAL not the shader defaults, `_metallicness` extrapolating past 1, white tinting (the catalyst bug) while staying weaker than saturated colour |
-| `tests/test_upgrades.py` | 32 | The engine's upgrade rules, transcribed: tier selection and gaps, `_added` append semantics, replace-before-add ordering, and cards that upgrade into aspects |
+| `tests/test_upgrades.py` | 33 | The engine's upgrade rules, transcribed: tier selection and gaps, `_added` append semantics, replace-before-add ordering, and cards that upgrade into aspects |
 | `tests/test_taxonomy.py` | 26 | The vocabularies that were six tables: canonical lists match the game, in-use values are unioned in, a failed read never loses the hardcoded list |
 | `tests/test_bulk_apply.py` | 21 | The client half of the transactional bulk write: payload passed through unmangled, malformed input refused without a round trip, database errors made readable |
 | `tests/test_content_index.py` | 31 | The autocomplete index: TTL, explicit invalidation, ref encoding, match ranking — and **liveness**: retired content hidden, `/add_to_deck` still seeing it, a live name beating a retired one, and the empty-live-set fallback that stops a failed deck read from hiding all 626 rows |
-| `tests/test_deck_render.py` | 33 | Grid and hand layout, art deduplication, per-kind bucket routing — plus the upgrade comparison: gif-vs-png selection, a still side holding while the other animates, and cache keys that cover both faces |
+| `tests/test_deck_render.py` | 38 | Grid and hand layout, art deduplication, per-kind bucket routing — plus the upgrade comparison: gif-vs-png selection, a still side holding while the other animates, and cache keys that cover both faces |
 | `tests/test_sync_assets.py` | 8 | The vendored-asset sync, and the shader-exported backgrounds it deliberately cannot sync |
 
 ## What these tests are for
 
 Most are **regression tests for specific production bugs**, each named at its
-site with the date and the failure. Two came from real incidents:
+site with the date and the failure. Three came from real incidents:
 
 | Incident | Pinned by |
 |---|---|
 | **2026-06-30** — `unsupported operand type(s) for +: 'int' and 'str'` when enabling the daily update. `level_reached` (bigint) + `highest_combo` (**text**) | `test_draft_stats_survives_a_text_combo_end_to_end` |
 | **2026-06-19** — ~30 duplicate messages. The day was claimed only *after* a successful send, so a send that failed partway left nothing claimed and the 10-minute loop retried forever | `test_failed_send_does_not_re_fire` |
+| **2026-09-01** — the daily report stopped silently and permanently. An exception out of `_claim_and_send` reached `tasks.Loop`, which prints and **re-raises** anything outside its five connection-ish types, ending the loop for the life of the process | `test_a_failing_channel_does_not_kill_the_sweep`, `test_the_sweep_retries_on_the_next_cycle_after_a_failure` |
 
 The rest guard invariants that are easy to break while producing plausible
 numbers — zero-node turns staying in the denominator, skips not counting as
@@ -65,6 +66,22 @@ soft_delete returns None again            CAUGHT
 retired types parse as deck refs          CAUGHT
 limit no longer pushed to server          CAUGHT
 ```
+
+The 2026-09-01 round, on the daily-report loop:
+
+```
+per-channel guard removed (the original bug)  CAUGHT
+per-cycle guard removed                       CAUGHT
+malformed state entry surfaces as a traceback CAUGHT
+```
+
+The third needed the test rewritten to catch it. As first written it asserted
+only that the good channel still went out — which the per-channel guard already
+delivers, so removing the `isinstance` check left it green. What that check
+actually buys is a *message* saying the config is malformed instead of an
+`AttributeError` traceback, and the test had to assert that to mean anything.
+**A guard that no mutant can kill is either redundant or mis-tested; find out
+which before keeping the test.**
 
 The 2026-08-27 round, covering the render overhaul's own defects:
 

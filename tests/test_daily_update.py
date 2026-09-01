@@ -388,3 +388,140 @@ def test_oversized_field_values_are_truncated():
 def test_quiet_day_produces_one_embed():
     embeds = du._build_update_embeds({"total_games": 0})
     assert len(embeds) == 1 and "No games" in embeds[0].description
+
+
+# ---------------------------------------------------------------------------
+# _send_due_channels  --  the silent-stop bug
+# ---------------------------------------------------------------------------
+
+def _due(**overrides):
+    """A channel config whose send time has already passed today."""
+    cfg = {"send_hour_utc": 0, "send_minute_utc": 0}
+    cfg.update(overrides)
+    return cfg
+
+
+def test_a_failing_channel_does_not_kill_the_sweep(monkeypatch, tmp_path):
+    """REGRESSION (2026-09-01): the daily report stopped without a word.
+
+    `_claim_and_send` raises on a build error deliberately, so the day stays
+    unclaimed and retryable -- see test_report_error_does_not_consume_the_day.
+    But the raise reached nextcord's tasks.Loop, whose `_valid_exception` tuple
+    covers only OSError/GatewayNotFound/ConnectionClosed/ClientError/TimeoutError.
+    A RuntimeError was printed to stderr and RE-RAISED, ending the loop for the
+    life of the process: the retry the unclaimed day was waiting for no longer
+    existed, so every later report was lost too.
+
+    The sweep must absorb it and keep going.
+    """
+    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
+
+    calls = []
+
+    async def claim(bot, state, channel_id, config, today):
+        calls.append(channel_id)
+        if channel_id == "bad":
+            raise RuntimeError("PostgREST 500")
+        return True
+
+    monkeypatch.setattr(du, "_claim_and_send", claim)
+    du._save_state({"channels": {"bad": _due(), "good": _due()}})
+
+    asyncio.run(du._send_due_channels(_Bot(object()), "loop"))   # must not raise
+
+    assert calls == ["bad", "good"], "the failing channel must not skip the next one"
+    assert "last_sent_date" not in du._load_state()["channels"]["bad"], \
+        "a raised error still leaves the day unclaimed and retryable"
+
+
+def test_the_sweep_retries_on_the_next_cycle_after_a_failure(monkeypatch, tmp_path):
+    """The point of surviving: the very next cycle gets another go.
+
+    Under the old code cycle 2 never ran at all, because cycle 1 took the loop
+    down with it.
+    """
+    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
+
+    attempts = []
+
+    async def claim(bot, state, channel_id, config, today):
+        attempts.append(today)
+        if len(attempts) == 1:
+            raise RuntimeError("transient")
+        config["last_sent_date"] = today
+        state["channels"][channel_id] = config
+        du._save_state(state)
+        return True
+
+    monkeypatch.setattr(du, "_claim_and_send", claim)
+    du._save_state({"channels": {"1": _due()}})
+
+    for _ in range(3):
+        asyncio.run(du._send_due_channels(_Bot(object()), "loop"))
+
+    assert len(attempts) == 2, "failed, retried, then stopped once the day was claimed"
+    assert du._load_state()["channels"]["1"]["last_sent_date"] == "2026-09-01"
+
+
+def test_a_malformed_state_entry_reads_as_config_not_as_a_crash(monkeypatch, tmp_path, capsys):
+    """A non-dict channel entry is an AttributeError on config.get().
+
+    The per-channel guard already keeps it from being fatal, so this pins the
+    other half: it must be reported as the bad *config* it is, not as a stack
+    trace, or whoever reads that console goes looking for a bug in the bot.
+    """
+    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
+
+    sent = []
+
+    async def claim(bot, state, channel_id, config, today):
+        sent.append(channel_id)
+        return True
+
+    monkeypatch.setattr(du, "_claim_and_send", claim)
+    du._save_state({"channels": {"junk": "not a dict", "ok": _due()}})
+
+    asyncio.run(du._send_due_channels(_Bot(object()), "loop"))
+
+    assert sent == ["ok"], "the good channel still goes out"
+    out = capsys.readouterr()
+    assert "malformed state entry" in out.out
+    assert "AttributeError" not in out.out + out.err, \
+        "a config problem must not surface as a traceback"
+
+
+def test_an_unreadable_state_file_does_not_kill_the_sweep(monkeypatch, tmp_path):
+    """_load_state survives corrupt JSON, but a top-level list is valid JSON and
+    made setdefault() raise. Nothing above the per-channel loop may escape either."""
+    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
+    (tmp_path / "state.json").write_text("[1, 2, 3]")
+
+    asyncio.run(du._send_due_channels(_Bot(object()), "startup"))   # must not raise
+
+
+def test_the_sweep_still_honours_every_skip_rule(monkeypatch, tmp_path):
+    """Disabled, already-sent and not-yet-due channels stay skipped -- the
+    dedup rules survived being moved into the shared sweep."""
+    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
+
+    sent = []
+
+    async def claim(bot, state, channel_id, config, today):
+        sent.append(channel_id)
+        return True
+
+    monkeypatch.setattr(du, "_claim_and_send", claim)
+    du._save_state({"channels": {
+        "off":       _due(disabled=True),
+        "sent":      _due(last_sent_date="2026-09-01"),
+        "not_yet":   {"send_hour_utc": 23, "send_minute_utc": 59},
+        "due":       _due(),
+    }})
+
+    asyncio.run(du._send_due_channels(_Bot(object()), "loop"))
+
+    assert sent == ["due"]

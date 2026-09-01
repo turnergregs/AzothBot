@@ -255,8 +255,11 @@ real `turns` data. There is no CI. See `docs/TESTING.md` § Gaps.
 - **Don't quote a `/stats` number as fact.** The views behind them pool every game
   version, average a BigNum in linear space, and include developer testing. See
   `docs/ANALYTICS.md`.
-- **Don't undo the daily-update safeguards** — the claim-before-send ordering and
-  the atomic state write each fix a real bug, and both are commented at the site.
+- **Don't undo the daily-update safeguards** — the claim-before-send ordering,
+  the atomic state write, and the catch-everything sweep in `_send_due_channels`
+  each fix a real bug, and all are commented at the site. The sweep looks like
+  swallowing and is not: an exception reaching `tasks.Loop` stops the daily
+  report until the process is restarted.
 - **Don't reformat whole files** to normalise tabs vs spaces; it destroys history
   for no benefit.
 - **Don't change the schema from here.** The game writes this data; schema changes

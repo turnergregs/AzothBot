@@ -167,8 +167,11 @@ See `docs/CONTENT_PIPELINE.md`.
 - Don't quote a `/stats` number as fact — see `docs/ANALYTICS.md` for why
 - Don't write content into the game repo's `assets/game_data/` — hand over a
   bulk_insert JSON instead
-- Don't undo the daily-update safeguards — claim-before-send and the atomic state
-  write each fix a real bug, both commented at the site
+- Don't undo the daily-update safeguards — claim-before-send, the atomic state
+  write, and the catch-everything sweep in `_send_due_channels` each fix a real
+  bug, all commented at the site. The sweep looks like swallowing and is not: an
+  exception reaching `tasks.Loop` stops the daily report until the process is
+  restarted
 - Don't reformat whole files over tabs vs spaces; indentation is inconsistent by
   file and history matters more
 - Don't change the schema from here — it originates in the game repo's

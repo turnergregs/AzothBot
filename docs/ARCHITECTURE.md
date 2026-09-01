@@ -269,6 +269,16 @@ def new_init(self, bot):
 cls.__init__ = new_init
 ```
 
+Both call the same `_send_due_channels(bot, source)` sweep, which decides per
+channel whether a report is due and sends it.
+
+⚠️ **That sweep must never let an exception escape.** `tasks.Loop` tolerates only
+five connection-ish exception types; anything else it prints and **re-raises**,
+which ends the loop for the life of the process. Since the bot is hand-started
+and rarely restarted, one unhandled error stopped the daily report indefinitely
+— see [ANALYTICS.md](ANALYTICS.md#three-bugs-all-fixed). The sweep therefore
+catches per channel and per cycle, which is deliberate rather than sloppy.
+
 State lives in `daily_update_state.json` at the repo root (gitignored), written
 atomically via `mkstemp` + `os.replace`. See [ANALYTICS.md](ANALYTICS.md#the-daily-report)
 for the scheduling and deduplication rules — several of the comments there record

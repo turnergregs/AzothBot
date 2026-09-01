@@ -337,9 +337,9 @@ State lives in `daily_update_state.json` at the repo root (gitignored):
 }}}
 ```
 
-### Two deliberate design decisions
+### Three deliberate design decisions
 
-Both fix real bugs. Don't undo them without understanding why they're there.
+All three fix real bugs. Don't undo them without understanding why they're there.
 
 **The day is claimed *before* the send.** `_claim_and_send` writes
 `last_sent_date` and persists it, then sends. A failed or partial send therefore
@@ -350,6 +350,13 @@ message flood. For a single-instance bot, skipping beats spamming.
 `os.replace`. A crash mid-write would otherwise truncate the file, which
 `_load_state` silently reads back as "no channels registered", losing every
 channel's config.
+
+**Nothing propagates out of `_send_due_channels`.** The sweep both the loop and
+the startup pass run catches everything, per channel and per cycle. That looks
+like the swallowing this codebase otherwise avoids, and it is the opposite: an
+exception reaching `tasks.Loop` **stops the loop for the life of the process**,
+so absorbing it here is what keeps the schedule alive. See the third bug
+below.
 
 ### What the report contains
 
@@ -391,7 +398,7 @@ there — an abandoned run's completed turns are perfectly good data.
 Embeds split automatically at 5,800 characters (Discord's limit is 6,000) and
 field values truncate at 1,024.
 
-### Two bugs, both fixed
+### Three bugs, all fixed
 
 **June 30 — `unsupported operand type(s) for +: 'int' and 'str'`.** The draft
 score was `level_reached + highest_combo`. `level_reached` is `bigint` → `int`;
@@ -406,6 +413,30 @@ then five skips. The old logic gave 6 and climbing.
 
 The trade-off is deliberate: a genuinely failed send means that day is **skipped,
 not retried**. For a single-instance bot, skipping beats spamming.
+
+**2026-09-01 — the report stopped, silently and permanently.** `_claim_and_send`
+raises on a data or build error *on purpose*: raising is what leaves the day
+unclaimed and therefore retryable, and a test pins it
+(`test_report_error_does_not_consume_the_day`).
+
+But the raise went straight into nextcord's `tasks.Loop`, whose
+`_valid_exception` tuple covers only `OSError`, `GatewayNotFound`,
+`ConnectionClosed`, `aiohttp.ClientError` and `asyncio.TimeoutError`. Anything
+else is printed to stderr and **re-raised**, ending the loop. No
+`@daily_update_task.error` handler was registered, so nothing restarted it.
+
+So the failure was not "one report is late". The day stayed correctly unclaimed
+while the mechanism that would have retried it no longer existed — every
+subsequent report was lost too, with no Discord-visible symptom and only a
+traceback on a console nobody watches. The catch-up pass could not help either:
+it runs at startup, and the process never restarted.
+
+The loop body is now `_send_due_channels`, which catches per channel (one bad
+channel cannot take the others with it) and per cycle. A restart-on-error
+handler was considered and rejected: `Loop.restart()` from inside the error
+handler cancels the task from within itself, and a failure that recurs every
+iteration turns into a hot restart loop. Making the body total is simpler and
+has no such edge.
 
 ### Fixed 2026-08-26
 

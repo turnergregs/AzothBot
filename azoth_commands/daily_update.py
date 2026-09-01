@@ -2,6 +2,7 @@ import json
 import math
 import os
 import tempfile
+import traceback
 import nextcord
 from datetime import datetime, time, timedelta, timezone
 from nextcord import Interaction, SlashOption
@@ -715,6 +716,79 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
 
 
 # ---------------------------------------------------------------------------
+# The due-channel sweep
+# ---------------------------------------------------------------------------
+
+async def _send_due_channels(bot, source: str) -> None:
+    """Send the report to every channel whose send time has passed today.
+
+    Shared by the 10-minute loop and the startup catch-up pass, which were
+    near-identical copies of this decision.
+
+    ⚠️ NOTHING may propagate out of here, and that is load-bearing.
+
+    `_claim_and_send` raises on a data or build error ON PURPOSE -- raising is
+    what leaves the day unclaimed and therefore retryable next cycle
+    (test_report_error_does_not_consume_the_day). But nextcord's `tasks.Loop`
+    only tolerates the five connection-ish types in its `_valid_exception`
+    tuple; anything else is printed to stderr and **re-raised**, which ends the
+    loop for the life of the process. So an escaping error did not postpone one
+    report -- it silently stopped every future one, because the retry the
+    unclaimed day was waiting for no longer existed.
+
+    Caught per channel as well as per cycle, so one unreachable or misconfigured
+    channel cannot take the others down with it.
+
+    `asyncio.CancelledError` derives from BaseException, so shutdown still
+    cancels this cleanly.
+    """
+    try:
+        state = _load_state()
+        channels = state.get("channels") or {}
+        if not channels:
+            return
+
+        today = _today_cst_str()
+
+        for channel_id, config in list(channels.items()):
+            try:
+                # A hand-edited or partially-written state file can hold
+                # something that is not a dict; .get() on it would be an
+                # AttributeError that used to kill the loop.
+                if not isinstance(config, dict):
+                    print(f"Daily update [{source}]: channel {channel_id} has a "
+                          f"malformed state entry ({type(config).__name__}); skipping")
+                    continue
+
+                # Skip disabled channels
+                if config.get("disabled"):
+                    continue
+
+                # Skip if already sent today
+                if config.get("last_sent_date") == today:
+                    continue
+
+                # Skip if not past this channel's send time
+                hour_utc = config.get("send_hour_utc", 18)
+                minute_utc = config.get("send_minute_utc", 0)
+                if not _is_past_send_time_utc(hour_utc, minute_utc):
+                    continue
+
+                # Claims today (persisted) before sending, so a failed/partial
+                # send can never re-fire on the next cycle.
+                await _claim_and_send(bot, state, channel_id, config, today)
+            except Exception as e:
+                traceback.print_exc()
+                print(f"Daily update [{source}]: channel {channel_id} failed with "
+                      f"{type(e).__name__}: {e}. The day was NOT claimed; the next "
+                      f"cycle will retry it.")
+    except Exception as e:
+        traceback.print_exc()
+        print(f"Daily update [{source}]: cycle aborted with {type(e).__name__}: {e}. "
+              f"The schedule is intact; the next cycle will retry.")
+
+
+# ---------------------------------------------------------------------------
 # Commands and background task
 # ---------------------------------------------------------------------------
 
@@ -779,57 +853,19 @@ def add_daily_update_commands(cls):
             _save_state(state)
             return "Daily updates **disabled** for this channel."
 
-    # Background task — runs every 10 minutes to check all registered channels
+    # Background task — runs every 10 minutes to check all registered channels.
+    #
+    # The body is _send_due_channels, which swallows everything: an exception
+    # reaching tasks.Loop does not skip one report, it stops the loop for the
+    # life of the process. See the warning there.
     @tasks.loop(minutes=10)
     async def daily_update_task(self):
-        state = _load_state()
-        if not state["channels"]:
-            return
-
-        today = _today_cst_str()
-
-        for channel_id, config in list(state["channels"].items()):
-            # Skip disabled channels
-            if config.get("disabled"):
-                continue
-
-            # Skip if already sent today
-            if config.get("last_sent_date") == today:
-                continue
-
-            # Skip if not past this channel's send time
-            hour_utc = config.get("send_hour_utc", 18)
-            minute_utc = config.get("send_minute_utc", 0)
-            if not _is_past_send_time_utc(hour_utc, minute_utc):
-                continue
-
-            # Claims today (persisted) before sending, so a failed/partial send
-            # can never re-fire on the next cycle.
-            await _claim_and_send(self.bot, state, channel_id, config, today)
+        await _send_due_channels(self.bot, "loop")
 
     # Startup check for missed updates across all channels
     async def _check_missed_updates(self):
         await self.bot.wait_until_ready()
-        state = _load_state()
-        if not state["channels"]:
-            return
-
-        today = _today_cst_str()
-
-        for channel_id, config in list(state["channels"].items()):
-            if config.get("disabled"):
-                continue
-
-            if config.get("last_sent_date") == today:
-                continue
-
-            hour_utc = config.get("send_hour_utc", 18)
-            minute_utc = config.get("send_minute_utc", 0)
-            if not _is_past_send_time_utc(hour_utc, minute_utc):
-                continue
-
-            # Claims today (persisted) before sending; see _claim_and_send.
-            await _claim_and_send(self.bot, state, channel_id, config, today)
+        await _send_due_channels(self.bot, "startup")
 
     # Override cog init to start the task
     original_init = cls.__init__
