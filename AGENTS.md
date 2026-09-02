@@ -77,6 +77,7 @@ azoth_logic/
   card_layout.py              Geometry and type styling, from card.tscn
   fate_layout.py              The same, for aspect_card.tscn / event_card.tscn
   rich_text.py                Symbol tokens, wrapping, centred layout
+  placeholders.py             {...} display placeholders, resolved flat
   eigenfunction_art.py        .exr art -- port of split_card_image.gdshader
   card_render.py              Composites a card face; PNG and GIF
   fate_render.py              Composites aspect and rite faces
@@ -203,7 +204,7 @@ ones that bite most often:
 
 ## Testing
 
-**pytest, 620 tests, all offline.** See `docs/TESTING.md`.
+**pytest, 712 tests, all offline.** See `docs/TESTING.md`.
 
 ```bash
 .venv/bin/python -m pytest

@@ -25,6 +25,60 @@ border, art, valence, name, subtype and rules text with inline symbols.
 | Split-side dimming | `SPLIT_INACTIVE_DIM` fades the side you are not hovering — in-game state with no meaning in a snapshot |
 
 
+## Display placeholders
+
+Content text is authored with `{...}` tokens that resolve against a live run —
+Gambit is stored as `"{luck_chance.50} Draw 3, {luck_chance_down.50} Discard 1"`,
+Recollection as `"Create last used Rite ({last_rite})"`. Until 2026-09-02 the bot
+drew those braces verbatim, which is what a card looks like in no run at all
+rather than what a card looks like.
+
+There is no run here, so they resolve the way the game's own **out-of-run**
+surfaces resolve them — the Codex and Run History, both of which pass
+`luck_display_flat`:
+
+| Token | Renders | Live rows |
+|---|---|---|
+| `{luck_chance.N}` | `N%` — the authored base, no Luck, no colour | Gambit, Invoke, Flux, Imprint, Reverberation, Duality, Echo |
+| `{luck_chance_down.N}` | `(100-N)%` — the other branch of a two-option Split | Gambit, Invoke |
+| `{last_rite}` | `None` — nothing has been spent | Recollection |
+| anything else | **left verbatim** | Twinning's `{2}` |
+
+`azoth_logic/placeholders.py` is the port, of
+`PlaceholderHelper._get_placeholder_value` and `LuckHelper.format_flat_chance`.
+
+**Flat, not luck-adjusted, and that is the whole point.** In game the number
+moves with the player's Luck and the digits turn green: Gambit reads *75% Draw 3,
+25% Discard 1* at luck 1. A rendered card belongs to no run, so there is no Luck
+to apply — the same reason Run History renders its tiles flat rather than
+tinting a finished run against the current one's Luck. `format_chance_display`,
+the luck-aware half, is deliberately **not** ported: it has nothing to read.
+
+> **An unresolved token stays visible, and that is the game's behaviour.**
+> `PlaceholderHelper._replace_placeholders` skips a token whose value comes back
+> null, so the raw `{token}` reaches the player. `{hand.size}` has no honest
+> answer on a card that is not in a hand, and inventing one would state something
+> false; a malformed `{luck_chance.abc}` is obvious as itself and invisible as a
+> silent `0%`. Both keep the braces.
+
+**Rounding goes half away from zero**, because Godot's `round()` does.
+`{luck_chance.2.5}` is 3%; Python's built-in `round()` is banker's rounding and
+would print 2%. The `<1%` / `>99%` guards come across too — a rounded `0%` would
+call a real chance impossible — even though no live row can currently reach
+either, since a flat base is whatever was authored.
+
+**Resolution happens in `rich_text.tokenize`, and only there.** Every string any
+renderer draws reaches PIL through that one function, so a new surface cannot
+forget it; the game funnels its own two surfaces through `CardTextComposer` for
+the same reason. `/show` is the exception, because it prints the text into an
+embed instead of drawing it, and calls `placeholders.resolve` itself. `/search`
+and the bulk-diff reports keep the **raw** text — matching the game's rule that
+non-rendering callers want the authored string, so `{luck_chance` stays findable.
+
+Placeholders resolve **before** symbol tokens, matching the game's order: a
+placeholder can sit inside a symbol (`[{levelup.level}life]`). Nothing live does
+that here — levelups are not rendered — so it is insurance, not a fix.
+
 ## Holographic sheen
 
 **Every card wears it**, not just upgraded ones. `card.tscn`, `aspect_card.tscn`
@@ -148,6 +202,7 @@ renders as a silent gap, so `Upgraded -> Aspect` came out as `Upgraded   Aspect`
 |---|---|
 | `azoth_logic/card_layout.py` | Geometry and type styling, transcribed from `card.tscn` |
 | `azoth_logic/rich_text.py` | Symbol tokens, wrapping, centred layout |
+| `azoth_logic/placeholders.py` | `{...}` display placeholders — see [Display placeholders](#display-placeholders) |
 | `azoth_logic/eigenfunction_art.py` | `.exr` art — the port of `split_card_image.gdshader` |
 | `azoth_logic/card_render.py` | Composites the face; PNG and GIF output |
 | `tools/sync_assets.py` | Refreshes vendored art from a local azoth checkout |

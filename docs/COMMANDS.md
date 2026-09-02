@@ -85,6 +85,13 @@ It used to dump the raw database row as JSON. Deliberately **not** shown now:
 | `actions` / `triggers` / `properties` | `jsonb`, and past Discord's 2000-char limit on their own |
 | `attunement` (aspects) | Every live aspect is 1 — it distinguishes nothing (dropped 2026-08-28) |
 
+Its rules text carries the same `{...}` placeholder substitution the rendered
+face does — Recollection reads *Create last used Rite (None)*, not
+`({last_rite})`. `/show` is the one surface that does not draw its text, so it
+resolves them itself; see
+[CARD_RENDERING.md § Display placeholders](CARD_RENDERING.md#display-placeholders).
+`/search` still matches the **raw** authored text, so `{luck_chance` is findable.
+
 `type` is shown only when it is *not* `spell` — 328 of 400 cards are spells, so
 printing it on each is noise; a catalyst is the exception worth naming. A null
 element reads as **Colourless** rather than blank, which is what 64 cards have.

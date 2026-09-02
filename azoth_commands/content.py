@@ -18,7 +18,7 @@ from nextcord import Interaction, SlashOption
 from azoth_commands.helpers import safe_interaction, missing_asset_hint, to_snake_case
 from constants import DEV_GUILD_ID
 from azoth_logic import (card_layout, card_render, content_index as ci, deck_render,
-                         fate_layout, fate_render, holo, upgrades)
+                         fate_layout, fate_render, holo, placeholders, upgrades)
 
 
 # Embed accent, matching the card face. Aspects carry their own palette; rites
@@ -150,9 +150,13 @@ def add_content_commands(cls):
             # nothing on purpose, and says so rather than claiming to be gone.
             return await asyncio.to_thread(ci.absence_reason, name)
 
+        # `/show` prints the text instead of drawing it, so it is the one
+        # surface that does not pass through `rich_text.tokenize` -- it resolves
+        # display placeholders itself, or Recollection reads "Create last used
+        # Rite ({last_rite})" here while the render beside it says "(None)".
         embed = nextcord.Embed(
             title=row.get("name") or "(unnamed)",
-            description=row.get("text") or "*no rules text*",
+            description=placeholders.resolve(row.get("text") or "") or "*no rules text*",
             colour=_accent(kind, row),
         )
         for label, value in _facts(kind, row):

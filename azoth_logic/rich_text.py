@@ -12,6 +12,10 @@ change.
 One rule carried over from `Utils.replace_icon_from_dict`: life, mult and bonus
 symbols render at **1.35x** the surrounding font size. They are numerals inside a
 glyph and read too small at parity.
+
+Text also carries `{...}` display placeholders, which `tokenize` resolves through
+`placeholders.resolve` before it looks for a symbol -- see that function and
+`azoth_logic/placeholders.py`.
 """
 from __future__ import annotations
 
@@ -20,6 +24,8 @@ import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+from azoth_logic import placeholders
 
 ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
 SYMBOL_DIR = ASSET_ROOT / "card_art" / "symbols"
@@ -97,8 +103,21 @@ def tokenize(text: str):
     Takes NO font size. Symbols are sized from SYMBOL_BASE_SIZE regardless of the
     surrounding label -- see that constant. This used to accept a `font_size` and
     ignore it, which invited exactly the bug the constant documents.
+
+    `{...}` DISPLAY PLACEHOLDERS RESOLVE HERE, and here only. Every string any
+    renderer draws -- card text, aspect text, rite text, names, subtypes, and so
+    every deck, comparison and search sheet built out of them -- reaches PIL
+    through this function, which makes it the one place the substitution cannot
+    be forgotten on a new surface. The game funnels its own two surfaces through
+    `CardTextComposer` for the same reason. `/show` prints text without drawing
+    it, so it calls `placeholders.resolve` itself.
+
+    Placeholders resolve BEFORE symbols, which is the game's order too: a token
+    can sit inside a symbol (`"Heal [{levelup.level}life]"` is `[1life]` only
+    once the inner one is gone). No live row does that here -- levelups are not
+    rendered -- so the ordering is free insurance rather than a fix.
     """
-    text = _STRIP_TAGS.sub("", text)
+    text = placeholders.resolve(_STRIP_TAGS.sub("", text))
     tokens = _tokens()
     pattern = re.compile("|".join(re.escape(t) for t in sorted(tokens, key=len, reverse=True)))
 

@@ -84,6 +84,13 @@ All docs live in `docs/`. Read before changing a system.
   timer may not fire for weeks, and growth is bursty rather than
   time-proportional. `mtime` means *last used* for renders (touched on hit) and
   *last fetched* for art (never touched — `ART_TTL` measures it). Don't unify them.
+- **`{...}` placeholders resolve flat, in one place.** Card text carries run-time
+  tokens (`{luck_chance.50}`, `{last_rite}`). `azoth_logic/placeholders.py` prints
+  the authored odds with no Luck and `None` for an unspent Rite — the game's own
+  out-of-run rendering — and leaves everything it cannot resolve visible, which
+  is also the game's behaviour. It is applied inside `rich_text.tokenize`, the one
+  function every drawn string passes through, so a new render surface cannot miss
+  it; `/show` prints rather than draws and calls it itself.
 - **Renders must not run on the event loop.** They download art and run PIL/numpy
   for seconds at a time. `asyncio.wait_for` cannot interrupt blocking work, so a
   render left inline starves the gateway heartbeat *and* defeats its own timeout.
@@ -105,7 +112,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 620 tests, all offline** (`docs/TESTING.md`):
+**pytest, 712 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest

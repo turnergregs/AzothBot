@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 687 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 712 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -30,6 +30,7 @@ Added 2026-08-26. Before that there was no suite at all.
 | `tests/test_bulk_apply.py` | 21 | The client half of the transactional bulk write: payload passed through unmangled, malformed input refused without a round trip, database errors made readable |
 | `tests/test_content_index.py` | 31 | The autocomplete index: TTL, explicit invalidation, ref encoding, match ranking — and **liveness**: retired content hidden, `/add_to_deck` still seeing it, a live name beating a retired one, and the empty-live-set fallback that stops a failed deck read from hiding all 626 rows |
 | `tests/test_deck_render.py` | 38 | Grid and hand layout, art deduplication, per-kind bucket routing — plus the upgrade comparison: gif-vs-png selection, a still side holding while the other animates, and cache keys that cover both faces |
+| `tests/test_placeholders.py` | 25 | The `{...}` display placeholders, transcribed from the game's own suite: flat odds for every live row, Godot's half-away-from-zero rounding, and a malformed or run-state token staying visible |
 | `tests/test_sync_assets.py` | 8 | The vendored-asset sync, and the shader-exported backgrounds it deliberately cannot sync |
 
 ## What these tests are for
