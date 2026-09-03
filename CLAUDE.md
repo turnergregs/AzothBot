@@ -70,6 +70,10 @@ All docs live in `docs/`. Read before changing a system.
   upserting, so regenerating destroys the previous image. No history, no seed.
   Because the name does not change, `art_cache.forget_art()` must be called at
   every upload site or the bot keeps drawing the old art for up to 7 days.
+- **The `/stats draft` subcommands are grouped, not merged.** `composition` is
+  content with no games behind it and no cutoff; `rates` and `breakdown` are
+  game data at `analytics_cutoff()`. One embed carries one footer, so a merged
+  reply would have to misstate what one half rests on. Don't combine them.
 - **Two commands cover all content lookup.** `/show` and `/render` dispatch on an
   encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
   `/render_*` commands were retired 2026-08-26.
@@ -79,6 +83,22 @@ All docs live in `docs/`. Read before changing a system.
   index and every lookup path filters on it. Two invariants: `/add_to_deck` is
   NOT filtered (it is the only way back), and an empty live set means a failed
   read, so it filters nothing rather than hiding everything.
+- **A fixed set of columns cannot report an open set of values.** This view
+  layer has been bitten twice: `draft_deck_view.events` was permanently zero
+  because the Rites deck's usage type postdated the filter, and its `1v`–`6v`
+  columns hid four cards above valence 6 plus 24 with no valence — a
+  distribution describing 108 of 136 cards, which reads as complete rather than
+  as short. Both are jsonb histograms keyed by the value now
+  (`2026-09-03_draft_pool_histograms.sql`). A value with no column of its own is
+  not reported as missing; it is not reported at all.
+- **Rites are drafted, but they are templates, not pool members.** They are
+  picked from a pack like anything else; what differs is that
+  `_shuffle_in_injected_pools` draws them WITH REPLACEMENT into
+  `floor(0.7·pool/6.3)` extra slots, so a template can appear twice or not at
+  all. Never add `rite_templates` into a card count — the two are different
+  quantities. A rite pick **rate** IS comparable to a card's (the offer
+  denominator divides the injection budget out); a raw pick **count** is not,
+  which is what `most_drafted` excludes them from.
 - **The render cache evicts on write, not on a timer.** Size-capped LRU
   (`art_cache._evict`). A daily sweep was rejected: the bot is hand-started, so a
   timer may not fire for weeks, and growth is bursty rather than
@@ -182,7 +202,11 @@ See `docs/CONTENT_PIPELINE.md`.
 - Don't reformat whole files over tabs vs spaces; indentation is inconsistent by
   file and history matters more
 - Don't change the schema from here — it originates in the game repo's
-  `db/migrations/`
+  `db/migrations/`, and **Turner applies those by hand in the Supabase SQL
+  editor**. There is no runner and no migration history, so a file existing
+  proves nothing about the database: check the columns, write migrations that
+  survive a re-run, and make the bot handle both sides while saying which side
+  it is on. See `docs/DB_SCHEMA.md` § How a migration gets applied
 - Don't add a taxonomy table back. Elements, card types, attributes and
   deck types live in `azoth_logic/taxonomy.py`, beside the game constants
   they mirror; adding a value is a code change in both repos

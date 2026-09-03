@@ -23,6 +23,32 @@ database. This file, its upstream twin, and the game repo's
 [`db/migrations/*.sql`](https://github.com/turnergregs/azoth/blob/main/db/migrations)
 are the only record of the schema and how it got that way.
 
+## How a migration gets applied
+
+**By hand, by Turner, pasted into the Supabase SQL editor.** There is no runner,
+no CLI, no CI step, and no `schema_migrations` table. A `.sql` file in the game
+repo is a *request* to change the schema; the change happens when a human opens
+the dashboard and runs it.
+
+Three consequences, and all three have already cost something:
+
+1. **A migration file existing is not evidence it has run.** Check the columns
+   before concluding anything from a query — `select *` against the view is the
+   fastest test. Two views were written and reviewed on 2026-09-03 while the
+   database still held the previous definitions.
+2. **AzothBot has to tolerate both sides of every migration**, because the bot
+   and the database are deployed by different acts. The established pattern:
+   read the new shape when it is present, fall back to the old, and **say in the
+   reply** that the answer is incomplete — `stats_format.MIGRATION_NOTE`, and
+   the *"`<view>` is not migrated — run `<file>`"* replies on `/stats
+   scoreboard` and `/stats draft breakdown`. Naming the file is the point;
+   "not migrated" and "no data yet" are different problems with the same
+   symptom.
+3. **Write migrations so re-running them is safe.** `drop view if exists` then
+   `create view`, or `create or replace`, inside `begin`/`commit`. Nobody
+   tracks what has been applied, so the only safe assumption is that any file
+   may be run again — or run for the first time long after it was written.
+
 ---
 
 ## [AzothBot] Which key you are holding
@@ -114,8 +140,9 @@ verbatim with their defects annotated but not fixed.
 | `turn_clearing_view` | — | One row per regular turn with patterns to solve: `clear_index`, `links_before/after`, `seconds_before/after`. NULL `clear_index` = never cleared, kept so the denominator survives |
 | `player_act_view` | — | `player`, `act`, `avg_links_regular`, `avg_links_boss`, `regular_turns`, `boss_turns`. Added 2026-08-27 |
 | `turn_scoreboard_view` | — | One row per (`act`, `axis`) plus an `act IS NULL` rollup per axis: `turns_sampled`, `avg_count`, `avg_threshold`, `times_hit`, `hit_rate`, `times_won`, `won_rate`, `avg_life_when_won`. Added 2026-08-31; surfaced by `/stats scoreboard`. **Do not `sum(turns_sampled)`** — each turn appears once per axis plus once in the rollup |
-| `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, `events`, element and valence breakdowns, `combo`. Covers base, non-archived decks with `usage_type in ('draft', 'rite')` — the rite half added 2026-08-27, before which `events` was always 0. Surfaced by `/stats draft_pool` |
-| `draft_rates_view` | 1 | Pre-formatted comma-joined strings of most/least picked items |
+| `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, plus `element_counts` and `valence_counts` — **jsonb histograms** keyed by the value, valence-less cards under `none`, elementless ones under `catalyst` (2026-09-03; they replace `anima`/`blood`/`sol`/`combo` and `1v`–`6v`, which could not report a value that had no column — four cards above valence 6 and 24 with none were counted by nothing). `cards`/`aspects` cover base, non-archived `usage_type = 'draft'` decks. **Rites are counted separately** as `rite_templates` + `rite_weight_counts` (jsonb, weight → templates carrying it): they are drawn WITH REPLACEMENT into ~`floor(0.7·pool/6.3)` injected slots, so they are templates rather than pool members and must never be added into `cards`. Surfaced by `/stats draft composition` |
+| `draft_rates_view` | ~88 | One row per item: `item_type`, `item_id`, `item_name`, `element`, `valence`, `times_offered`/`times_picked`/`times_reserved` and their rates. Reshaped 2026-08-26 — it *was* one row of comma-joined strings. ⚠️ Censored by `having count(*) >= 5`, so **do not aggregate over it** — see `draft_dimension_rates_view` |
+| `draft_dimension_rates_view` | ~17 | Draft pick rate by dimension: `type` (card/aspect/rite, every offer), `element` and `valence` (cards only). One row per (`dimension`, `bucket`) with `times_offered`, `times_picked`, `pick_rate`. Added 2026-09-03, aggregated from `draft_items` so it is not censored. **Do not sum `times_offered` across the view** — every offer appears once per dimension it has. The `rite` bucket is `draft_items.item_type = 'event'`, renamed here so it happens once. Surfaced by `/stats draft breakdown` |
 | `decks_with_contents` | — | **Not used by AzothBot.** Deck rows with contents inlined as JSON; consumed by the game / Codex editor |
 
 **They predate the turn-grain schema and violate several caveats below** — every

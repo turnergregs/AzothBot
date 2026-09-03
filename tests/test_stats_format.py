@@ -9,6 +9,8 @@ points that these tests pin:
   * The dataset is tiny. A footer stating what the numbers rest on is not
     decoration — `docs/ANALYTICS.md` opens by saying not to quote these as fact.
 """
+import re
+
 import pytest
 
 from azoth_logic import stats_format as sf
@@ -555,3 +557,415 @@ def test_the_scoreboard_tables_fit_a_phone(render):
     table = out.split("```")[1]
     widest = max(len(l) for l in table.splitlines() if l.strip())
     assert widest <= sf.MOBILE_TABLE_WIDTH, f"{widest} chars wraps on a phone"
+
+
+# ---------------------------------------------------------------------------
+# The draft pool
+# ---------------------------------------------------------------------------
+# The incident: `/stats draft_pool` reported a valence distribution running 1v
+# to 6v that summed to 108 of the pool's 136 cards, and said nothing about the
+# other 28. `draft_deck_view` had a COLUMN PER VALENCE and only six of them --
+# 2026-08-26_rebuild_analytics_views dropped "7v".."10v" as "permanently zero,
+# valence is 1-6" -- so Circumvent (7), Ouroboros, Trifold and Apex (9) were
+# counted by nothing, and the 24 valence-less colourless cards by nothing
+# either. It did not read as a distribution with 28 cards missing. It read as a
+# complete one that stops at 6.
+#
+# 2026-09-03_draft_pool_histograms.sql replaces those columns with jsonb keyed
+# by the value, so a bucket cannot go missing for want of a column. These tests
+# pin the rendering half: every occupied bucket gets a row, and a small one
+# still gets a visible bar.
+
+# The live pool, 2026-09-03, in the post-migration shape. Rites are counted
+# separately and in their own units -- `rite_templates`, not `events` -- because
+# they are drawn with replacement into injected slots rather than being pool
+# members present once each.
+POOL = {
+    "deck_name": "Total Draft Pool", "cards": 136, "aspects": 54,
+    "rite_templates": 22, "rite_weight_counts": {"default": 22},
+    "element_counts": {"anima": 37, "blood": 38, "sol": 37, "catalyst": 24},
+    "valence_counts": {"1": 23, "2": 26, "3": 20, "4": 20, "5": 12, "6": 7,
+                       "7": 1, "9": 3, "none": 24},
+}
+
+# The same pool as the OLD view reported it: eight columns, no histograms.
+LEGACY_POOL = {
+    "deck_name": "Total Draft Pool", "cards": 136, "events": 22, "aspects": 54,
+    "anima": 37, "blood": 38, "sol": 37, "combo": 24,
+    "1v": 23, "2v": 26, "3v": 20, "4v": 20, "5v": 12, "6v": 7,
+}
+
+
+def _chart(text):
+    """The fenced block out of a rendered field, as Discord will draw it.
+
+    The ANSI sequences go entirely, not just their ESC byte: Discord consumes
+    `\x1b[0;35m` and prints nothing for it, so leaving the six visible
+    characters behind would measure a width no reader ever sees.
+    """
+    fence = text.split("```")[1].replace("ansi", "", 1).strip("\n")
+    return re.sub(re.escape(sf.ESC) + r"\[[0-9;]*m", "", fence)
+
+
+def test_valence_above_six_is_shown():
+    """THE BUG. Four cards in the pool sit above valence 6 and the field had no
+    row for any of them."""
+    chart = _chart(sf.draft_pool_valence(POOL))
+    assert "7v" in chart and "9v" in chart
+
+
+def test_a_rare_valence_still_gets_a_bar():
+    """A non-zero count always gets at least one cell.
+
+    Today's spread does not need the floor -- one card against a peak of 26
+    rounds up to a cell on its own -- but the pool only grows, and a bar that
+    rounds to nothing renders as an empty row, which says NONE. That is the
+    same false statement the missing `7v` column made, so the sharper the
+    distribution gets the more the guard is load-bearing. Pinned against a
+    spread wide enough to need it: 3 against a peak of 400 is 0.13 of a cell.
+    """
+    wide = dict(POOL, cards=406, valence_counts={"2": 400, "3": 3, "9": 1})
+    bars = [line.split()[-1] for line
+            in _chart(sf.draft_pool_valence(wide)).splitlines() if line.strip()]
+    assert all(bar.startswith(sf.BAR) for bar in bars), bars
+
+    # And the case in front of us: the four cards above valence 6.
+    for label in ("7v", "9v"):
+        row = [l for l in _chart(sf.draft_pool_valence(POOL)).splitlines()
+               if l.startswith(label)][0]
+        assert row.rstrip().endswith(sf.BAR)
+
+
+def test_every_card_in_the_pool_lands_in_a_bucket():
+    """The check the old field would have failed: the valence rows sum to the
+    card count. 108 of 136 was the whole incident."""
+    buckets, _ = sf._valence_buckets(POOL)
+    assert sum(count for _, count in buckets) == POOL["cards"]
+
+
+def test_cards_with_no_valence_get_their_own_row():
+    """24 of them, and they are not a valence of zero. Dropping them is how the
+    distribution came to describe 108 cards while being read as 136."""
+    chart = _chart(sf.draft_pool_valence(POOL))
+    assert f"{sf.NO_VALENCE}  24" in chart
+
+
+def test_the_no_valence_row_leads_the_chart():
+    """Ahead of 1v, not after 9v. Having no valence is not having more of it
+    than 9, and a row under the scale reads as the far end of it."""
+    chart = _chart(sf.draft_pool_valence(POOL))
+    assert chart.splitlines()[0].startswith(sf.NO_VALENCE)
+
+
+def test_the_no_valence_row_needs_no_caption():
+    """It carried one explaining that those were the colourless cards, which was
+    the price of putting it at the bottom. At the top it explains itself."""
+    assert "no valence" not in sf.draft_pool_valence(POOL)
+
+
+def test_the_elements_are_coloured():
+    """The ask this rendering answers. Discord colours a fence tagged `ansi`
+    and only that, so the block tag is part of the assertion."""
+    out = sf.draft_pool_elements(POOL)
+    assert out.startswith("```ansi")
+    for element, code in sf.ANSI_ELEMENT.items():
+        assert f"{sf.ESC}[0;{code}m" in out
+
+
+def test_colouring_a_row_does_not_shift_its_columns():
+    """The escape codes sit outside the padded text. Inside it they would count
+    toward ljust and stagger every row by five characters."""
+    chart = _chart(sf.draft_pool_elements(POOL))
+    assert len({line.index(sf.BAR) for line in chart.splitlines() if line.strip()}) == 1
+
+
+def test_the_elements_are_listed_in_the_games_order():
+    """taxonomy.CARD_ELEMENTS order, which is GlobalVars.ELEMENTS order, not
+    alphabetical -- and catalyst last, since it is the absence of an element."""
+    buckets, _ = sf._element_buckets(POOL)
+    assert [name for name, _ in buckets] == ["anima", "blood", "sol", "catalyst"]
+
+
+def test_anima_is_blue_rather_than_pink():
+    """Discord's eight ANSI colours contain no purple. Anima is #8769E9, a
+    blue-violet at hue 254; blue #268bd2 is nearer than pink #d33682 on RGB
+    distance (105 vs 138) and on hue (49 degrees against 77). Pink reads as a
+    different colour family."""
+    assert sf.ANSI_ELEMENT["anima"] == 34
+
+
+def test_the_elementless_bucket_is_called_catalyst():
+    """23 of those 24 cards are catalysts. The bucket is still defined as NULL
+    ELEMENT though -- Waxix is an elementless spell counted here -- which is why
+    the view carries that caveat where the name is chosen."""
+    assert "catalyst" in _chart(sf.draft_pool_elements(POOL))
+
+
+def test_an_unknown_element_is_appended_rather_than_dropped():
+    """The `rite` usage type and every valence above 6 were invisible for
+    exactly this reason: a value with no entry in a hardcoded list. A new
+    element shows up unstyled rather than not at all."""
+    grown = dict(POOL, element_counts=dict(POOL["element_counts"], void=9))
+    buckets, _ = sf._element_buckets(grown)
+    assert buckets[-1] == ("void", 9)
+
+
+def test_the_contents_line_carries_the_total():
+    """It is the denominator every other number in the embed is a share of."""
+    assert "190 items in the pool" in sf.draft_pool_contents(POOL)
+
+
+def test_the_contents_total_points_at_the_rites_field():
+    """190 is cards and aspects. Rites are drafted too, so a bare "190 items"
+    beside a Rites field reads as though rites were in it."""
+    assert "before rites are injected" in sf.draft_pool_contents(POOL)
+    # ...and says no such thing when the view carries no rites to point at.
+    assert "before rites" not in sf.draft_pool_contents(LEGACY_POOL)
+
+
+def test_rites_are_never_added_into_the_item_count():
+    """Not because they are undrafted -- they are drafted. A card is a pool
+    member present once; a rite is a template drawn with replacement into an
+    injected slot. Adding the two gives a number that is neither.
+
+    Read off LEGACY_POOL, which still carries the old `events` column."""
+    assert "22" not in sf.draft_pool_contents(LEGACY_POOL)
+    assert "212" not in sf.draft_pool_contents(POOL)
+
+
+@pytest.mark.parametrize("render", ["draft_pool_elements", "draft_pool_valence"])
+def test_the_pool_charts_fit_a_phone(render):
+    """Same measurement as the tables. A wrapped bar chart is not a chart."""
+    chart = _chart(getattr(sf, render)(POOL))
+    widest = max(len(line) for line in chart.splitlines() if line.strip())
+    assert widest <= sf.MOBILE_TABLE_WIDTH, f"{widest} chars wraps on a phone"
+
+
+@pytest.mark.parametrize("render", ["draft_pool_elements", "draft_pool_valence"])
+def test_an_unmigrated_view_still_renders(render):
+    """The bot is hand-started on a machine that may be running either side of
+    the migration, so the old columns are still read."""
+    assert sf.BAR in getattr(sf, render)(LEGACY_POOL)
+
+
+@pytest.mark.parametrize("render", ["draft_pool_elements", "draft_pool_valence"])
+def test_an_unmigrated_view_says_the_numbers_are_short(render):
+    """And it must SAY so. Those columns cannot count valence 7 or 9, so
+    rendering them as a finished distribution repeats the original bug with a
+    nicer chart on top."""
+    assert "incomplete" in getattr(sf, render)(LEGACY_POOL)
+
+
+def test_a_migrated_view_makes_no_such_claim():
+    assert "incomplete" not in sf.draft_pool_valence(POOL)
+
+
+@pytest.mark.parametrize("render", ["draft_pool_elements", "draft_pool_valence"])
+def test_an_empty_pool_says_so(render):
+    """jsonb_object_agg over no rows is NULL; the view coalesces it to `{}` and
+    this says "no cards" rather than drawing an empty frame."""
+    empty = {"cards": 0, "aspects": 0,
+             "element_counts": {}, "valence_counts": {}}
+    assert getattr(sf, render)(empty) == "*no cards in the draft pool*"
+
+
+# ---------------------------------------------------------------------------
+# Pick rate by element and valence
+# ---------------------------------------------------------------------------
+# `draft_dimension_rates_view`, added 2026-09-03 for the question neither
+# neighbouring view answers: not what the pool holds and not how one item does,
+# but whether a whole class of card is being ignored.
+
+BREAKDOWN = [
+    {"dimension": "element", "bucket": "anima", "times_offered": 88, "times_picked": 33, "pick_rate": 0.375},
+    {"dimension": "element", "bucket": "blood", "times_offered": 95, "times_picked": 29, "pick_rate": 0.3053},
+    {"dimension": "element", "bucket": "sol", "times_offered": 87, "times_picked": 21, "pick_rate": 0.2414},
+    {"dimension": "element", "bucket": "catalyst", "times_offered": 61, "times_picked": 5, "pick_rate": 0.082},
+    {"dimension": "valence", "bucket": "none", "times_offered": 61, "times_picked": 5, "pick_rate": 0.082},
+    {"dimension": "valence", "bucket": "1", "times_offered": 66, "times_picked": 17, "pick_rate": 0.2576},
+    {"dimension": "valence", "bucket": "3", "times_offered": 48, "times_picked": 19, "pick_rate": 0.3958},
+    {"dimension": "valence", "bucket": "9", "times_offered": 5, "times_picked": 0, "pick_rate": 0.0},
+]
+
+
+def test_a_pick_rate_reads_as_a_percentage():
+    """Stored 0-1. Left to the generic float branch it renders as `0.4`, which
+    reads as a count of something rather than a share."""
+    assert sf.value("pick_rate", 0.3958) == "40%"
+    assert sf.value("reserve_rate", 0.0) == "0%"
+
+
+def test_every_bucket_carries_its_denominator():
+    """A rate with no denominator is what docs/ANALYTICS.md opens by warning
+    about. `9v` here is 0% off five offers, which is not evidence of anything."""
+    chart = _chart(sf.draft_rate_by_valence(BREAKDOWN))
+    assert "9v     0%   5" in chart
+
+
+def test_the_breakdown_orders_buckets_like_the_composition_chart():
+    """Shared ordering (_element_order / _valence_order) is the whole reason the
+    two fields can be read against each other -- "27% of the pool, 38% of picks"
+    only works if anima is the same row in both."""
+    pool = [label for label, _ in sf._element_buckets(POOL)[0]]
+    rates = [label for label, _, _ in sf._dimension_rows(BREAKDOWN, "element")]
+    assert pool == rates == ["anima", "blood", "sol", "catalyst"]
+
+
+def test_the_valence_breakdown_leads_with_the_no_valence_row():
+    """Same rule as the composition chart, from the same function."""
+    chart = _chart(sf.draft_rate_by_valence(BREAKDOWN))
+    assert chart.splitlines()[2].startswith(sf.NO_VALENCE)
+
+
+def test_the_element_breakdown_is_coloured_like_the_composition_chart():
+    out = sf.draft_rate_by_element(BREAKDOWN)
+    assert out.startswith("```ansi")
+    assert f"{sf.ESC}[0;{sf.ANSI_ELEMENT['anima']}m" in out
+
+
+def test_the_valence_breakdown_is_not_coloured():
+    """Valence is orthogonal to element; a second colour scheme in one embed
+    would read as though the two were related."""
+    assert sf.ESC not in sf.draft_rate_by_valence(BREAKDOWN)
+
+
+def test_the_offer_count_is_not_summed_across_the_view():
+    """Every offer is counted once under its element and again under its
+    valence, so a sum over the view is exactly double. Same trap as
+    scoreboard_sample, and the same fix -- read one dimension."""
+    assert sf.draft_offers_sampled(BREAKDOWN) == 88 + 95 + 87 + 61
+
+
+@pytest.mark.parametrize("render", ["draft_rate_by_element", "draft_rate_by_valence"])
+def test_the_breakdown_tables_fit_a_phone(render):
+    chart = _chart(getattr(sf, render)(BREAKDOWN))
+    widest = max(len(line) for line in chart.splitlines() if line.strip())
+    assert widest <= sf.MOBILE_TABLE_WIDTH, f"{widest} chars wraps on a phone"
+
+
+@pytest.mark.parametrize("render", ["draft_rate_by_element", "draft_rate_by_valence"])
+def test_no_draft_data_says_so(render):
+    assert getattr(sf, render)([]) == "*no card draft data yet*"
+
+
+def test_an_unexpected_valence_bucket_gets_its_own_row():
+    """It is NOT folded into the no-valence row. Folding is a value disappearing
+    into a bucket that does not name it, which is the failure the whole draft
+    view was rebuilt to end."""
+    odd = BREAKDOWN + [{"dimension": "valence", "bucket": "unknown",
+                        "times_offered": 4, "times_picked": 1, "pick_rate": 0.25}]
+    labels = [label for label, _, _ in sf._dimension_rows(odd, "valence")]
+    assert labels == [sf.NO_VALENCE, "1v", "3v", "9v", "unknown"]
+
+
+def test_the_per_item_rate_table_keeps_its_rate_columns():
+    """REGRESSION. `draft_rates` had no entry in stats.COLUMNS, so `table()`
+    kept draft_rates_view's own column order -- item_type, item_id, item_name,
+    element, valence, then the five rate columns -- and trimmed from the right
+    until it fitted. Every number came off. The reply was a ranked list of item
+    names with no visible reason for the ranking, which is the exact failure the
+    COLUMNS dict was introduced to prevent for `avg_combo_log10`."""
+    from azoth_commands.stats import COLUMNS
+
+    rows = [{"item_type": "card", "item_id": 157, "item_name": "Torrent",
+             "element": "anima", "valence": 5, "times_offered": 6,
+             "times_picked": 6, "times_reserved": 0, "pick_rate": 1.0,
+             "reserve_rate": 0.0}]
+    text, dropped = sf.table(rows, COLUMNS["draft_rates"], rank=True)
+    assert "100%" in text
+    assert not dropped
+    assert "157" not in text          # item_id is a join key, not information
+
+
+# ---------------------------------------------------------------------------
+# Rites
+# ---------------------------------------------------------------------------
+# A rite IS drafted. An earlier version of this module said otherwise and drew
+# two conclusions from it, one right and one wrong:
+#
+#   right   a rite must not be added into the pool item count -- it is a
+#           TEMPLATE drawn with replacement into an injected slot, not a pool
+#           member present once, so the two do not sum to anything;
+#   wrong   a rite pick RATE is not comparable to a card's. It is: a rate is
+#           conditional on the item being offered, so the injection budget --
+#           which governs how often a rite is offered and nothing else --
+#           divides straight back out.
+#
+# Both halves are pinned here.
+
+TYPE_RATES = [
+    {"dimension": "type", "bucket": "card", "times_offered": 590, "times_picked": 151, "pick_rate": 0.2559},
+    {"dimension": "type", "bucket": "aspect", "times_offered": 212, "times_picked": 58, "pick_rate": 0.2736},
+    {"dimension": "type", "bucket": "rite", "times_offered": 126, "times_picked": 31, "pick_rate": 0.246},
+]
+
+
+def test_rites_are_counted_in_templates_not_slots():
+    """22 templates against 21 injected slots. `22` in the contents line would
+    read as 22 pool slots, which is the thing this field exists to prevent."""
+    out = sf.draft_pool_rites(POOL)
+    assert "**22** rites" in out
+    assert "21 injected slots" in out
+
+
+def test_the_injected_slot_count_follows_the_games_formula():
+    """floor(p * pool / (7 - p)), CardLogic._shuffle_in_injected_pools. At the
+    default p over today's 190-item pool that is 21."""
+    assert sf.injected_slots(190) == 21
+    assert sf.injected_slots(0) == 0
+
+
+def test_the_estimate_says_it_rests_on_the_default_rate():
+    """INJECTED_POOL_PERCENT mirrors a game stat that content can move. A number
+    derived from a mirrored constant has to wear that condition, or it silently
+    describes a game that is no longer being played."""
+    assert "at the default rate" in sf.draft_pool_rites(POOL)
+
+
+def test_uniform_weights_report_the_share_that_misses_a_run():
+    """Drawn WITH REPLACEMENT, so 21 draws over 22 templates does not cover
+    them: (1 - 1/22)^21 is about 38%. That is the fact a flat count of 22
+    hides -- more than a third of the rite pool is absent from any given run."""
+    assert "~38% of templates miss a given run" in sf.draft_pool_rites(POOL)
+
+
+def test_that_share_is_withheld_when_the_weights_differ():
+    """The closed form only holds while every template has the same share of
+    every draw. With tiers it would be a plausible-looking wrong number."""
+    tiered = dict(POOL, rite_weight_counts={"0.25": 18, "1.0": 4})
+    out = sf.draft_pool_rites(tiered)
+    assert "2 weight tiers" in out
+    assert "miss a given run" not in out
+
+
+def test_a_view_with_no_rites_drops_the_field():
+    """Rather than reporting zero rites, which is a claim about the pool."""
+    assert sf.draft_pool_rites(LEGACY_POOL) == ""
+
+
+def test_the_three_item_types_are_compared_by_rate():
+    """The correction. A rate is conditional on being offered, so the injection
+    budget divides out -- and the answer is that rites are taken at about the
+    same rate as everything else, which the old framing could not have said."""
+    chart = _chart(sf.draft_rate_by_type(TYPE_RATES))
+    assert "card     26%  590" in chart
+    assert "rite     25%  126" in chart
+
+
+def test_the_types_read_in_the_same_order_as_the_contents_line():
+    """"cards · aspects" then rites, top to bottom, in both places."""
+    labels = [label for label, _, _ in sf._dimension_rows(TYPE_RATES, "type")]
+    assert labels == ["card", "aspect", "rite"]
+
+
+def test_the_offer_count_prefers_the_type_dimension():
+    """It is the only dimension covering every offer. `element` and `valence`
+    are cards only, so footing the embed with one of them would undercount by
+    every aspect and rite -- beside a table that lists them."""
+    assert sf.draft_offers_sampled(TYPE_RATES) == 590 + 212 + 126
+    assert sf.draft_offers_sampled(TYPE_RATES + BREAKDOWN) == 928
+
+
+def test_the_offer_caption_does_not_say_cards():
+    """The type table has aspects and rites in it."""
+    assert "card" not in sf.OFFERS_CAPTION

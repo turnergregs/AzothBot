@@ -427,8 +427,9 @@ what you would want to force. Full policy:
 | `/stats hero` | — | — |
 | `/stats version` | — | — |
 | `/stats scoreboard` | — | — |
-| `/stats draft_pool` | — | — |
-| `/stats draft_rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/event) |
+| `/stats draft composition` | — | — |
+| `/stats draft breakdown` | — | — |
+| `/stats draft rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/event) |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 
 All `/stats` subcommands reply with an **embed** — an aligned table for the
@@ -475,13 +476,61 @@ tables land at 21 characters, inside the measured wrap point. `sum()` of
 axis plus a rollup row, so the column totals six times the real count.
 `stats_format.scoreboard_sample()` reads it off a single rollup row instead.
 
-`/stats draft_pool` was `/stats draft_deck` until 2026-08-27. It still reads
+The three draft replies were grouped under **`/stats draft`** on 2026-09-03 —
+`composition`, `rates` and `breakdown`. They are grouped, **not merged**: the
+composition is content with no games behind it and no cutoff, the two rate
+replies are ~2 games at `0.9.0`, and one embed carries one footer. See
+[ANALYTICS.md](ANALYTICS.md#why-these-are-three-commands-and-not-one).
+
+`/stats draft breakdown` is new: card pick rate by element and by valence, from
+`draft_dimension_rates_view`. It aggregates from `draft_items` rather than
+grouping `draft_rates_view`, whose `having count(*) >= 5` floor would bias every
+bucket toward frequently-offered cards. An unmigrated view is named in the reply
+rather than shown as "no data".
+
+⚠️ **`/stats draft rates` was showing no numbers at all.** `draft_rates` had no
+entry in `stats.COLUMNS`, so `table()` kept the view's own column order —
+`item_type`, `item_id`, `item_name`, `element`, `valence`, and only then the
+five rate columns — and trimmed from the right until it fitted. Every rate came
+off, leaving a list ranked by a number it did not show. Fixed 2026-09-03; this
+is the exact failure the `COLUMNS` dict was introduced to prevent for
+`avg_combo_log10`, and the entry was simply never added.
+
+`/stats draft composition` was `/stats draft_pool`, and `/stats draft_deck`
+before that. It still reads
 `draft_deck_view` — the command was renamed, the view was not, so the bot works
 whether or not the migration below has been applied. Its `events` column was
 permanently zero until `db/migrations/2026-08-27_draft_pool_include_rites.sql`
 in the game repo widened the view to `usage_type in ('draft', 'rite')`; the Rites
 deck (id 36, 21 events) is `usage_type = 'rite'` and was excluded by a filter
 that predates that usage type. Until that migration runs, `events` reads 0.
+
+Since 2026-09-03 it renders the element and valence splits as **bar charts**,
+the element one coloured to the game's own element colours inside an ` ```ansi `
+fence. They are distributions, and `1v 23 · 2v 26 · 3v 20` makes you do the
+division yourself to see the shape.
+
+**Rites get their own field**, never the contents line. They *are* drafted, but
+they are templates drawn with replacement into `floor(0.7·pool/6.3)` ≈ 21
+injected slots, not pool members present once each — so `22` and `136` are
+different quantities and their sum is meaningless. The field reports templates,
+weights, and the share of templates that miss a given run (~38%). See
+[ANALYTICS.md](ANALYTICS.md#rites-templates-not-pool-members).
+
+`/stats draft breakdown` compares card, aspect and rite **pick rates** directly.
+That is fair where a raw pick count is not: a rate is conditional on the item
+being offered, so the injection budget divides out.
+
+⚠️ **The valence field used to be short by 28 cards.** It read `range(1, 7)`
+against a view that had a column per valence and only six of them, so the four
+pool cards above valence 6 and the 24 with no valence were counted by nothing
+and shown by nothing — 108 of 136 cards, presented as a complete distribution.
+`db/migrations/2026-09-03_draft_pool_histograms.sql` in the game repo replaces
+those columns (and `anima`/`blood`/`sol`/`combo`) with jsonb histograms keyed by
+the value, so nothing can fall outside them. **Until it runs**, the command
+falls back to the old columns and says *"incomplete"* under both charts rather
+than drawing a partial distribution as a whole one. Full account in
+[ANALYTICS.md](ANALYTICS.md#the-draft-pool-2026-09-03).
 
 > The views behind `/stats` were rebuilt on 2026-08-26 — a cutoff enforced in
 > one place, `restart` runs and co-op duplicates excluded, and combo averaged in
@@ -514,7 +563,8 @@ of `/stats`.
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).
 
 **Renamed 2026-08-27:** `/get` → `/show`, `/get_deck` → `/show_deck`,
-`/stats draft_deck` → `/stats draft_pool`. The old names are asserted gone in
+`/stats draft_deck` → `/stats draft_pool` → `/stats draft composition`, and
+`/stats draft_rates` → `/stats draft rates`. The old names are asserted gone in
 `tests/test_command_registration.py`.
 
 **Removed 2026-08-27:** all four `/delete_*` commands — see

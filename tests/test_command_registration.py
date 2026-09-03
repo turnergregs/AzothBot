@@ -143,13 +143,27 @@ def test_the_generic_lookup_commands_exist():
                                   "render_card", "render_aspect", "render_rite",
                                   "render_event", "create_event", "render_hero",
                                   # Renamed 2026-08-27.
-                                  "get", "get_deck", "draft_deck"])
+                                  "get", "get_deck", "draft_deck",
+                                  # Grouped under /stats draft 2026-09-03.
+                                  "draft_pool", "draft_rates"])
 def test_superseded_commands_are_gone(gone):
     """Names retired on 2026-08-26, plus the 2026-08-27 renames.
 
     A reappearance means a revert went half-way -- or, for the renames, that
     someone re-added the old name alongside the new one."""
     assert gone not in _registered_command_names()
+
+
+def test_the_draft_subcommands_are_all_reachable():
+    """`/stats draft` is a subcommand GROUP (2026-09-03), so its three bodies
+    hang two levels down. Assigning only the group onto the cog would leave all
+    three unreachable in exactly the way this file exists to catch -- and the
+    group itself does nothing, so nothing would visibly break."""
+    registered = _registered_command_names()
+    assert {"draft", "composition", "rates", "breakdown"} <= registered
+
+    draft = AzothCommands.stats_cmd.children["draft"]
+    assert set(draft.children) == {"composition", "rates", "breakdown"}
 
 
 @pytest.mark.parametrize("gone", ["delete_card", "delete_aspect", "delete_rite",

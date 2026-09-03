@@ -30,11 +30,13 @@ the 2026-08-26 rebuild every game-facing view enforces it via
 clauses. `azoth_logic/stats_format.CUTOFF_VERSION` mirrors it for the footer and
 must move with it, or the footer states a threshold the views aren't enforcing.
 
-**3. The trustworthy dataset is currently tiny.** As of 2026-08-28 there are
-**2 games** at `0.9.0`, out of ~6,500 total — the bump cost 17 of the 19 that
-qualified at `0.8.2`. Any `/stats` number that looks substantial is drawn almost
-entirely from data the cutoff exists to exclude, and most replies will be thin or
-empty until there is play at `0.9.0`.
+**3. The trustworthy dataset is small, but no longer negligible.** As of
+**2026-09-03** there are **21 solo, non-restart runs** at `0.9.0`–`0.9.2` (90
+games at those versions before the `restart` and co-op filters), carrying 590
+card draft offers. It was **2 games** when the cutoff was raised on 2026-08-28,
+so this is real growth — but 21 runs still means a per-hero or per-player split
+is one or two runs wide, and any `/stats` number that looks substantial is
+worth checking against its footer before it is quoted.
 
 ---
 
@@ -51,8 +53,9 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats active_players` | `player_activity_view` | Play counts and hours |
 | `/stats hero` | `hero_info_view` | Per-hero aggregates |
 | `/stats version` | `version_info_view` | Per-version aggregates |
-| `/stats draft_pool` | `draft_deck_view` | Draft pool composition. Command renamed 2026-08-27; **the view kept its old name** |
-| `/stats draft_rates` | `draft_rates_view` | Global pick rates |
+| `/stats draft composition` | `draft_deck_view` | Draft pool composition, as bar charts. **The view kept its old name** through two command renames. See [The draft pool](#the-draft-pool) |
+| `/stats draft rates` | `draft_rates_view` | Pick rate, per item |
+| `/stats draft breakdown` | `draft_dimension_rates_view` | Pick rate by type, element and valence (2026-09-03) |
 
 ### The player card (2026-08-27)
 
@@ -206,8 +209,8 @@ these views by column name:**
 |---|---|
 | `avg_combo` → **`avg_combo_log10`** | Renamed on purpose so stale readers break loudly instead of quietly reporting a meaningless number |
 | `draft_rates_view` reshaped | One row **per item** with numerator and denominator, not one row of comma-joined strings |
-| `draft_deck_view` loses `7v`–`10v` | Valence is 1–6; those columns were permanently zero |
-| `draft_deck_view` gains rites | `events` was permanently zero for the same reason — the view could not see them. Widened to `usage_type in ('draft', 'rite')` on 2026-08-27 (`db/migrations/2026-08-27_draft_pool_include_rites.sql`, game repo) |
+| `draft_deck_view` loses `7v`–`10v` | ⚠️ **This was wrong.** Stated as "valence is 1–6, so those columns were permanently zero". The pool holds four cards above valence 6, and 24 with no valence at all, so the field described 108 of 136 cards. Reversed 2026-09-03 — see [The draft pool](#the-draft-pool) |
+| `draft_deck_view` gains rites | `events` was permanently zero for the same reason — the view could not see them. Widened to `usage_type in ('draft', 'rite')` on 2026-08-27. **Reshaped 2026-09-03**: `events` was the wrong unit, not the wrong subject. Rites are templates drawn with replacement into injected slots, so they are reported as `rite_templates` + `rite_weight_counts` beside the pool rather than pooled into it |
 | `leaderboard_view` gains `combo_numeric`, `result` | An explicitly sortable combo column |
 | Row counts drop everywhere | Cutoff moved `0.6.7` → `0.8.2`; `restart` runs and co-op duplicates excluded |
 
@@ -235,12 +238,232 @@ rebuild computes log10 from `games` instead, because turn-grain data starts at
 `0.8.0` and is ~2 runs deep — sourcing it there would make these views empty
 today. Same quantity; revisit when turn rows are plentiful.
 
+### The draft pool (2026-09-03)
+
+`/stats draft_pool` renders three fields: what is in the pool, the element
+split, and the valence spread. The last two are **bar charts**, and the element
+one is coloured — the nearest of the eight colours Discord will draw inside an
+` ```ansi ` fence to the colours the game itself uses (`GlobalVars.ELEMENTS`,
+mirrored in `card_layout.ELEMENT_COLORS`).
+
+| Element | Game | Discord | Why |
+|---|---|---|---|
+| anima | `#8769E9` | blue `34` | **None of the eight is purple.** Blue `#268bd2` beats pink `#d33682` on RGB distance (105 vs 138) and hue (49° off, against 77°) — anima is a blue-violet at hue 254, and pink lands on the magenta side of it, reading as a different colour family. It was pink until 2026-09-03 |
+| blood | `#EF1212` | red `31` | |
+| sol | `#F9A410` | yellow `33` | |
+| catalyst | — | white `37` | The default: no colour, for no element. Grey `30` was the first choice for that reason and is unreadable in practice — `#4f545c` on a `#2b2d31` block |
+
+**`catalyst` is the bucket of cards with no element**, named after what 23 of
+those 24 cards are. ⚠️ It is still *defined* as a NULL element, not as the type:
+Waxix is an elementless `spell` and is counted there. If more elementless spells
+arrive the label will describe fewer and fewer of the cards under it, and wants
+renaming again.
+
+The charts are not decoration. Both fields are **distributions**, and a
+distribution written out as `1v 23 · 2v 26 · 3v 20` is arithmetic homework — the
+shape only appears if you do the division yourself.
+
+#### Why these are three commands and not one
+
+Grouped under `/stats draft` on 2026-09-03, and deliberately **not merged into
+one reply**. They are neighbours, but they do not rest on the same thing:
+
+| | Population | Cutoff |
+|---|---|---|
+| `composition` | content — 136 cards, 54 aspects | none; a deck has no version |
+| `rates`, `breakdown` | ~2 games at `0.9.0` | `analytics_cutoff()` |
+
+**One embed carries one footer.** A merged reply would have to either claim
+`version >= 0.9.0` over the composition numbers, which are not version-filtered
+at all, or drop the cutoff over the rate numbers — the thing this document opens
+by saying not to do. Grouping gets the tidiness without the lie.
+
+Two smaller reasons. `rates` takes `limit`/`order`/`item_type` and the other two
+take nothing, so a merged reply would re-render identical static content on
+every *"least picked, aspects only"* query while pushing the half you asked for
+further down. And `draft_rates_view` still counts rites while
+`draft_deck_view` no longer does — one reply showing them in half of itself
+invites the misreading they were removed to prevent.
+
+#### The breakdown (2026-09-03)
+
+`draft_dimension_rates_view` — one row per (`dimension`, `bucket`), where
+dimension is `type` (card / aspect / rite, every offer), `element` or `valence`
+(cards only — nothing else carries either, and that is a real absence rather
+than a gap to fill). It answers what neither neighbour can:
+not what the pool holds, and not how one item does, but whether **a whole class
+of card is being ignored**. On 2026-09-03 it says catalysts are 18% of the pool
+and taken 12% of the times they are offered, against 30% for anima and blood —
+which is the shape you would retune a pack on, over 590 offers.
+
+Three things about it are load-bearing:
+
+- **It aggregates from `draft_items`, not from `draft_rates_view`.** That view
+  ends in `having count(*) >= 5` — a floor so a single offer cannot report a
+  100% pick rate. Grouping over its output would average only the items that
+  cleared the floor, biasing every bucket toward frequently-offered cards. A
+  censored sample, which is the failure [DB_SCHEMA.md](DB_SCHEMA.md) names by
+  hand — and not a small one: on 2026-09-03 `draft_rates_view` held **331** card
+  offers against the **590** that actually happened, so 44% of the data was gone
+  before any grouping started.
+- **No floor of its own, and `times_offered` on every row.** At bucket grain the
+  denominators are large because they pool many items; the ones that aren't are
+  visible as thin rather than hidden. `9v` is 0% off five offers, and the table
+  says so.
+- **Cards only, by construction.** `element` and `valence` live on `cards`, so
+  the inner join is the whole scope statement. It carries the same
+  cutoff/`restart`/solo filters as `draft_rates_view` on purpose — two views
+  answering neighbouring questions over different populations is how a
+  comparison between them goes wrong.
+
+It renders as a **table, not a bar chart**: these are four independent rates
+that do not sum to 100, and bars would invite reading them as slices of one pie.
+The bucket order comes from the same functions that order the composition charts
+(`_element_order` / `_valence_order`), so the two line up row for row — which is
+what makes *"27% of the pool, 38% of picks"* legible at a glance.
+
+⚠️ The offer count in the footer is read off **one** dimension. Every offer is
+counted once under its element and again under its valence, so a sum over the
+view is exactly double — the same trap `scoreboard_sample` documents.
+
+#### Rites: templates, not pool members
+
+**A rite is drafted.** It is picked out of a pack like anything else and goes to
+the events zone to be held and later spent
+([EVENTS.md](../../azoth/docs/EVENTS.md) in the game repo). An earlier pass
+today said rites were "injected, not drafted" and removed them from this view
+entirely; the first half of that is true and the conclusion does not follow.
+
+What differs is **how a rite reaches the pack**, and therefore what
+*composition* means for it:
+
+| | How it enters the pool | Copies |
+|---|---|---|
+| card, aspect | The three `draft` decks load 190 items into the draft zone | exactly one each |
+| rite | `_shuffle_in_injected_pools()` then adds `floor(p·pool/(7−p))` further slots — **21** at the default `p = reactant_pool_percent = 0.7` — each filled by an independent weighted draw **with replacement** | 0, 1 or more; the deck is never consumed |
+
+So `22` and `136` are different quantities and adding them gives a number that
+is neither. Rites get **their own field, in their own units** — templates and
+weights, with the injected-slot count derived beside them:
+
+> **22** rites · equal weight
+> *≈21 injected slots (~10% of the pool) at the default rate, drawn with
+> replacement — so ~38% of templates miss a given run*
+
+That last figure is the one a flat count of 22 hides. Twenty-one draws over
+twenty-two equally-weighted templates is `(1 − 1/22)²¹` ≈ **38%** chance that any
+given rite is absent from a run entirely.
+
+**Weight is what governs a template's share** — `deck_contents.weight`, falling
+back to `CardLogic.REACTANT_DEFAULT_WEIGHT = 0.25` when NULL, which is every row
+today, so the draw is uniform. `rite_weight_counts` reports the distribution
+rather than 22 names; the per-rite view is `/stats draft rates`. When the
+weights stop being uniform the closed form above stops holding, and the field
+**withholds** the absent-share rather than printing a plausible wrong number.
+
+⚠️ Two constants here are mirrored from the game and can go stale:
+`stats_format.INJECTED_POOL_PERCENT` (0.7) and the reactant fallback weight.
+Every number derived from them is labelled *"at the default rate"* for that
+reason. And the count is scoped to `usage_type = 'rite'` — reactants share the
+same budget and the same draw, but every reactant deck has been archived since
+2026-08-27, so the rite pool *is* the injected pool today. If reactants return
+they belong in that count, and the slot estimate is wrong until they are added.
+
+#### The correction about rates
+
+The same earlier pass said counting rites beside cards "implies a comparability
+that does not exist". For a raw **count** that is right, and it is why
+[`most_drafted` excludes them](#the-player-card-2026-08-27) — a count-ranked list
+measures the injection rate rather than the player's choices. For a **rate** it
+is backwards: pick rate is conditional on the item being offered, so the
+injection budget — which governs how often a rite is offered and nothing else —
+divides straight back out.
+
+So `/stats draft breakdown` compares all three types directly, and on 21 solo
+runs at `0.9.0`+ they land within three points of each other:
+
+| Type | Pick rate | Offers |
+|---|---|---|
+| card | 26% | 590 |
+| aspect | 27% | 212 |
+| rite | 25% | 126 |
+
+**Rites are taken at the same rate as everything else** — a fact the old framing
+could not have surfaced, because it had ruled the comparison out.
+
+⚠️ One loose end. Rites were **13.6%** of observed offers against the **10%** the
+injection formula predicts (126 of 928, where ~93 was expected — about 3.6
+standard deviations). That is unexplained. It could be the Sacrament aspect, a
+`reactant_pool_percent` that is not 0.7 in play, pack sampling that is not
+uniform over the pool, or the pool size at load differing from the 190
+`deck_contents` rows. **It has not been chased down**, and it is worth a look
+before anyone tunes the injection rate on these numbers.
+
+#### The valence field was short by 28 cards
+
+The reason for the migration underneath. `draft_deck_view` carried a **column
+per valence** and only six of them: `2026-08-26_rebuild_analytics_views.sql`
+dropped `7v`–`10v` on the stated grounds that "valence is 1–6
+(docs/GAME_OVERVIEW.md), so those four columns were permanently zero".
+
+That was false when it was written. The live pool holds
+
+| Card | Element | Valence |
+|---|---|---|
+| Circumvent | blood | 7 |
+| Ouroboros | anima | 9 |
+| Trifold | blood | 9 |
+| Apex | sol | 9 |
+
+plus **24 cards with no valence at all** — the colourless catalysts and one
+spell — which no column ever counted either. So the field summed to 108 of the
+pool's 136 cards. Crucially it did not *read* as a distribution missing 28
+cards; it read as a complete one that happens to stop at 6.
+
+This was the **second** time this view failed this way. Its `events` column was
+permanently zero for the view's whole life because the Rites deck's usage type
+postdated the filter (2026-08-27). One cause both times: **a fixed set of
+columns standing in for an open set of values**, where a value with no column of
+its own is not reported as missing, it is not reported at all.
+
+`db/migrations/2026-09-03_draft_pool_histograms.sql` (game repo) replaces the
+eight element/valence columns with two jsonb histograms keyed by the value
+itself:
+
+```
+element_counts  {"anima": 37, "blood": 38, "sol": 37, "catalyst": 24}
+valence_counts  {"1": 23, ..., "6": 7, "7": 1, "9": 3, "none": 24}
+```
+
+Every card lands in a bucket by construction, valence-less ones under `none`
+rather than nowhere, and there is nothing left to widen the next time the game
+grows a value. `combo` is gone by name as well — it counted cards with a NULL
+element while `combo` means the exponential run score in every other view here.
+
+**Breaking:** `anima`, `blood`, `sol`, `combo` and `1v`–`6v` no longer exist.
+`/stats draft_pool` is the only consumer; it reads the histograms when they are
+present and the old columns when they are not, and **says in the reply** that
+the numbers are incomplete in the second case — the bot is hand-started and may
+be running either side of the migration, but a partial distribution must never
+be drawn as a whole one.
+
+#### Two rules the rendering keeps
+
+- **A non-zero count always gets at least one bar cell.** Scaled to the largest
+  bucket, a rare valence rounds to nothing, and a bar that renders empty says
+  *none* — the same false statement the missing column made. Small buckets are
+  never dropped or merged either.
+- **The `—` row leads the valence chart.** Having no valence is not having more
+  of it than 9, and a row sitting under the scale reads as the far end of it. It
+  carried a caption explaining itself when it was at the bottom; at the top it
+  does not need one.
+
 ### Still open
 
 | Issue | Detail |
 |---|---|
 | `hero_info_view` returns one row | The data, not the SQL — see below |
-| `draft_deck_view.combo` definition | Counts cards with NULL element; AzothBot's `merge_staging` used NULL element **and** NULL valence. The two disagree, and which is right is a content question. `/merge_staging` was hidden 2026-08-27, so nothing acts on the second definition today — but it is the one to reconcile against if the command comes back |
+| ~~`draft_deck_view.combo` definition~~ | Settled 2026-09-03. The two definitions — NULL element, vs NULL element **and** NULL valence — select the **same 24 rows**: every colourless card in the pool is valence-less and vice versa. The column is now `colourless` in `element_counts` and the valence histogram reports the `none` bucket beside it, so a future divergence is visible as two different numbers rather than hidden inside one |
 | `most_drafted` has no denominator | Still a comma-joined label on `player_info_view`. Per-item numbers live in `draft_rates_view` now |
 | The trustworthy dataset is ~2 games | Nothing to do but wait for play at `0.9.0`+ |
 
@@ -492,6 +715,6 @@ A rough order, cheapest and most valuable first:
    | Add `game_type = 'solo'` | all game-facing views |
    | Emit numerator/denominator instead of `string_agg` | `draft_rates_view` — a rewrite, not a patch |
    | Version-filter the `most_drafted` LATERAL, which is currently unfiltered while its own row is | `player_info_view` |
-   | Drop the permanently-zero `7v`–`10v` columns (valence is 1–6) | `draft_deck_view` |
+   | ~~Drop the permanently-zero `7v`–`10v` columns (valence is 1–6)~~ — done, and **wrong**; reversed 2026-09-03 | `draft_deck_view` |
 5. **Add turn-grain commands** once there's enough post-cutoff data to be worth
    querying.

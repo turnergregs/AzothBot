@@ -21,6 +21,15 @@ COLUMNS = {
     "leaderboard": ["player", "combo", "hero", "turns", "act", "level"],
     "hero": ["hero_name", "game_count", "avg_act", "avg_level", "avg_combo_log10", "max_combo"],
     "version": ["version", "game_count", "avg_act", "avg_level", "avg_combo_log10", "max_combo"],
+    # Was ABSENT until 2026-09-03, which is exactly the failure the note above
+    # describes. draft_rates_view returns item_type, item_id, item_name,
+    # element, valence and only then the five rate columns, so the width trim
+    # dropped `times_offered`, `times_picked`, `times_reserved`, `pick_rate`
+    # and `reserve_rate` -- every number in the table -- and the reply was a
+    # ranked list of names with no visible reason for the ranking. `item_id` is
+    # left out for the opposite reason: it is a join key, not information.
+    "draft_rates": ["item_name", "item_type", "pick_rate", "times_picked",
+                    "times_offered"],
 }
 
 
@@ -215,31 +224,94 @@ def add_stats_commands(cls):
             cutoff=False))
         await interaction.followup.send(embed=embed)
 
-    # --- Draft Deck Data ---
-    @stats_cmd.subcommand(name="draft_pool", description="Draft pool composition data")
+    # --- Draft ---------------------------------------------------------
+    # A subcommand GROUP, 2026-09-03. The three replies are neighbours but they
+    # are not one reply: the composition is content with no games behind it and
+    # no cutoff, while the two rate views are ~2 games at 0.9.0 filtered further
+    # by `having times_offered >= 5`. One embed carries one footer, and merging
+    # them would have to either claim the cutoff over content numbers or drop it
+    # over game numbers. Grouping gets the tidiness without the lie.
+    @stats_cmd.subcommand(name="draft", description="The draft pool and how it is picked")
+    async def stats_draft(self, interaction: Interaction):
+        pass
+
+    # --- Draft Pool Composition ---
+    @stats_draft.subcommand(name="composition", description="Draft pool composition")
     @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft pool data.")
-    async def stats_draft_pool(self, interaction: Interaction):
+    async def stats_draft_composition(self, interaction: Interaction):
         records = fetch_all("draft_deck_view")
         if not records:
             return "❌ No draft pool data available."
 
+        # Bar charts rather than runs of "label N", because both fields are
+        # DISTRIBUTIONS and a distribution read as prose is just arithmetic
+        # homework. The element chart is coloured to the game's own element
+        # colours; see stats_format.ANSI_ELEMENT.
+        #
+        # The valence field used to render `range(1, 7)` against a column per
+        # valence, so cards at 7 and 9 -- four of them, in the pool today -- were
+        # counted by nothing and shown by nothing, and the field silently
+        # described 108 of 136 cards. stats_format reads the jsonb histogram
+        # added by 2026-09-03_draft_pool_histograms.sql, which cannot have that
+        # failure, and falls back to the old columns with the reply saying so.
         row = records[0]
         embed = nextcord.Embed(title="Draft pool", colour=0x2ECC71)
-        embed.add_field(name="Contents", inline=False, value=(
-            f"**{row.get('cards', 0)}** cards · "
-            f"**{row.get('aspects', 0)}** aspects · "
-            f"**{row.get('events', 0)}** rites"))
-        embed.add_field(name="Element", inline=False, value=(
-            f"anima **{row.get('anima', 0)}** · blood **{row.get('blood', 0)}** · "
-            f"sol **{row.get('sol', 0)}** · colourless **{row.get('combo', 0)}**"))
-        embed.add_field(name="Valence", inline=False, value=" · ".join(
-            f"{v}v **{row.get(f'{v}v', 0)}**" for v in range(1, 7)))
+        embed.add_field(name="Contents", inline=False,
+                        value=sf.draft_pool_contents(row))
+        embed.add_field(name="Element", inline=False,
+                        value=sf.draft_pool_elements(row))
+        embed.add_field(name="Valence", inline=False,
+                        value=sf.draft_pool_valence(row))
+
+        # Rites LAST and in their own field, never folded into Contents. They
+        # are templates drawn with replacement into injected slots, not pool
+        # members counted once each, so "22 rites" beside "136 cards" reads as
+        # 22 pool slots and is wrong by construction. Dropped entirely on a view
+        # that does not carry them, rather than shown as zero.
+        rites = sf.draft_pool_rites(row)
+        if rites:
+            embed.add_field(name="Rites", inline=False, value=rites)
+
         # Content only -- no games behind it, so no cutoff and no game count.
-        embed.set_footer(text="base decks, not archived, usage draft or rite")
+        embed.set_footer(text="base decks, not archived — usage draft, plus rite templates")
+        await interaction.followup.send(embed=embed)
+
+    # --- Draft Rates, by element and valence ---
+    @stats_draft.subcommand(name="breakdown", description="Pick rate by element and valence")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft breakdown.")
+    async def stats_draft_breakdown(self, interaction: Interaction):
+        # Caught the way /stats scoreboard is: an unmigrated view is PGRST205,
+        # and "not migrated" is a different answer from "nobody has drafted
+        # yet". Naming the file is the whole value of catching it.
+        try:
+            records = fetch_all("draft_dimension_rates_view")
+        except SupabaseError:
+            return ("❌ `draft_dimension_rates_view` is not migrated — run "
+                    "`db/migrations/2026-09-03_draft_dimension_rates.sql`.")
+
+        if not records:
+            return "❌ No card draft data at or above the cutoff yet."
+
+        embed = nextcord.Embed(title="Draft picks by kind", colour=0x1ABC9C)
+        # Type first: it is the only breakdown covering every offer, and the
+        # two below it are cards only.
+        embed.add_field(name="By type", inline=False,
+                        value=sf.draft_rate_by_type(records))
+        embed.add_field(name="By element", inline=False,
+                        value=sf.draft_rate_by_element(records))
+        embed.add_field(name="By valence", inline=False,
+                        value=sf.draft_rate_by_valence(records))
+
+        # NOT len(records) and not a sum over the view: every offer is counted
+        # once under its element and again under its valence, so the view totals
+        # twice the real number. draft_offers_sampled reads one dimension.
+        offers = sf.draft_offers_sampled(records)
+        embed.set_footer(text=sf.footer(
+            records, note=f"{offers} card offer{'' if offers == 1 else 's'}"))
         await interaction.followup.send(embed=embed)
 
     # --- Draft Rate Data ---
-    @stats_cmd.subcommand(name="draft_rates", description="Draft pick rates, per item")
+    @stats_draft.subcommand(name="rates", description="Draft pick rates, per item")
     @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft rate data.")
     async def stats_draft_rates(
         self,
@@ -254,7 +326,10 @@ def add_stats_commands(cls):
         item_type: str = SlashOption(
             description="Restrict to one content type",
             required=False,
-            choices={"Card": "card", "Aspect": "aspect", "Event": "event"},
+            # The LABEL is Rite; the value stays `event` because that is what
+            # draft_rates_view.item_type stores. Renaming the value would need a
+            # view change for a word.
+            choices={"Card": "card", "Aspect": "aspect", "Rite": "event"},
         ),
     ):
         # draft_rates_view returns ONE ROW PER ITEM as of 2026-08-26, carrying
@@ -270,7 +345,8 @@ def add_stats_commands(cls):
 
         note = f"{order} picked" + (f", {item_type}s only" if item_type else "")
         await _send_table(interaction, "Draft pick rates", records,
-                          rank=True, note=note, colour=0x1ABC9C)
+                          COLUMNS["draft_rates"], rank=True, note=note,
+                          colour=0x1ABC9C)
 
 
     @stats_leaderboard.on_autocomplete("player")
@@ -316,5 +392,10 @@ def add_stats_commands(cls):
     cls.stats_hero = stats_hero
     cls.stats_version = stats_version
     cls.stats_scoreboard = stats_scoreboard
-    cls.stats_draft_pool = stats_draft_pool
+    # The group AND each of its subcommands. Assigning only the group would
+    # leave the three bodies unreachable in exactly the way
+    # test_command_registration.py exists to catch.
+    cls.stats_draft = stats_draft
+    cls.stats_draft_composition = stats_draft_composition
+    cls.stats_draft_breakdown = stats_draft_breakdown
     cls.stats_draft_rates = stats_draft_rates
