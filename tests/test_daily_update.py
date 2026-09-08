@@ -386,8 +386,10 @@ def test_oversized_field_values_are_truncated():
 
 
 def test_quiet_day_produces_one_embed():
+    # "games" -> "runs" (2026-09-08): tutorial rows are no longer counted as
+    # runs, so the report says which population it means everywhere.
     embeds = du._build_update_embeds({"total_games": 0})
-    assert len(embeds) == 1 and "No games" in embeds[0].description
+    assert len(embeds) == 1 and "No runs were played" in embeds[0].description
 
 
 # ---------------------------------------------------------------------------
@@ -525,3 +527,243 @@ def test_the_sweep_still_honours_every_skip_rule(monkeypatch, tmp_path):
     asyncio.run(du._send_due_channels(_Bot(object()), "loop"))
 
     assert sent == ["due"]
+
+
+# ---------------------------------------------------------------------------
+# Population split  --  opening-turn restarts and tutorial runs
+# ---------------------------------------------------------------------------
+#
+# Added 2026-09-08 after a daily report read "15 games started, of which 13 were
+# restarts". 13 of those 15 rows were runs on the Tutorial Deck: nine of them a
+# developer iterating on the tutorial (which does NOT trip
+# TestingConfig.is_testing(), so it uploads like any other run) and the rest a
+# genuine new player's first walkthrough. The report was describing tutorial
+# iteration as if it were play.
+
+TUTORIAL_DECK = 31
+
+
+def _g(**kw):
+    """A games row with the fields _partition_games actually reads."""
+    row = {"uuid": "g", "player_uuid": "p", "result": None,
+           "turns_played": 5, "starter_deck": 29, "game_type": "solo"}
+    row.update(kw)
+    return row
+
+
+def test_turn_one_is_abandoned_during_the_first_turn_not_after_it():
+    """The off-by-one this whole split turns on.
+
+    `GlobalVars.turn_count` is incremented at the START of a turn
+    (main.gd::handle_turn_start), and SaveManager.clear_save reports the value
+    stored in the save. So turns_played == 1 means the run was abandoned DURING
+    turn 1 and never reached its first draft, while turns_played == 2 already
+    means one COMPLETED turn plus its draft.
+
+    Reading the boundary as "<= 2" silently deletes real one-turn runs; reading
+    it as "< 1" deletes nothing at all. Both mutations must fail here.
+    """
+    rows = [
+        _g(uuid="dropped", result="restart", turns_played=1),
+        _g(uuid="kept", result="restart", turns_played=2),
+    ]
+    regular, tutorial, dropped = du._partition_games(rows, set())
+
+    assert [g["uuid"] for g in dropped] == ["dropped"]
+    assert [g["uuid"] for g in regular] == ["kept"]
+    assert tutorial == []
+
+
+def test_only_restarts_are_dropped_on_turn_one():
+    """A death on turn 1 is a real outcome, not an abandoned run."""
+    rows = [
+        _g(uuid="death", result="death", turns_played=1),
+        _g(uuid="open", result=None, turns_played=1),
+        _g(uuid="restart", result="restart", turns_played=1),
+    ]
+    regular, _, dropped = du._partition_games(rows, set())
+
+    assert [g["uuid"] for g in dropped] == ["restart"]
+    assert {g["uuid"] for g in regular} == {"death", "open"}
+
+
+def test_unknown_turn_count_is_not_assumed_to_be_turn_one():
+    """NULL turns_played means "unknown", not "turn 1" -- keep the row."""
+    regular, _, dropped = du._partition_games(
+        [_g(uuid="x", result="restart", turns_played=None)], set())
+
+    assert dropped == []
+    assert [g["uuid"] for g in regular] == ["x"]
+
+
+def test_tutorial_runs_are_split_out_but_not_dropped():
+    """A player working through the tutorial is still activity -- it just isn't
+    a run whose duration, act or combo is comparable to a drafted one."""
+    rows = [
+        _g(uuid="tut", starter_deck=TUTORIAL_DECK, turns_played=6),
+        _g(uuid="real", starter_deck=29, turns_played=6),
+    ]
+    regular, tutorial, dropped = du._partition_games(rows, {TUTORIAL_DECK})
+
+    assert [g["uuid"] for g in tutorial] == ["tut"]
+    assert [g["uuid"] for g in regular] == ["real"]
+    assert dropped == []
+
+
+def test_the_opening_turn_drop_is_applied_before_the_tutorial_split():
+    """Order matters: a tutorial run abandoned on turn 1 is excluded outright,
+    not counted on the tutorial line."""
+    regular, tutorial, dropped = du._partition_games(
+        [_g(uuid="x", starter_deck=TUTORIAL_DECK, result="restart", turns_played=1)],
+        {TUTORIAL_DECK},
+    )
+
+    assert [g["uuid"] for g in dropped] == ["x"]
+    assert tutorial == [] and regular == []
+
+
+def test_unknown_deck_stays_in_the_regular_population():
+    """186 historical rows have a NULL starter_deck. Unclassifiable is counted,
+    not hidden -- over-reporting activity beats silently deleting it."""
+    regular, tutorial, _ = du._partition_games([_g(uuid="x", starter_deck=None)], {TUTORIAL_DECK})
+
+    assert [g["uuid"] for g in regular] == ["x"]
+    assert tutorial == []
+
+
+def test_an_unreadable_decks_table_classifies_nothing_as_tutorial(monkeypatch):
+    """Same failure direction as the live-content filter in content_index: an
+    empty set filters nothing rather than hiding everything. Reporting a real
+    run as a tutorial because a read failed is the worse error."""
+    class Boom:
+        def select(self, *a, **k):
+            return self
+        def eq(self, *a, **k):
+            return self
+        def execute(self):
+            raise RuntimeError("PostgREST is down")
+
+    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(lambda t: Boom())})())
+
+    assert du._fetch_tutorial_deck_ids() == set()
+
+
+def test_a_tutorial_only_day_is_not_reported_as_a_quiet_day():
+    """total_games counts the regular population only, so a day of pure tutorial
+    play has total_games == 0. Printing "no runs were played" would hide exactly
+    the rows this split exists to make visible."""
+    embeds = du._build_update_embeds({
+        "total_games": 0, "tutorial_games": 11, "tutorial_players": 2,
+        "tutorial_restarts": 10, "dropped_opening_turn": 2,
+        "unique_players": 3, "new_players": 1, "restarts": 0, "coop_rows": 0,
+        "max_level": 0, "max_act": 0, "max_combo": 0,
+        "avg_duration_sec": 0, "avg_turns": 0, "total_playtime_sec": 0,
+        "measured_games": 0, "game_results": {}, "turn_grain": {},
+        "total_boss_fights": 0, "boss_wins": 0, "boss_losses": 0, "draft": {},
+    })
+
+    text = " ".join(f.value for e in embeds for f in e.fields)
+    assert "11" in text and "tutorial" in text.lower()
+    assert not any("No runs were played" in (e.description or "") for e in embeds)
+
+
+def test_daily_stats_derives_every_number_from_the_regular_population(monkeypatch):
+    """End-to-end through _fetch_daily_stats.
+
+    The turn-grain and draft fetches used to be handed the raw day. A scripted
+    tutorial turn is no more comparable to a drafted one than a boss turn is to
+    a regular one, so they must receive the regular uuids only.
+    """
+    games = [
+        _g(uuid="real", player_uuid="p1", result="death", turns_played=12,
+           elapsed_sec=1507, level_reached=9, act_reached=3, highest_combo="1024"),
+        _g(uuid="tut", player_uuid="p2", starter_deck=TUTORIAL_DECK,
+           result="restart", turns_played=2, elapsed_sec=60,
+           level_reached=1, act_reached=1, highest_combo="2"),
+        _g(uuid="bail", player_uuid="p2", starter_deck=TUTORIAL_DECK,
+           result="restart", turns_played=1, elapsed_sec=31,
+           level_reached=0, act_reached=1, highest_combo="1"),
+    ]
+
+    class Q:
+        def __init__(self, t):
+            self.t = t
+            self.rows = {"games": games,
+                         "players": [],
+                         "decks": [{"id": TUTORIAL_DECK, "usage_type": "tutorial"}]}.get(t, [])
+        def select(self, *a, **k):
+            return self
+        def gte(self, *a, **k):
+            return self
+        def lt(self, *a, **k):
+            return self
+        def eq(self, *a, **k):
+            return self
+        def in_(self, *a, **k):
+            return self
+        def execute(self):
+            return type("R", (), {"data": self.rows})()
+
+    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+
+    seen = {}
+    monkeypatch.setattr(du, "_fetch_turn_grain_stats",
+                        lambda uuids: seen.setdefault("turn_grain", list(uuids)) and {} or {})
+    monkeypatch.setattr(du, "_fetch_draft_stats",
+                        lambda uuids, by: seen.setdefault("draft", list(uuids)) and {} or {})
+
+    stats = du._fetch_daily_stats()
+
+    assert stats["total_games"] == 1              # the tutorial rows are not runs
+    assert stats["tutorial_games"] == 1           # 'tut' -- 'bail' was dropped first
+    assert stats["dropped_opening_turn"] == 1
+    assert stats["unique_players"] == 2           # a tutorial-only player still played
+    assert stats["max_level"] == 9                # not the tutorial's 1
+    assert stats["total_playtime_sec"] == 1507    # not 1598
+    assert stats["game_results"] == {"death": 1}
+    # The downstream fetches saw the regular uuids ONLY.
+    assert seen["turn_grain"] == ["real"]
+    assert seen["draft"] == ["real"]
+
+
+def test_the_day_is_bucketed_on_started_at_not_finished_at(monkeypatch):
+    """REGRESSION (2026-09-08): `games.finished_at` was never a finish time.
+
+    Nothing in the game wrote that column until 2026-09-08, and it carries
+    `default now()`, so it held the moment `open_run()` INSERTED the stub row --
+    a median of 8 seconds into turn 1. It equalled `created_at` to the
+    microsecond on all 124 rows measured.
+
+    `started_at` is the true run start and is what this report claims to count.
+    It is also the only column that works on both sides of
+    `db/migrations/2026-09-08_games_finished_at.sql`: once that drops the
+    default, an abandoned run has `finished_at` NULL and a finished_at window
+    silently drops the abandoned-run population `open_run` exists to expose.
+    """
+    filtered_on = []
+
+    class Q:
+        def __init__(self, t):
+            self.t = t
+        def select(self, *a, **k):
+            return self
+        def gte(self, col, _v):
+            if self.t == "games":
+                filtered_on.append(col)
+            return self
+        def lt(self, col, _v):
+            if self.t == "games":
+                filtered_on.append(col)
+            return self
+        def eq(self, *a, **k):
+            return self
+        def in_(self, *a, **k):
+            return self
+        def execute(self):
+            return type("R", (), {"data": []})()
+
+    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+    du._fetch_daily_stats()
+
+    assert filtered_on == ["started_at", "started_at"]
+    assert "finished_at" not in filtered_on

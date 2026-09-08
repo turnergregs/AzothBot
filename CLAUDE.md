@@ -99,6 +99,15 @@ All docs live in `docs/`. Read before changing a system.
   quantities. A rite pick **rate** IS comparable to a card's (the offer
   denominator divides the injection budget out); a raw pick **count** is not,
   which is what `most_drafted` excludes them from.
+- **The daily report counts three populations, not one.** `_partition_games`
+  drops opening-turn restarts (`result = 'restart'` **and `turns_played <= 1`** —
+  `turn_count` increments at the *start* of a turn, so 1 means "abandoned during
+  turn 1" and 2 already means one completed turn), splits tutorial-deck runs onto
+  their own line, and every other figure derives from what is left. Developer
+  iteration on the tutorial does **not** trip `TestingConfig.is_testing()`, which
+  only fires on content overrides — that is why it has to be filtered here at
+  all. An unreadable `decks` read classifies nothing as tutorial rather than
+  everything. See `docs/ANALYTICS.md` § Three populations, not one.
 - **The render cache evicts on write, not on a timer.** Size-capped LRU
   (`art_cache._evict`). A daily sweep was rejected: the bot is hand-started, so a
   timer may not fire for weeks, and growth is bursty rather than
@@ -132,7 +141,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 712 tests, all offline** (`docs/TESTING.md`):
+**pytest, 782 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest

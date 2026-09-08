@@ -266,6 +266,69 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     }
 
 
+def _fetch_tutorial_deck_ids() -> set[int]:
+    """Deck ids whose `usage_type` is 'tutorial'.
+
+    An empty set means "classify nothing as a tutorial", and that is the
+    deliberate failure mode: an unreadable or empty `decks` read leaves every
+    game in the regular population, which OVER-reports real activity rather than
+    hiding it. Same reasoning as the live-content filter in `content_index` --
+    an empty live set filters nothing rather than hiding everything.
+    """
+    try:
+        rows = (
+            supabase.table("decks")
+            .select("id, usage_type")
+            .eq("usage_type", "tutorial")
+            .execute()
+        ).data or []
+    except Exception:
+        return set()
+    return {r["id"] for r in rows if r.get("id") is not None}
+
+
+def _partition_games(games: list[dict], tutorial_deck_ids: set[int]) -> tuple[list, list, list]:
+    """Split a day's `games` rows into (regular, tutorial, opening_turn_restarts).
+
+    Two populations are pulled out of the activity counts, both because they
+    describe something other than a person playing a run:
+
+    **Opening-turn restarts** -- `result = 'restart'` with `turns_played <= 1`.
+    `GlobalVars.turn_count` is incremented at the START of a turn
+    (`main.gd::handle_turn_start`) and `SaveManager.clear_save` reports the value
+    from the save, so 1 means the run was abandoned DURING turn 1 and never
+    reached its first draft; 2 already means one completed turn. Getting that
+    boundary backwards is easy and silently drops real runs, so it is asserted in
+    the tests.
+
+    `turns_played` is required to be present: NULL is "unknown", not "turn 1",
+    and a row that cannot say how far it got is kept rather than assumed short.
+
+    **Tutorial games** -- any run on a deck whose `usage_type` is 'tutorial'.
+    These are a different population from a normal run whichever end they come
+    from: developer iteration on the tutorial (which does NOT trip
+    `TestingConfig.is_testing()`, so it uploads like any other run) and a real
+    player's first-time walkthrough are both scripted content, not a run whose
+    duration, act or combo is comparable to a drafted one. They are reported on
+    their own line rather than dropped, because a player working through the
+    tutorial is still activity.
+
+    Order matters: the opening-turn drop is applied FIRST, so a tutorial run
+    abandoned on turn 1 is excluded outright rather than inflating the tutorial
+    line.
+    """
+    regular, tutorial, dropped = [], [], []
+    for g in games:
+        turns = g.get("turns_played")
+        if g.get("result") == "restart" and turns is not None and _to_number(turns, 99) <= 1:
+            dropped.append(g)
+        elif g.get("starter_deck") in tutorial_deck_ids:
+            tutorial.append(g)
+        else:
+            regular.append(g)
+    return regular, tutorial, dropped
+
+
 def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
     """Turn-grain aggregates for a set of games: boss outcomes, links per turn,
     and level-up reward pick rates.
@@ -377,15 +440,33 @@ def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
 
 
 def _fetch_daily_stats():
-    """Query supabase for yesterday's game activity stats."""
+    """Query supabase for yesterday's game activity stats.
+
+    Bucketed on `games.started_at` -- runs STARTED in the CST day. See the
+    comment on the query itself for why not `finished_at`.
+    """
     start, end = _yesterday_range_utc()
 
-    # Games finished yesterday
+    # Runs STARTED yesterday, bucketed on `started_at`.
+    #
+    # This used to filter on `finished_at`, which was never a finish time. The
+    # game wrote nothing to that column until 2026-09-08 and it carries
+    # `default now()`, so it held the moment `open_run()` inserted the stub row
+    # -- a median of 8 seconds into turn 1. It equalled `created_at` to the
+    # microsecond on all 124 rows measured, which is to say the report was
+    # already bucketing by run start; it just did not know that.
+    #
+    # `started_at` is the true run start, is what the section header claims to
+    # count, and is the only choice that works on BOTH sides of
+    # `db/migrations/2026-09-08_games_finished_at.sql`: once that drops the
+    # default, an abandoned run has `finished_at` NULL and a finished_at window
+    # would silently drop the abandoned-run population that `open_run` exists to
+    # make visible. It is NULL on no row since id 6000.
     games = (
         supabase.table("games")
-        .select("id, uuid, player_uuid, level_reached, highest_combo, turns_played, elapsed_sec, result, act_reached, game_type, version")
-        .gte("finished_at", start)
-        .lt("finished_at", end)
+        .select("id, uuid, player_uuid, level_reached, highest_combo, turns_played, elapsed_sec, result, act_reached, game_type, version, starter_deck")
+        .gte("started_at", start)
+        .lt("started_at", end)
         .execute()
     ).data or []
 
@@ -398,6 +479,17 @@ def _fetch_daily_stats():
         .execute()
     ).data or []
 
+    # Split off the two populations that are not a person playing a run: runs
+    # abandoned during turn 1, which are dropped outright, and tutorial-deck runs,
+    # which are reported on their own line. See _partition_games for why each.
+    #
+    # EVERYTHING below derives from `regular`. That is the point of doing this
+    # here rather than at each call site -- the turn-grain and draft fetches used
+    # to be handed the raw day, and a scripted tutorial turn is no more
+    # comparable to a drafted one than a boss turn is to a regular one.
+    regular, tutorial_games, dropped_games = _partition_games(
+        games, _fetch_tutorial_deck_ids())
+
     # Turn-grain data: boss outcomes, links per turn, level-up rewards.
     #
     # `boss_fights` was FROZEN 2026-08-25, so the old boss section here reported
@@ -406,29 +498,36 @@ def _fetch_daily_stats():
     #
     # Solo uuids only: co-op records one row per participant and would multiply
     # every turn-grain row (docs/DB_SCHEMA.md caveat 9).
-    solo_uuids = [g["uuid"] for g in games if g.get("uuid") and g.get("game_type") == "solo"]
+    solo_uuids = [g["uuid"] for g in regular if g.get("uuid") and g.get("game_type") == "solo"]
     turn_grain = _fetch_turn_grain_stats(solo_uuids)
 
     # Draft data for yesterday's games
-    game_uuids = [g["uuid"] for g in games if g.get("uuid")]
-    game_by_uuid = {g["uuid"]: g for g in games if g.get("uuid")}
+    game_uuids = [g["uuid"] for g in regular if g.get("uuid")]
+    game_by_uuid = {g["uuid"]: g for g in regular if g.get("uuid")}
     draft_stats = _fetch_draft_stats(game_uuids, game_by_uuid)
 
-    total_games = len(games)
-    unique_players = len({g["player_uuid"] for g in games})
+    total_games = len(regular)
+    # Unique players spans regular AND tutorial rows: someone who only played the
+    # tutorial yesterday still played. Only the dropped opening-turn restarts are
+    # outside every count.
+    unique_players = len({g["player_uuid"] for g in regular + tutorial_games})
     new_player_count = len(new_players)
 
-    # COUNTS stay inclusive -- a restart is still someone playing, and this is an
-    # activity report. AVERAGES do not: a restart is usually a few seconds and
-    # one turn, so pooling them drags every mean toward zero. Same reasoning for
+    # Within the regular population, COUNTS stay inclusive -- a restart that got
+    # past the opening turn is still someone playing, and this is an activity
+    # report. AVERAGES do not: a restart is usually a few seconds and a couple of
+    # turns, so pooling them drags every mean toward zero. Same reasoning for
     # co-op, which records one row per participant (docs/DB_SCHEMA.md caveat 9).
     # The embed labels which population each number describes.
     measured = [
-        g for g in games
+        g for g in regular
         if g.get("result") != "restart" and g.get("game_type") == "solo"
     ]
-    restarts = sum(1 for g in games if g.get("result") == "restart")
-    coop_rows = sum(1 for g in games if g.get("game_type") != "solo")
+    restarts = sum(1 for g in regular if g.get("result") == "restart")
+    coop_rows = sum(1 for g in regular if g.get("game_type") != "solo")
+
+    tutorial_restarts = sum(1 for g in tutorial_games if g.get("result") == "restart")
+    tutorial_players = len({g["player_uuid"] for g in tutorial_games})
 
     max_level = max((_to_number(g.get("level_reached")) for g in measured), default=0)
     max_combo = max((_to_number(g.get("highest_combo")) for g in measured), default=0)
@@ -436,7 +535,10 @@ def _fetch_daily_stats():
 
     durations = [_to_number(g["elapsed_sec"]) for g in measured if g.get("elapsed_sec")]
     avg_duration = sum(durations) / len(durations) if durations else 0
-    total_playtime = sum(_to_number(g.get("elapsed_sec")) for g in games)
+    # Playtime keeps restarts in -- time spent on a run that was later abandoned
+    # was still time spent. It is the regular population only, so it does not
+    # silently absorb tutorial or opening-turn rows.
+    total_playtime = sum(_to_number(g.get("elapsed_sec")) for g in regular)
 
     turns = [_to_number(g["turns_played"]) for g in measured if g.get("turns_played")]
     avg_turns = sum(turns) / len(turns) if turns else 0
@@ -444,7 +546,7 @@ def _fetch_daily_stats():
     # NULL result on a 0.8.0+ row means the run was abandoned or is still in
     # progress -- it is real data, not a gap. "unknown" implied a defect.
     results = {}
-    for g in games:
+    for g in regular:
         r = g.get("result") or "abandoned / in progress"
         results[r] = results.get(r, 0) + 1
 
@@ -467,6 +569,10 @@ def _fetch_daily_stats():
         "measured_games": len(measured),
         "restarts": restarts,
         "coop_rows": coop_rows,
+        "tutorial_games": len(tutorial_games),
+        "tutorial_restarts": tutorial_restarts,
+        "tutorial_players": tutorial_players,
+        "dropped_opening_turn": len(dropped_games),
         "boss_error": boss_error,
         "turn_grain": turn_grain,
         "total_boss_fights": total_boss_fights,
@@ -511,10 +617,21 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
     yesterday = _yesterday_cst_str()
     color = 0x7B2D8E
 
-    if stats["total_games"] == 0:
+    # "Nothing happened" has to consider the split-out populations too. A day of
+    # pure tutorial play, or of nothing but opening-turn restarts, has
+    # total_games == 0 and is NOT a quiet day -- reporting one would hide the
+    # very rows this split exists to make visible.
+    if stats["total_games"] == 0 and not stats.get("tutorial_games"):
+        lines = ["No runs were played yesterday."]
+        if stats.get("dropped_opening_turn"):
+            lines.append(
+                f"({stats['dropped_opening_turn']} restart"
+                f"{'' if stats['dropped_opening_turn'] == 1 else 's'} in the opening "
+                f"turn, excluded.)"
+            )
         embed = nextcord.Embed(
             title=f"Daily Activity Report — {yesterday}",
-            description="No games were played yesterday.",
+            description="\n".join(lines),
             color=color,
         )
         return [embed]
@@ -522,18 +639,40 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
     # Collect all fields as (name, value, inline) tuples
     fields = []
 
-    # Player activity. Counts are inclusive; restarts/co-op are called out so the
-    # averages below can be read against the right denominator.
+    # Player activity. "Runs", not "games": tutorial rows and opening-turn
+    # restarts are no longer in this count, and the lines below say where they
+    # went. Within the count restarts stay inclusive, so the averages further
+    # down can be read against the right denominator.
     player_lines = [
         f"**{stats['unique_players']}** unique players",
         f"**{stats['new_players']}** new players",
-        f"**{stats['total_games']}** games started",
+        f"**{stats['total_games']}** runs started",
     ]
     if stats.get("restarts"):
-        player_lines.append(f"— of which **{stats['restarts']}** were restarts")
+        n = stats["restarts"]
+        player_lines.append(
+            f"— of which **{n}** {'was a restart' if n == 1 else 'were restarts'}")
     if stats.get("coop_rows"):
         player_lines.append(
             f"— **{stats['coop_rows']}** co-op rows (one per participant, not per session)"
+        )
+    if stats.get("tutorial_games"):
+        tutorial_line = (
+            f"**{stats['tutorial_games']}** tutorial games from "
+            f"**{stats['tutorial_players']}** player"
+            f"{'' if stats.get('tutorial_players') == 1 else 's'}"
+        )
+        if stats.get("tutorial_restarts"):
+            tutorial_line += f" ({stats['tutorial_restarts']} restarted)"
+        # Counted separately and excluded from every number below: a scripted
+        # tutorial run's duration, act and combo are not comparable to a
+        # drafted one, whether it is a first-time player or a developer
+        # iterating on the tutorial.
+        player_lines.append(tutorial_line + " — not counted above")
+    if stats.get("dropped_opening_turn"):
+        n = stats["dropped_opening_turn"]
+        player_lines.append(
+            f"*{n} restart{'' if n == 1 else 's'} in the opening turn, excluded*"
         )
     fields.append(("Players & Games", "\n".join(player_lines), False))
 

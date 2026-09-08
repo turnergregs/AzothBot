@@ -429,6 +429,7 @@ what you would want to force. Full policy:
 | `/stats scoreboard` | — | — |
 | `/stats draft composition` | — | — |
 | `/stats draft breakdown` | — | — |
+| `/stats draft embellishments` | — | — |
 | `/stats draft rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/event) |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 
@@ -487,6 +488,24 @@ replies are ~2 games at `0.9.0`, and one embed carries one footer. See
 grouping `draft_rates_view`, whose `having count(*) >= 5` floor would bias every
 bucket toward frequently-offered cards. An unmigrated view is named in the reply
 rather than shown as "no data".
+
+`/stats draft embellishments` (2026-09-04) reads
+`draft_embellishment_rates_view`: bare vs embellished pick rate, the gap between
+them stated in percentage **points**, then break-downs by kind, by enhancement
+name and by attribute name. It is the first reply that can say whether the
+**Craft** level-up reward buys anything.
+
+Two things about it that are not true of its neighbours:
+
+- **It excludes reserved offers**, which no other draft view does. This changes
+  nothing — the reserve mechanic was retired on 2026-09-04 and had been
+  unreachable since 0.7, so no offer above the cutoff is reserved (see
+  [ANALYTICS.md](ANALYTICS.md#embellished-cards)). The reply does not warn about
+  it for that reason.
+- **An empty reply is expected for a while.** The view filters
+  `embellished is not null`, so it holds nothing until runs from the first
+  client version that records the columns land.
+  The reply distinguishes that from an unmigrated view, which it names.
 
 ⚠️ **`/stats draft rates` was showing no numbers at all.** `draft_rates` had no
 entry in `stats.COLUMNS`, so `table()` kept the view's own column order —

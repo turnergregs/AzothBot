@@ -954,10 +954,38 @@ OFFERS_CAPTION = "*n = times offered*"
 # The order the contents line names them in, so the two read the same way.
 TYPE_ORDER = ["card", "aspect", "rite"]
 
+# Draft embellishments (draft_embellishment_rates_view). Bare FIRST in every
+# one of these: it is the baseline the others are read against, so it belongs at
+# the top of the column rather than sorted in among them.
+EMBELLISHED_ORDER = ["bare", "embellished"]
 
-def _type_order(keys) -> list:
-    known = [name for name in TYPE_ORDER if name in keys]
-    return known + sorted(str(k) for k in keys if k not in TYPE_ORDER)
+# DraftEmbellisher.KINDS order.
+KIND_ORDER = ["upgrade", "attribute", "enhancement"]
+
+# EnhancementVisuals.ACTIVE_ENHANCEMENT_NAMES and
+# DraftEmbellisher.DRAFT_ATTRIBUTE_NAMES. Both are expected to grow -- the
+# active enhancement list exists precisely so a new one can be authored and
+# previewed before it goes live -- so an unknown name sorts in at the end rather
+# than being dropped. That is the whole reason the view is long-format.
+ENHANCEMENT_ORDER = ["Sealed", "Etched", "Glass", "Lucky"]
+ATTRIBUTE_ORDER = ["Augment", "Decrement", "Ascending", "Descending",
+                   "Inert", "Ritualistic"]
+
+
+def _fixed_order(order: list):
+    """Bucket keys in a curated order, with anything unrecognised sorted after.
+
+    Every dimension whose buckets are a hand-maintained vocabulary works this
+    way: the game can add a value before this file hears about it, and dropping
+    it would silently under-report rather than look wrong.
+    """
+    def sort_keys(keys) -> list:
+        known = [name for name in order if name in keys]
+        return known + sorted(str(k) for k in keys if k not in order)
+    return sort_keys
+
+
+_type_order = _fixed_order(TYPE_ORDER)
 
 
 def _dimension_rows(rows: list, dimension: str) -> list:
@@ -971,6 +999,10 @@ def _dimension_rows(rows: list, dimension: str) -> list:
         "type": (_type_order, str),
         "element": (_element_order, str),
         "valence": (_valence_order, _valence_label),
+        "embellished": (_fixed_order(EMBELLISHED_ORDER), str),
+        "kind": (_fixed_order(KIND_ORDER), str),
+        "enhancement": (_fixed_order(ENHANCEMENT_ORDER), str),
+        "attribute": (_fixed_order(ATTRIBUTE_ORDER), str),
     }[dimension]
     return [(label(key), key, by_bucket[key]) for key in order(by_bucket)]
 
@@ -1052,6 +1084,112 @@ def draft_offers_sampled(rows: list) -> int:
         if entries:
             return sum(int(row.get("times_offered") or 0) for _, _, row in entries)
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Pick rate by draft embellishment
+# ---------------------------------------------------------------------------
+# `draft_embellishment_rates_view`, same long format as the breakdown above and
+# rendered through the same _rate_table, so the two read identically.
+#
+# Two questions. "Does an embellishment change a pick decision at all" is the
+# bare-vs-embellished gap; "which one" is the per-name break-down. The first is
+# the first evidence we have ever had about whether Craft is worth a level-up
+# slot, so it leads.
+#
+# This view excludes reserved offers and no other draft view does. As of
+# 2026-09-04 that changes nothing -- there are no reserved offers above the
+# cutoff at all, because the reserve button is hidden in hud.tscn -- so the
+# embed does not warn about a difference the reader cannot observe.
+
+
+def draft_rate_by_embellishment(rows: list) -> str:
+    """Bare vs embellished, the headline split."""
+    entries = _dimension_rows(rows, "embellished")
+    if not entries:
+        return "*no embellishment data yet*"
+    return _rate_table(entries, "Card") + "\n" + OFFERS_CAPTION
+
+
+def draft_rate_by_kind(rows: list) -> str:
+    """Pick rate per embellishment kind.
+
+    An offer carrying two kinds appears under both -- the three roll
+    independently -- so these do not partition the embellished bucket above and
+    their denominators do not sum to it.
+    """
+    entries = _dimension_rows(rows, "kind")
+    if not entries:
+        return "*no embellishment data yet*"
+    return _rate_table(entries, "Kind") + "\n" + OFFERS_CAPTION
+
+
+def draft_rate_by_enhancement(rows: list) -> str:
+    """Pick rate per enhancement. The row a trap enhancement shows up in."""
+    entries = _dimension_rows(rows, "enhancement")
+    if not entries:
+        return "*no enhanced cards drafted yet*"
+    return _rate_table(entries, "Enhancement") + "\n" + OFFERS_CAPTION
+
+
+def draft_rate_by_attribute(rows: list) -> str:
+    """Pick rate per rolled attribute."""
+    entries = _dimension_rows(rows, "attribute")
+    if not entries:
+        return "*no attributed cards drafted yet*"
+    return _rate_table(entries, "Attribute") + "\n" + OFFERS_CAPTION
+
+
+def draft_embellishment_lift(rows: list):
+    """The bare -> embellished gap in percentage POINTS, or None.
+
+    Points, not a ratio: the two rates are both conditional on being offered, so
+    their difference is the quantity with a meaning ("an embellishment buys you
+    N more picks per hundred offers"). A ratio would read as a multiplier on a
+    number that is already a probability, and it explodes as the bare rate falls.
+
+    None when either side is missing -- early on, one of the two buckets can be
+    empty, and rendering a lift off one bucket would invent a baseline.
+    """
+    buckets = {key: row for _, key, row in _dimension_rows(rows, "embellished")}
+    bare, embellished = buckets.get("bare"), buckets.get("embellished")
+    if not bare or not embellished:
+        return None
+    try:
+        return (float(embellished["pick_rate"]) - float(bare["pick_rate"])) * 100
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def draft_embellishment_lift_line(rows: list) -> str:
+    """The lift as a sentence, with its own denominator attached.
+
+    The denominator rides along because this is the number most likely to be
+    screenshotted out of context, and on current volumes the embellished bucket
+    is small enough that the lift is noise -- P(a drafted card carries
+    something) is 7.3% at Craft 0, so it takes a lot of runs to accumulate.
+    """
+    lift = draft_embellishment_lift(rows)
+    if lift is None:
+        return "*not enough data to compare*"
+
+    buckets = {key: row for _, key, row in _dimension_rows(rows, "embellished")}
+    n = int(buckets["embellished"].get("times_offered") or 0)
+    direction = "more" if lift >= 0 else "less"
+    return (f"An embellished card is picked **{abs(lift):.1f} points {direction}** "
+            f"often than a bare one ({n} embellished offer{'' if n == 1 else 's'}).")
+
+
+def draft_embellishment_offers(rows: list) -> int:
+    """Card offers behind the embellishment tables.
+
+    Read off the `embellished` dimension ALONE. It is the only one covering
+    every offer -- the other three cover the subset carrying that thing, and a
+    card that rolled two kinds is in `kind` twice -- so summing the view would
+    report well over the real number. Same trap as draft_offers_sampled.
+    """
+    entries = _dimension_rows(rows, "embellished")
+    return sum(int(row.get("times_offered") or 0) for _, _, row in entries)
 
 
 # ---------------------------------------------------------------------------

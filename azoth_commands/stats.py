@@ -310,6 +310,46 @@ def add_stats_commands(cls):
             records, note=f"{offers} card offer{'' if offers == 1 else 's'}"))
         await interaction.followup.send(embed=embed)
 
+    # --- Draft Rates, by embellishment ---
+    @stats_draft.subcommand(name="embellishments",
+                            description="Does an embellished card get picked more?")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch embellishment data.")
+    async def stats_draft_embellishments(self, interaction: Interaction):
+        try:
+            records = fetch_all("draft_embellishment_rates_view")
+        except SupabaseError:
+            return ("❌ `draft_embellishment_rates_view` is not migrated — run "
+                    "`db/migrations/2026-09-04_draft_item_embellishments.sql`.")
+
+        if not records:
+            # Distinct from "not migrated": the view filters
+            # `embellished is not null`, so it is empty until runs from a client
+            # that records the columns land. Saying which is the difference
+            # between waiting and debugging.
+            return ("❌ No embellishment data yet — `draft_items` only carries it "
+                    "from the 2026-09-04 migration onward.")
+
+        embed = nextcord.Embed(title="Draft picks by embellishment", colour=0x1ABC9C)
+        # The headline split leads, and the lift is stated in words underneath
+        # it rather than left as a subtraction between two table rows.
+        embed.add_field(name="Bare vs embellished", inline=False,
+                        value=sf.draft_rate_by_embellishment(records))
+        embed.add_field(name="Lift", inline=False,
+                        value=sf.draft_embellishment_lift_line(records))
+        embed.add_field(name="By kind", inline=False,
+                        value=sf.draft_rate_by_kind(records))
+        embed.add_field(name="By enhancement", inline=False,
+                        value=sf.draft_rate_by_enhancement(records))
+        embed.add_field(name="By attribute", inline=False,
+                        value=sf.draft_rate_by_attribute(records))
+
+        # NOT len(records) and not a sum: an offer appears in the `embellished`
+        # dimension and again in every kind it carries.
+        offers = sf.draft_embellishment_offers(records)
+        embed.set_footer(text=sf.footer(
+            records, note=f"{offers} card offer{'' if offers == 1 else 's'}"))
+        await interaction.followup.send(embed=embed)
+
     # --- Draft Rate Data ---
     @stats_draft.subcommand(name="rates", description="Draft pick rates, per item")
     @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft rate data.")
@@ -398,4 +438,5 @@ def add_stats_commands(cls):
     cls.stats_draft = stats_draft
     cls.stats_draft_composition = stats_draft_composition
     cls.stats_draft_breakdown = stats_draft_breakdown
+    cls.stats_draft_embellishments = stats_draft_embellishments
     cls.stats_draft_rates = stats_draft_rates

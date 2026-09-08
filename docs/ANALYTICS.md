@@ -56,6 +56,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats draft composition` | `draft_deck_view` | Draft pool composition, as bar charts. **The view kept its old name** through two command renames. See [The draft pool](#the-draft-pool) |
 | `/stats draft rates` | `draft_rates_view` | Pick rate, per item |
 | `/stats draft breakdown` | `draft_dimension_rates_view` | Pick rate by type, element and valence (2026-09-03) |
+| `/stats draft embellishments` | `draft_embellishment_rates_view` | Pick rate by draft embellishment (2026-09-04). See [Embellished cards](#embellished-cards) |
 
 ### The player card (2026-08-27)
 
@@ -391,6 +392,43 @@ runs at `0.9.0`+ they land within three points of each other:
 **Rites are taken at the same rate as everything else** — a fact the old framing
 could not have surfaced, because it had ruled the comparison out.
 
+### Embellished cards
+
+A drafted card can arrive already upgraded, carrying a rolled attribute, or
+wearing an enhancement — off the **Craft** curve, which a level-up reward
+raises. Until 2026-09-04 nothing recorded it, which put a confound in **every**
+card-level draft number on this page.
+
+It is not a small one. P(the drafted card carries something) runs **7.3% at
+Craft 0 to 57.8% at Craft 3**, so the contamination scales with how deep the run
+got — it correlates with hero, act and skill rather than averaging out. A card
+that looks popular may only be popular *enhanced*.
+
+`/stats draft embellishments` splits it. Read the `bare` and `embellished` rows
+against each other; the gap is stated in percentage **points**, because both
+rates are already conditional on the card being offered, so their difference is
+the quantity that means something. A ratio would be a multiplier on a
+probability and explodes as the bare rate falls.
+
+Three cautions:
+
+1. **It excludes `reserved` offers**, which the other draft views do not. This
+   changes nothing and never will: the reserve mechanic was **retired on
+   2026-09-04**, and it had already been unreachable since 0.7 (1.72% of 28,938
+   offers across 27 players in `0.6`, then 0 across 3,162 offers in
+   `0.7`/`0.8`/`0.9`, because the Retain-draft-cards button was hidden in
+   `hud.tscn`). Zero of the 1,002 offers above the cutoff are reserved, so the
+   filter never excludes a row this view would otherwise return and the older
+   views were deliberately left alone.
+2. **Do not sum `times_offered` across the view.** An offer appears once in the
+   `embellished` dimension and again under every kind it carries; the three
+   kinds roll independently, so one card can be in `kind` twice.
+3. **The per-name rows will be noise for months.** At Craft 0 only 7.3% of
+   drafted cards carry anything, and that has to then split four ways across the
+   enhancement roster. The `embellished` dimension is the only one with a
+   denominator worth reading early — which is why the lift line carries its own
+   `n`.
+
 ⚠️ One loose end. Rites were **13.6%** of observed offers against the **10%** the
 injection formula predicts (126 of 928, where ~93 was expected — about 3.6
 standard deviations). That is unexplained. It could be the Sacrament aspect, a
@@ -588,13 +626,84 @@ Built from `games`, `players`, `drafts`, `draft_items` and the turn-grain tables
 
 | Section | Contents |
 |---|---|
-| Players & Games | Unique players, new players, games started, restarts, co-op rows |
+| Players & Games | Unique players, new players, **runs** started, restarts, co-op rows, the tutorial line, the opening-turn exclusion |
 | Highlights | Highest level / act / combo |
 | Session Stats | Avg duration, avg turns, total playtime, **avg links per regular turn**, **avg links per boss turn** |
 | Game Results | Outcome breakdown; NULL shows as `abandoned / in progress` |
 | Boss Fights | Boss turns, wins and losses — from `turns.boss_result` |
 | Most Picked Level-Up Rewards | Pick rate as `taken/offered`, from `levelups.chosen` vs `levelups.options` |
 | Draft Activity | Most / least drafted, and picks seen in high-combo games |
+
+#### The day is bucketed on `started_at` (2026-09-08)
+
+The report reads runs **started** in the previous CST day. It filtered on
+`finished_at` until 2026-09-08, when that column turned out never to have been
+written by the game: it carried `default now()`, so it held the moment
+`open_run()` inserted the stub row — equal to `created_at` to the microsecond on
+124 of 124 rows measured, a median of 8s after `started_at`. The report was
+already bucketing by run start; it just did not know that, and said "finished".
+
+`started_at` is now the filter because it is the true run start, it is what this
+section counts, and it is the only column that works on **both sides** of
+`db/migrations/2026-09-08_games_finished_at.sql`. Once that drops the default, an
+open run has `finished_at` NULL and a `finished_at` window would silently drop
+the abandoned-run population `open_run` exists to expose. See
+[DB_SCHEMA.md caveat 14](DB_SCHEMA.md#query-caveats).
+
+#### Three populations, not one (2026-09-08)
+
+`_partition_games` splits the day's `games` rows before anything else reads
+them, and **every number in the report except the tutorial line and the unique-
+player count derives from the `regular` bucket**. The split was added after a
+report read *"15 games started — of which 13 were restarts"*: 13 of those 15
+rows were runs on the Tutorial Deck, nine of them a developer iterating on the
+tutorial. The report was describing tutorial iteration as if it were play.
+
+**1. Opening-turn restarts are dropped outright.** `result = 'restart'` with
+`turns_played <= 1`. The report notes how many it excluded and counts them
+nowhere else.
+
+> **The boundary is off by one from the obvious reading.**
+> `GlobalVars.turn_count` is incremented at the *start* of a turn
+> (`main.gd::handle_turn_start`) and `SaveManager.clear_save` reports the value
+> stored in the save, so:
+>
+> | `turns_played` | means |
+> |---|---|
+> | 1 | abandoned **during** turn 1 — never reached the first draft (`deck_size` is still the starting size) |
+> | 2 | one **completed** turn plus its draft, abandoned during turn 2 |
+>
+> "Didn't get past the first turn" is therefore `<= 1`, not `<= 2`. Reading it
+> as `<= 2` silently deletes real one-turn runs — on the 0.9.0+ set that is the
+> difference between 56 and 76 of 103 restarts.
+> `test_turn_one_is_abandoned_during_the_first_turn_not_after_it` pins it.
+
+NULL `turns_played` is *kept*: unknown is not "turn 1". No restart row has ever
+had one, but assuming short is the wrong direction if that changes.
+
+**2. Tutorial runs are split out, not dropped.** Any run whose `starter_deck`
+has `usage_type = 'tutorial'` (deck 31). They get their own line and are
+excluded from every average, highlight, draft and turn-grain figure. A scripted
+tutorial run's duration, act and combo are not comparable to a drafted one, and
+that is true from *both* ends — developer iteration on the tutorial does **not**
+trip `TestingConfig.is_testing()` (which only fires on content overrides), so it
+uploads exactly like a real player's first walkthrough and neither is a run.
+
+**3. Everything else is `regular`,** and within it counts stay inclusive as
+before — a restart that got past the opening turn is still someone playing.
+
+Three failure directions are deliberate:
+
+- **An unreadable or empty `decks` read classifies nothing as a tutorial**, so
+  every game stays in `regular`. Over-reporting real activity beats hiding it —
+  the same reasoning as the live-content filter in `content_index`.
+- **A NULL `starter_deck` stays in `regular`** (186 historical rows have one).
+- **A day of nothing but tutorial play is not a quiet day.** `total_games` can
+  be 0 while the report still has something to say, so the "no runs were played"
+  early return checks the tutorial count too.
+
+Only the **unique-player** count spans `regular` + `tutorial`: someone who
+played only the tutorial yesterday still played.
 
 **Regular and boss turns are reported separately and must stay that way.** A boss
 fight *is* one turn and runs until someone dies, so it holds many times the nodes

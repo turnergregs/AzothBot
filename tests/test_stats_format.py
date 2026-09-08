@@ -969,3 +969,109 @@ def test_the_offer_count_prefers_the_type_dimension():
 def test_the_offer_caption_does_not_say_cards():
     """The type table has aspects and rites in it."""
     assert "card" not in sf.OFFERS_CAPTION
+
+
+# ---------------------------------------------------------------------------
+# Draft embellishments (draft_embellishment_rates_view)
+# ---------------------------------------------------------------------------
+
+EMBELLISHMENTS = [
+    {"dimension": "embellished", "bucket": "bare", "times_offered": 512, "times_picked": 128, "pick_rate": 0.25},
+    {"dimension": "embellished", "bucket": "embellished", "times_offered": 78, "times_picked": 29, "pick_rate": 0.3718},
+    {"dimension": "kind", "bucket": "upgrade", "times_offered": 31, "times_picked": 11, "pick_rate": 0.3548},
+    {"dimension": "kind", "bucket": "attribute", "times_offered": 27, "times_picked": 9, "pick_rate": 0.3333},
+    {"dimension": "kind", "bucket": "enhancement", "times_offered": 29, "times_picked": 13, "pick_rate": 0.4483},
+    {"dimension": "enhancement", "bucket": "Glass", "times_offered": 9, "times_picked": 2, "pick_rate": 0.2222},
+    {"dimension": "enhancement", "bucket": "Sealed", "times_offered": 8, "times_picked": 4, "pick_rate": 0.5},
+    {"dimension": "enhancement", "bucket": "Lucky", "times_offered": 7, "times_picked": 5, "pick_rate": 0.7143},
+    {"dimension": "enhancement", "bucket": "Etched", "times_offered": 5, "times_picked": 2, "pick_rate": 0.4},
+    {"dimension": "attribute", "bucket": "Ritualistic", "times_offered": 6, "times_picked": 3, "pick_rate": 0.5},
+    {"dimension": "attribute", "bucket": "Augment", "times_offered": 12, "times_picked": 4, "pick_rate": 0.3333},
+]
+
+
+def test_bare_leads_the_embellishment_table():
+    """It is the baseline the other row is read against, so it belongs at the
+    top of the column rather than sorted in alphabetically."""
+    labels = [label for label, _, _ in sf._dimension_rows(EMBELLISHMENTS, "embellished")]
+    assert labels == ["bare", "embellished"]
+
+
+def test_the_embellishment_split_carries_both_denominators():
+    """The embellished bucket is the small one -- P(a drafted card carries
+    something) is 7.3% at Craft 0 -- so its `n` is the number that says whether
+    the lift beside it means anything."""
+    chart = _chart(sf.draft_rate_by_embellishment(EMBELLISHMENTS))
+    assert "bare          25%  512" in chart
+    assert "embellished   37%   78" in chart
+
+
+def test_the_lift_is_stated_in_points():
+    """Both rates are conditional on being offered, so their DIFFERENCE is the
+    quantity with a meaning. A ratio would read as a multiplier on a probability
+    and explodes as the bare rate falls."""
+    assert sf.draft_embellishment_lift(EMBELLISHMENTS) == pytest.approx(12.18)
+    line = sf.draft_embellishment_lift_line(EMBELLISHMENTS)
+    assert "12.2 points more" in line
+
+
+def test_the_lift_line_carries_the_embellished_denominator():
+    """This is the number most likely to be quoted out of context."""
+    assert "78 embellished offers" in sf.draft_embellishment_lift_line(EMBELLISHMENTS)
+
+
+def test_a_negative_lift_reads_as_less_often():
+    """Players ignoring the foil is a real possible answer, and "-12.2 points
+    more often" is not a sentence."""
+    flipped = [
+        {"dimension": "embellished", "bucket": "bare", "times_offered": 500, "times_picked": 150, "pick_rate": 0.3},
+        {"dimension": "embellished", "bucket": "embellished", "times_offered": 50, "times_picked": 10, "pick_rate": 0.2},
+    ]
+    assert "10.0 points less" in sf.draft_embellishment_lift_line(flipped)
+
+
+def test_one_sided_data_reports_no_lift_rather_than_inventing_a_baseline():
+    """Early on, a bucket can be empty. A lift computed off one side would be a
+    comparison against zero."""
+    one_sided = [EMBELLISHMENTS[1]]
+    assert sf.draft_embellishment_lift(one_sided) is None
+    assert sf.draft_embellishment_lift_line(one_sided) == "*not enough data to compare*"
+
+
+def test_the_enhancements_read_in_roster_order():
+    """Not pick-rate order and not alphabetical: the same order they are listed
+    in everywhere else, so two runs of this command can be read against each
+    other without re-reading the labels."""
+    labels = [label for label, _, _ in sf._dimension_rows(EMBELLISHMENTS, "enhancement")]
+    assert labels == ["Sealed", "Etched", "Glass", "Lucky"]
+
+
+def test_an_unknown_enhancement_is_shown_rather_than_dropped():
+    """ACTIVE_ENHANCEMENT_NAMES exists so a new one can go live before this file
+    hears about it. Dropping it would under-report and look correct."""
+    rows = EMBELLISHMENTS + [{"dimension": "enhancement", "bucket": "Molten",
+                              "times_offered": 3, "times_picked": 1, "pick_rate": 0.3333}]
+    labels = [label for label, _, _ in sf._dimension_rows(rows, "enhancement")]
+    assert labels == ["Sealed", "Etched", "Glass", "Lucky", "Molten"]
+
+
+def test_the_offer_count_reads_only_the_embellished_dimension():
+    """Every other dimension covers the subset carrying that thing, and a card
+    that rolled two kinds is in `kind` twice -- so summing the view reports well
+    over the real number."""
+    assert sf.draft_embellishment_offers(EMBELLISHMENTS) == 512 + 78
+
+
+def test_the_kind_denominators_do_not_sum_to_the_embellished_bucket():
+    """The three roll INDEPENDENTLY, so a card can carry two and be counted in
+    both. A reader who adds them up should not land on 78 by coincidence."""
+    kinds = sum(int(r["times_offered"]) for r in EMBELLISHMENTS if r["dimension"] == "kind")
+    assert kinds != 78
+
+
+def test_an_empty_view_says_so_per_field():
+    """`/stats draft embellishments` renders before the first recorded run lands,
+    and an empty table is less legible than a sentence."""
+    assert sf.draft_rate_by_embellishment([]) == "*no embellishment data yet*"
+    assert sf.draft_rate_by_enhancement([]) == "*no enhanced cards drafted yet*"
+    assert sf.draft_rate_by_attribute([]) == "*no attributed cards drafted yet*"

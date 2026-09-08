@@ -141,7 +141,8 @@ verbatim with their defects annotated but not fixed.
 | `player_act_view` | — | `player`, `act`, `avg_links_regular`, `avg_links_boss`, `regular_turns`, `boss_turns`. Added 2026-08-27 |
 | `turn_scoreboard_view` | — | One row per (`act`, `axis`) plus an `act IS NULL` rollup per axis: `turns_sampled`, `avg_count`, `avg_threshold`, `times_hit`, `hit_rate`, `times_won`, `won_rate`, `avg_life_when_won`. Added 2026-08-31; surfaced by `/stats scoreboard`. **Do not `sum(turns_sampled)`** — each turn appears once per axis plus once in the rollup |
 | `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, plus `element_counts` and `valence_counts` — **jsonb histograms** keyed by the value, valence-less cards under `none`, elementless ones under `catalyst` (2026-09-03; they replace `anima`/`blood`/`sol`/`combo` and `1v`–`6v`, which could not report a value that had no column — four cards above valence 6 and 24 with none were counted by nothing). `cards`/`aspects` cover base, non-archived `usage_type = 'draft'` decks. **Rites are counted separately** as `rite_templates` + `rite_weight_counts` (jsonb, weight → templates carrying it): they are drawn WITH REPLACEMENT into ~`floor(0.7·pool/6.3)` injected slots, so they are templates rather than pool members and must never be added into `cards`. Surfaced by `/stats draft composition` |
-| `draft_rates_view` | ~88 | One row per item: `item_type`, `item_id`, `item_name`, `element`, `valence`, `times_offered`/`times_picked`/`times_reserved` and their rates. Reshaped 2026-08-26 — it *was* one row of comma-joined strings. ⚠️ Censored by `having count(*) >= 5`, so **do not aggregate over it** — see `draft_dimension_rates_view` |
+| `draft_rates_view` | ~88 | One row per item: `item_type`, `item_id`, `item_name`, `element`, `valence`, `times_offered`/`times_picked`/`times_reserved` and their rates. ⚠️ `times_reserved`/`reserve_rate` are **structurally 0** above the cutoff — the reserve mechanic was retired 2026-09-04 and was already unreachable from 0.7. AzothBot displays neither. Reshaped 2026-08-26 — it *was* one row of comma-joined strings. ⚠️ Censored by `having count(*) >= 5`, so **do not aggregate over it** — see `draft_dimension_rates_view` |
+| `draft_embellishment_rates_view` | ~10 | Card pick rate by draft embellishment. One row per (`dimension`, `bucket`) over dimensions `embellished` (bare/embellished), `kind` (upgrade/attribute/enhancement), `enhancement` (by name) and `attribute` (by name), each with `times_offered`, `times_picked`, `pick_rate`. Added 2026-09-04. Read `bare` vs `embellished` for the lift. **Do not sum `times_offered`** — an offer appears in several dimensions. Recorded era only (`draft_items.embellished is not null`), so it is empty until runs from a recording client land. Excludes `reserved` offers, which only exist in pre-0.7 data — the mechanic was retired 2026-09-04, so this never excludes a row either view returns. Surfaced by `/stats draft embellishments` |
 | `draft_dimension_rates_view` | ~17 | Draft pick rate by dimension: `type` (card/aspect/rite, every offer), `element` and `valence` (cards only). One row per (`dimension`, `bucket`) with `times_offered`, `times_picked`, `pick_rate`. Added 2026-09-03, aggregated from `draft_items` so it is not censored. **Do not sum `times_offered` across the view** — every offer appears once per dimension it has. The `rite` bucket is `draft_items.item_type = 'event'`, renamed here so it happens once. Surfaced by `/stats draft breakdown` |
 | `decks_with_contents` | — | **Not used by AzothBot.** Deck rows with contents inlined as JSON; consumed by the game / Codex editor |
 
@@ -390,7 +391,8 @@ A checklist that covers most mistakes. Details for each are in
 | `uuid` | uuid | UNIQUE. **Nullable**, despite being what every child FKs to. |
 | `player_uuid` | uuid NOT NULL | → `players(uuid)` |
 | `starting_hero` / `starter_deck` | bigint | → `heroes(id)` / `decks(id)` |
-| `started_at` / `finished_at` | timestamptz | `finished_at` defaults `now()` |
+| `started_at` | timestamptz | True run start, preserved across save/load. Reliable — NULL on no row since id 6000 |
+| `finished_at` | timestamptz | Run end **only since 2026-09-08**. Before that nothing wrote it and it held the run's OPEN time — see [caveat 14](#query-caveats) |
 | `elapsed_sec` | bigint | |
 | `turns_played`, `act_reached`, `level_reached`, `deck_size` | bigint | Aggregates of series now held in `turns` |
 | `highest_combo` | **text** | Serialized BigNum. Not numerically aggregatable. |
@@ -645,12 +647,62 @@ this rarely matters.
 ### `drafts` / `draft_items`
 
 `drafts` (`uuid`, `game_uuid`, `turn`, `act`, `available_drafts`, `pack_size`)
-with `draft_items` (`draft_uuid`, `item_type`, `item_id`, `picked`, `reserved`)
+with `draft_items` (`draft_uuid`, `item_type`, `item_id`, `picked`, `reserved`,
+`embellished`, `upgraded`, `attribute`, `enhancement`)
 at ~6 rows per draft, matching `draft_window_size`.
 
 Measured at ~4.7 `draft_items` rows and 0.5 kB per run. An earlier plan to
 collapse these into arrays was **abandoned** — it would have saved fractions of
 a kilobyte.
+
+#### `reserved` is frozen (2026-09-04)
+
+The draft reserve mechanic was removed from the game, so the client no longer
+sends this field and every row from 2026-09-04 on carries **NULL**. It was kept
+rather than dropped for the 510 true rows in 0.5/0.6, when the feature was
+reachable — the same call `boss_fights` got.
+
+⚠️ **NULL, `false` and `true` are three states, not two.** NULL is "not
+applicable, the mechanic is gone"; `false` is "was offered and not held", a real
+observation from an era when holding was possible. Do not `coalesce` them.
+
+It had already been dead for three minor versions before removal — 1.72% of
+28,938 offers in `0.6` across 27 distinct players, then **0 across 3,162
+offers** in `0.7`–`0.9`, because the Retain-draft-cards button's container is
+`visible = false` in `hud.tscn` and nothing ever showed it.
+
+`draft_rates_view` still computes `times_reserved` and `reserve_rate`. Above the
+cutoff both are now structurally 0, which reads as "nobody reserves" rather than
+"the mechanic is gone"; dropping them is left for the next migration that
+touches that view. AzothBot displays neither.
+
+#### The four embellishment columns (2026-09-04)
+
+A drafted card can arrive already upgraded, carrying a random attribute, or
+wearing an enhancement — rolled per card off the **Craft** curve, which the
+player raises with a level-up reward. Before these columns nothing recorded it,
+so every card-level draft stat blends bare Invoke with Invoke+Glass at whatever
+mix that run reached. **P(the drafted card carries something) runs 7.3% at
+Craft 0 to 57.8% at Craft 3**, so the blend tracks how deep the run got — it
+correlates with hero, act and skill rather than averaging out.
+
+⚠️ **`embellished` is nullable and NULL is not `false`.** NULL means the row was
+written by a client predating the feature; `false` means recorded,
+and it carried nothing. The columns were added with **no default** precisely so
+history is not backfilled with a claim we cannot make. Filter
+`embellished is not null` to get the recorded era — this is deliberately legible
+from the table rather than requiring a version cutoff.
+
+⚠️ **`attribute` / `enhancement` are what the ROLL applied, not what the card
+wears.** A card that *prints* an attribute or an enhancement is skipped by the
+roll rather than overwritten, and the Augury event upgrades whole packs
+independently of `upgraded`. Reading the card's own `properties` / `enhancements`
+back would credit Craft with cards it never touched.
+
+`false` / NULL on every aspect and rite row, which are logged through the same
+path and can never be embellished.
+
+Reported by `draft_embellishment_rates_view`.
 
 ### `players`
 
@@ -898,7 +950,31 @@ partway meant every downstream table silently got nothing, so absence of a
 the insert time, potentially many minutes later. Use `started_at` for anything
 time-series.
 
-**13. Never store or trust a ratio.** Record numerator and denominator; divide
+**14. `finished_at` before 2026-09-08 is the run's OPEN time, not its end.**
+The game wrote nothing to that column until then, and it carried `default
+now()`, so it held the moment `GameStats.open_run()` INSERTED the stub row — the
+run's first save, a few seconds into the turn-1 animation. The outcome upsert is
+ON CONFLICT DO UPDATE, where a column default never fires again.
+
+Measured over the 124 most recent rows on 2026-09-08: `finished_at` =
+`created_at` **to the microsecond on 124 of 124**, at a median of 8s after
+`started_at`. So `finished_at − started_at` measured the opening animation, and
+a 25-minute run was indistinguishable from a 30-second one by it. `started_at`
+and `elapsed_sec` were always correct — this one column was not.
+
+Fixed game-side by `GameStats.stamp_run_timing()`, and by
+`db/migrations/2026-09-08_games_finished_at.sql` in the game repo, which drops
+the default so an open run reads NULL. **Turner applies that by hand**, so write
+queries that work on both sides of it — check the column rather than assuming.
+
+⚠️ Older rows are **not** backfilled: there is no way to recover a true end time
+for them (`started_at + elapsed_sec` isn't it — `elapsed_sec` is accumulated
+play time, so a run resumed the next day ended long after that sum). And once
+the default is dropped, `where finished_at between …` **silently drops abandoned
+runs** — the population `open_run` exists to make visible. Bucket time-series
+work on `started_at`; the daily report was moved to it on 2026-09-08.
+
+**15. Never store or trust a ratio.** Record numerator and denominator; divide
 in SQL. Averaging per-run averages weights a 3-turn run equally with a 40-turn
 one.
 
@@ -975,6 +1051,8 @@ popular purely because they're offered more.
 
 | Date | Change |
 |---|---|
+| 2026-09-04 | **Retired the draft reserve mechanic** (`2026-09-04_retire_draft_reserve.sql`). It had been unreachable since ~0.7 — the Retain-draft-cards button's container is `visible = false` in `hud.tscn` and nothing showed it — which the data confirms exactly: 1.72% of 28,938 offers reserved in `0.6` across 27 players, then **0 across 3,162 offers** in `0.7`–`0.9`. `draft_items.reserved` is **frozen, not dropped** (510 real rows from 0.5/0.6) and made nullable, because the client stops sending the field and PostgREST omits absent keys — a NOT NULL column with no default would have rejected every insert. NULL now means "not applicable", distinct from the `false` that means "offered, not held". |
+| 2026-09-04 | **Draft embellishments recorded** (`2026-09-04_draft_item_embellishments.sql`): four columns on `draft_items` plus `draft_embellishment_rates_view`, surfaced by `/stats draft embellishments`. Cutoff unmoved; the view filters `embellished is not null`. It excludes reserved offers, measured a no-op (0 of 1,002 eligible), so the older views were deliberately left unchanged — and the mechanic was retired the same day. |
 | 2026-08-28 | **Analytics cutoff `0.8.2` → `0.9.0`** (`2026-08-28_bump_analytics_cutoff.sql`), tracking the game's `config/version`. `analytics_cutoff()` alone; no view touched. 19 eligible games → 2. |
 | 2026-08-26 | **Captured the nine views into `db/migrations/`**; they had existed only in the live database. |
 | 2026-08-26 | **Rebuilt the eight analytics views.** Cutoff `0.6.7` → `0.8.2`, `restart`/co-op excluded, `avg_combo` → `avg_combo_log10`, `draft_rates_view` reshaped to one row per item. 1,836 games → 2. |

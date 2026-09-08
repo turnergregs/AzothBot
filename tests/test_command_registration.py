@@ -155,15 +155,16 @@ def test_superseded_commands_are_gone(gone):
 
 
 def test_the_draft_subcommands_are_all_reachable():
-    """`/stats draft` is a subcommand GROUP (2026-09-03), so its three bodies
-    hang two levels down. Assigning only the group onto the cog would leave all
-    three unreachable in exactly the way this file exists to catch -- and the
-    group itself does nothing, so nothing would visibly break."""
+    """`/stats draft` is a subcommand GROUP (2026-09-03), so its bodies hang two
+    levels down. Assigning only the group onto the cog would leave all of them
+    unreachable in exactly the way this file exists to catch -- and the group
+    itself does nothing, so nothing would visibly break."""
+    expected = {"composition", "rates", "breakdown", "embellishments"}
     registered = _registered_command_names()
-    assert {"draft", "composition", "rates", "breakdown"} <= registered
+    assert {"draft"} | expected <= registered
 
     draft = AzothCommands.stats_cmd.children["draft"]
-    assert set(draft.children) == {"composition", "rates", "breakdown"}
+    assert set(draft.children) == expected
 
 
 @pytest.mark.parametrize("gone", ["delete_card", "delete_aspect", "delete_rite",
