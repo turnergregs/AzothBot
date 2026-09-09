@@ -132,12 +132,10 @@ def test_an_added_string_is_dropped_when_the_base_key_is_also_replaced():
 def test_content_type_changes_which_renderer_draws_it():
     """28 cards upgrade INTO aspects: the card transforms and moves to the
     aspect bar. Drawing that face as a card would show a card that cannot
-    exist."""
-    row = _with(upgrades=[{"content_type": "aspect", "attunement": 1,
-                           "image": "ctrig.png"}])
+    exist. `content_type` is the tell -- never the presence of a field."""
+    row = _with(upgrades=[{"content_type": "aspect", "image": "ctrig.png"}])
     upgraded, kind, _ = upgrades.tiers(row, "card")[0]
     assert kind == "aspect"
-    assert upgraded["attunement"] == 1
     assert upgraded["image"] == "ctrig.png", "the aspect has its own art"
 
 

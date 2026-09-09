@@ -45,7 +45,7 @@ Each one:
 `/update_*` only regenerates art when `regenerate_image=True`.
 
 **Limitation:** these commands cover the flat scalar fields — name, text, element,
-valence, attunement, foresight, colour. They cannot author `actions`, `triggers`
+valence, foresight, colour. They cannot author `actions`, `triggers`
 or `properties`, which are `jsonb`. Anything with real mechanics goes through
 bulk insert.
 

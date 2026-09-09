@@ -43,8 +43,8 @@ def test_card_shows_its_defining_attributes():
 
 
 def test_aspect_attunement_is_not_shown():
-    """Every live aspect has attunement 1, so the row distinguished nothing.
-    Dropped 2026-08-28."""
+    """The field is gone -- every aspect takes one slot on the bar. A stale key
+    left on a row must not resurrect the row in the display."""
     assert _labels("aspect", {"attunement": 2}) == []
 
 

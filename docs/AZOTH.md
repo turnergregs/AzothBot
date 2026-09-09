@@ -54,7 +54,7 @@ These map one-to-one onto database tables and onto this bot's CRUD commands.
 | Type | Table | What it is |
 |---|---|---|
 | **Card** | `cards` | The primary object. Element (`blood`/`sol`/`anima`/`default`), valence 1–6, rules text, actions, triggers, properties, subtypes |
-| **Aspect** | `aspects` | A permanent effect the player draws on. Lives in an **ordered** zone — order sets trigger firing order. Has `attunement` rather than element/valence |
+| **Aspect** | `aspects` | A permanent effect the player draws on. Lives in an **ordered** zone — order sets trigger firing order. Carries no element/valence. Each one fills a single slot on the aspect bar |
 | **Event** | `events` | A one-shot effect the player holds and spends later. Has `foresight`. Capacity-capped in the events zone |
 | **Hero** | `heroes` | Chosen at run start. Has a clickable ability costing life, and an RGB colour |
 | **Boss** | `bosses` | HP, damage, a cycling attack **timeline**, and triggers |
@@ -111,7 +111,7 @@ folding it in put a permanent floor under pattern counts and made
 | **Combo** | Score built during link resolution. Grows **exponentially** — stored as an arbitrary-precision BigNum, which is why it's a `text` column and must never be averaged |
 | **Valence** | A card's number, 1–6 |
 | **Element** | `blood`, `sol`, `anima`, `default` |
-| **Attunement** | The aspect equivalent of a stat |
+| **Attunement** | Capacity for aspects. `max_attunement` is how many the player can hold; each aspect takes one slot. It is **not** a per-aspect field |
 | **Foresight** | How far ahead the player sees the boss timeline; also a field on events/consumables/rituals |
 | **Ether** | Spent to play links, regenerates each turn |
 | **Draft** | Picking from a pack to add to the deck — the main deckbuilding step |

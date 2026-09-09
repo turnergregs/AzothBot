@@ -83,7 +83,7 @@ It used to dump the raw database row as JSON. Deliberately **not** shown now:
 | `created_at` / `updated_at` / `created_by` | Audit metadata |
 | `image` / `image_data` | Rendering internals — `/render` is the view |
 | `actions` / `triggers` / `properties` | `jsonb`, and past Discord's 2000-char limit on their own |
-| `attunement` (aspects) | Every live aspect is 1 — it distinguishes nothing (dropped 2026-08-28) |
+| `attunement` (aspects) | The field is gone — every aspect takes one slot on the bar |
 
 Its rules text carries the same `{...}` placeholder substitution the rendered
 face does — Recollection reads *Create last used Rite (None)*, not
@@ -181,8 +181,8 @@ database directly" — for the fields that actually define the mechanic.
 
 | Command | Access | Parameters |
 |---|---|---|
-| `/create_aspect` | 🔒 | `name`, `text`, `attunement`, `image?`, `deck?`*, `quantity?` |
-| `/update_aspect` | 🔒 | `name`*, `new_name?`, `text?`, `attunement?`, `image?` |
+| `/create_aspect` | 🔒 | `name`, `text`, `image?`, `deck?`*, `quantity?` |
+| `/update_aspect` | 🔒 | `name`*, `new_name?`, `text?`, `image?` |
 
 Aspects take an existing image name in the `aspectimages` bucket rather than
 generating art. `update_aspect` has its `regenerate_image` parameter commented
@@ -379,7 +379,7 @@ optional and they AND together. The pool is **live content only** (233 rows, not
 626) — see [Only live content is findable](#-only-live-content-is-findable).
 
 **`query` mirrors the Codex's search** (`content_search.gd` in the game repo): it
-scans name, rules text, type, subtypes, valence and attunement — **and deep-
+scans name, rules text, type, subtypes and valence — **and deep-
 searches the `actions` / `triggers` / `properties` JSON**. That last part is the
 useful bit: `query: Magnify` finds every card carrying that property even though
 the word appears in no flat column, and `query: {link.size}` finds every card

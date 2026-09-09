@@ -20,11 +20,15 @@ The rules, in the engine's own order:
 
 CARDS THAT UPGRADE INTO ASPECTS
 
-28 upgrade payloads carry `content_type: "aspect"` along with `attunement` and a
-new `image`. That is not corrupt data: the card transforms into an aspect and
-moves to the aspect bar. It is why `kind_of()` exists -- the upgraded face has to
-be drawn by the ASPECT renderer, and a comparison that drew it as a card would
-show a card that cannot exist.
+28 upgrade payloads carry `content_type: "aspect"` and a new `image`. That is not
+corrupt data: the card transforms into an aspect and moves to the aspect bar. It
+is why `kind_of()` exists -- the upgraded face has to be drawn by the ASPECT
+renderer, and a comparison that drew it as a card would show a card that cannot
+exist.
+
+Those same payloads still carry a stale `attunement` key. It means nothing --
+every aspect takes one slot on the bar -- and a bulk_update is queued to strip
+them. Nothing here reads it; do not start.
 """
 from __future__ import annotations
 

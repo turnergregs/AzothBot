@@ -44,8 +44,8 @@ def _facts(kind: str, row: dict) -> list:
       * `upgrades` -- a nested blob that dwarfs everything else on the card
       * `actions` / `triggers` / `properties` -- jsonb, and past Discord's
         2000-char limit on their own
-      * `attunement` on aspects -- every live aspect is 1, so it distinguishes
-        nothing (dropped 2026-08-28)
+      * `attunement` on aspects -- the field is gone; every aspect takes one
+        slot on the bar. Stale keys survive on rows written before the drop
 
     Empty and null values are dropped rather than shown as `null`, which is most
     of what made the old JSON dump hard to read.

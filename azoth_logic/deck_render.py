@@ -121,9 +121,10 @@ def _bucket_for(item: dict, kind: str = "card") -> str | None:
 
     A RITE returns None. `event_card.tscn` ships its Image node hidden -- the
     `image` column feeds the draft thumbnail, not the card face -- so fetching it
-    is a download whose result is thrown away. Dispatching on `kind` rather than
-    sniffing for an `attunement` key is also what keeps an aspect out of the
-    cards bucket in a mixed `/search` result.
+    is a download whose result is thrown away. Dispatching on `kind` is also what
+    keeps an aspect out of the cards bucket in a mixed `/search` result -- and it
+    is why nothing broke when the `attunement` key an earlier version sniffed for
+    went away.
     """
     if kind == "rite":
         return None
@@ -359,7 +360,7 @@ def render_comparison(items, kinds, labels, holo_levels=None,
     card that cannot exist.
 
     STATIC, like every other multi-face layout in this module. The comparison is
-    a reading task -- what changed in the text, the valence, the attunement --
+    a reading task -- what changed in the text, the valence, the art --
     and animating it would cost seconds per side to make the words harder to
     read. `/render` without `compare` still gives the animated single face.
     """

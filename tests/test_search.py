@@ -22,7 +22,7 @@ MAGNIFY = {"name": "Fervor", "text": "Magnify 1 per power", "type": "spell",
            "element": "blood", "valence": 3, "subtypes": [],
            "actions": [], "triggers": [],
            "properties": [{"name": "Magnify", "amount": {"count": {"stat": "power"}}}]}
-ASPECT = {"name": "Readiness", "text": "+1 Starting Hand Size", "attunement": 2,
+ASPECT = {"name": "Readiness", "text": "+1 Starting Hand Size",
           "actions": [], "triggers": [], "properties": []}
 RITE = {"name": "Amplification", "text": "[8mult] next link",
         "actions": [], "triggers": [], "properties": []}
@@ -83,7 +83,7 @@ def test_query_does_not_match_absent_json_terms():
 
 def test_query_matches_numeric_fields():
     assert cs.matches_query(CARD, "2"), "valence"
-    assert cs.matches_query(ASPECT, "2"), "attunement"
+    assert cs.matches_query(RITE, "8"), "text"
 
 
 def test_empty_query_matches_everything():

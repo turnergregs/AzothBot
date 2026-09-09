@@ -154,9 +154,13 @@ def test_colourless_is_named():
     assert "Colourless" in br.summarize_new("cards", {"id": 1, "name": "X", "element": None})
 
 
-def test_aspect_and_rite_show_their_own_stat():
-    assert "attune 2" in br.summarize_new("aspects", {"id": 1, "name": "A", "attunement": 2})
+def test_a_rite_shows_its_own_stat():
     assert "foresight 3" in br.summarize_new("events", {"id": 1, "name": "R", "foresight": 3})
+
+
+def test_a_stale_attunement_key_is_not_reported():
+    # The field is gone. Rows written before the migration still carry it.
+    assert "attune" not in br.summarize_new("aspects", {"id": 1, "name": "A", "attunement": 1})
 
 
 def test_zero_valence_is_shown():

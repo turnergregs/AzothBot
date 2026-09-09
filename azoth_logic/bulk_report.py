@@ -115,8 +115,6 @@ def summarize_new(table: str, row: dict) -> str:
         bits.append(str(element).capitalize() if element else "Colourless")
     if row.get("valence") is not None:
         bits.append(f"v{row['valence']}")
-    if row.get("attunement") is not None:
-        bits.append(f"attune {row['attunement']}")
     if row.get("foresight") is not None:
         bits.append(f"foresight {row['foresight']}")
     if row.get("subtypes"):

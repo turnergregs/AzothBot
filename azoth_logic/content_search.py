@@ -52,7 +52,7 @@ def matches_query(item: dict, query: str) -> bool:
     for subtype in item.get("subtypes") or []:
         if needle in str(subtype).lower():
             return True
-    for field in ("valence", "attunement", "foresight"):
+    for field in ("valence", "foresight"):
         if item.get(field) is not None and needle in str(item[field]).lower():
             return True
     for field in ("actions", "triggers", "properties"):
