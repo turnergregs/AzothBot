@@ -133,7 +133,12 @@ def add_card_commands(cls):
 			if valence == -1:
 				valence = None
 			update_data["valence"] = valence
-		if element: update_data["element"] = element
+
+		if element is not None:
+			if element == -1:
+				element = None
+			update_data["element"] = element
+
 		if text: update_data["text"] = text
 		if attributes is not None: update_data["attributes"] = [a.strip() for a in attributes.split(",")]
 		if subtypes is not None: update_data["subtypes"] = [s.strip() for s in subtypes.split(",")]
