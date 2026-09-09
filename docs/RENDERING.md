@@ -93,7 +93,7 @@ Three path maps in `constants.py`, keyed by content type:
 | `ASSET_BUCKET_NAMES` | Supabase Storage bucket | `cardimages` |
 
 Buckets: `cardimages`, `aspectimages`, `eventimages`, `heroimages`.
-(`ritualimages` and `consumableimages` were dropped from the maps on 2026-08-26;
+(the two retired content types' image buckets were dropped from the maps on 2026-08-26;
 the buckets themselves may still exist in Storage.)
 
 `ASSET_RENDER_PATHS` also has `deck` and `hand` entries, which have no bucket —

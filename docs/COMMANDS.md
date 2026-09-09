@@ -204,7 +204,7 @@ out. Render one with `/render`.
 
 All `/*_hero` commands were unregistered 2026-08-26. `azoth_commands/heroes.py`
 still exists but its attacher is **deliberately** not called from
-`azoth_commands/__init__.py` — unlike the rituals/consumables case, this is not
+`azoth_commands/__init__.py` — unlike the unregistered-module case, this is not
 an oversight to fix. Hero cards were also never ported to the new renderer, so
 `/render_hero` would draw the wrong frame.
 
@@ -578,7 +578,7 @@ of `/stats`.
 **Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
 `/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`.
 
-**Removed 2026-08-26:** all 10 ritual and consumable commands, along with their
+**Removed 2026-08-26:** all 10 commands for the two retired content types, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).
 
 **Renamed 2026-08-27:** `/get` → `/show`, `/get_deck` → `/show_deck`,

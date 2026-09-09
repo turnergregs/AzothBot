@@ -100,7 +100,7 @@ Two consequences that bite:
    alone is not enough.
 2. **A module whose attacher isn't called in `__init__.py` does not exist**, even
    though the file is complete and imports cleanly. `rituals.py` and
-   `consumables.py` sat in exactly that state for months before being removed
+   a retired command module sat in exactly that state for months before removal
    entirely on 2026-08-26.
 
 ### Adding a command
@@ -192,7 +192,7 @@ RLS denial is **not an exception** — PostgREST answers a blocked SELECT with H
 
 ```python
 ANON_INSERT_ONLY = {"turns", "turn_nodes", "levelups", "reports"}
-ANON_NO_POLICY   = {"rituals", "consumables"}
+ANON_NO_POLICY   = {"rituals"}
 ```
 
 If `SUPABASE_ROLE` is anything other than `service_role` — including `unknown`,
@@ -244,7 +244,7 @@ reference rather than a bare name:
 `encode_item_ref` / `parse_item_ref` / `make_item_label` handle this.
 `add_to_deck` and `remove_from_deck` accept either form; a raw typed name falls
 back to `_resolve_name_to_ref`, which takes the **first match** in the priority
-order `card, aspect, event, ritual, consumable`. That fallback is legacy and can
+order `card, aspect, event`. That fallback is legacy and can
 pick the wrong item — always select from autocomplete.
 
 ## Autocomplete
@@ -292,7 +292,7 @@ fixed; the rest are still open.
 | Issue | Location | Effect |
 |---|---|---|
 | ~~`safe_interaction` duplicated verbatim~~ | — | **Fixed 2026-08-26** — `utils/interaction_helpers.py` deleted |
-| ~~`rituals.py` / `consumables.py` never registered~~ | — | **Fixed 2026-08-26** — both retired and deleted |
+| ~~Two retired command modules never registered~~ | — | **Fixed 2026-08-26** — both retired and deleted |
 | ~~`fetch_all` returns `[]` on any error~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — failures now raise |
 | ~~`soft_delete_record` always returned `None`~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — `/delete_deck` and `/delete_hero` reported failure on every success |
 | `game_stats` table does not exist | `stats.py` version autocomplete | Autocomplete always returns nothing. Now logs the reason to the console |

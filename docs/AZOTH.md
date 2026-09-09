@@ -81,7 +81,7 @@ definitions from a local file (`assets/game_data/rituals/rituals.json` via
 `RitualManager`), *not* from the database, so the dead table was never its
 source.
 
-`consumables` was retired at the same time and for the same reason.
+A second content type was retired at the same time and for the same reason.
 
 ## Patterns, and Ascender's Bane
 
@@ -112,7 +112,7 @@ folding it in put a permanent floor under pattern counts and made
 | **Valence** | A card's number, 1–6 |
 | **Element** | `blood`, `sol`, `anima`, `default` |
 | **Attunement** | Capacity for aspects. `max_attunement` is how many the player can hold; each aspect takes one slot. It is **not** a per-aspect field |
-| **Foresight** | How far ahead the player sees the boss timeline; also a field on events/consumables/rituals |
+| **Foresight** | A field on events (Rites). The player-facing timeline meaning is not implemented |
 | **Ether** | Spent to play links, regenerates each turn |
 | **Draft** | Picking from a pack to add to the deck — the main deckbuilding step |
 | **Levelup** | Crossing a combo threshold pays out reward picks from a pack |

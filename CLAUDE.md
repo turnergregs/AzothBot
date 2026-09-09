@@ -15,7 +15,7 @@ Three things cause more wrong conclusions here than anything else.
 **1. Which Supabase key is loaded changes what you can see — silently.**
 The deployed bot uses the **service-role** key: full read/write, RLS bypassed.
 A local `.env` may hold the **anon** key, which cannot read `turns`,
-`turn_nodes`, `levelups`, `rituals`, `consumables` or `reports`. (**Not** `macros` — it has a public read
+`turn_nodes`, `levelups`, `rituals` or `reports`. (**Not** `macros` — it has a public read
 policy and is genuinely empty. It is deliberately absent from
 `ANON_UNREADABLE`.) PostgREST returns **HTTP 200 with an empty array**, not
 an error. Check the key before concluding a table is empty.
@@ -29,7 +29,7 @@ when an autocomplete comes back empty.
 **3. Code existing ≠ command existing.** Commands are attached to the cog by
 `add_*_commands(cls)` calls in `azoth_commands/__init__.py`. A module whose
 attacher is never called is dead code that still imports cleanly — that is how
-`rituals.py` and `consumables.py` went unnoticed for months.
+two retired command modules went unnoticed for months.
 
 ## Documentation
 

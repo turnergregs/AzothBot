@@ -7,7 +7,7 @@ nextcord command layer.
   1. A command defined but never assigned onto the cog. `/render_card` and
      `/render_aspect` were both left in this state -- complete function bodies,
      autocomplete wired, reachable by nobody. It is the same failure that hid
-     `rituals.py` and `consumables.py` for months, and it is invisible at import
+     two retired command modules for months, and it is invisible at import
      because the module still imports cleanly.
 
   2. A NAME that does not exist at runtime. The overhaul deleted the module-level

@@ -40,7 +40,7 @@ def test_db_keys_keep_the_old_name():
 
 
 def test_hero_commands_are_not_registered():
-    """Retired 2026-08-26 -- deliberately, unlike the rituals/consumables case
+    """Retired 2026-08-26 -- deliberately, unlike the unregistered-module case
     where the attacher was simply never called."""
     from azoth_commands import AzothCommands
     assert not [n for n in dir(AzothCommands) if n.endswith("_hero_cmd")]

@@ -82,7 +82,7 @@ Three distinct causes (the first two verified 2026-08-26, see
 | Cause | Tables |
 |---|---|
 | **INSERT-only policy** — anon may write, never read | `turns`, `turn_nodes`, `levelups`, `reports` |
-| **RLS enabled with no policy at all** — deny-all | `rituals`, `consumables` |
+| **RLS enabled with no policy at all** — deny-all | `rituals` |
 | **`security_invoker` view, granted to `service_role` only** (2026-08-31) | `turn_clearing_view`, `player_act_view`, `player_info_view`, `turn_scoreboard_view` |
 
 That third row is new, and it is the *fix* for a hole rather than a design
@@ -98,8 +98,8 @@ empty result, which reads as a player who has never played.
 The six taxonomy tables that used to fill that second row — `card_attributes`,
 `card_elements`, `card_types`, `deck_types`, `deck_content_types`,
 `deck_usage_types` — were **dropped 2026-08-27**. Their vocabularies live in
-`azoth_logic/taxonomy.py`. `rituals` and `consumables` are deliberately kept:
-nothing reads them, but they hold content worth referencing.
+`azoth_logic/taxonomy.py`. `rituals` and the retired second content table are
+deliberately kept: nothing reads them, but they hold content worth referencing.
 
 `macros` is the exception that proves the rule: it has a public read policy and
 still returns nothing, so it is genuinely empty.
@@ -815,15 +815,20 @@ anon can add and read but never modify or destroy.
 ### Tables with RLS enabled and NO policy
 
 **RLS on with no policy means deny-all.** Two tables are in this state:
+`rituals`, and one retired content table.
 
-`consumables` and `rituals`
+> The retired one is **`consumables`**, named here once because the schema
+> mirror has to be accurate about what exists. It is the only mention left in
+> this repo. The concept is gone: as of 2026-09-09 no code in AzothBot or the
+> game names it, and it is deliberately absent from `ANON_NO_POLICY`. Do not
+> re-add it — the Rites bar is the live equivalent and reads `events`.
 
 It was nine until 2026-08-27. `fate_types` went on 2026-08-26; the six taxonomy
 tables were dropped when their vocabularies moved into `azoth_logic/taxonomy.py`.
 
 This is what produces the empty reads described in
-[Which key you are holding](#azothbot-which-key-you-are-holding) — `rituals` and
-`consumables` are not empty tables, they are invisible ones. It also means the
+[Which key you are holding](#azothbot-which-key-you-are-holding) — they are not
+empty tables, they are invisible ones. It also means the
 game itself cannot read them over the anon key, so either it doesn't need them or
 something is quietly broken; worth confirming which.
 

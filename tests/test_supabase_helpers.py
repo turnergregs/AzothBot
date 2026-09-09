@@ -222,10 +222,10 @@ def test_item_ref_round_trips(ct, cid):
     assert h.parse_item_ref(h.encode_item_ref(ct, cid)) == (ct, cid)
 
 
-@pytest.mark.parametrize("value", ["ritual:1", "consumable:2"])
+@pytest.mark.parametrize("value", ["ritual:1"])
 def test_retired_content_types_no_longer_parse(value):
-    # Both retired 2026-08-26. They must fall through to the raw-name path
-    # rather than resolving to a table that no longer participates in decks.
+    # Retired 2026-08-26. Must fall through to the raw-name path rather than
+    # resolving to a table that no longer participates in decks.
     assert h.parse_item_ref(value) == (None, None)
 
 

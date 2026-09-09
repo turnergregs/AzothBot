@@ -27,7 +27,7 @@ Read these before drawing any conclusion from a command's output or a query.
 **1. The Supabase key determines what you can see, and failure is silent.**
 The deployed bot uses the **service-role** key — full read/write, RLS bypassed. A
 local `.env` may hold the **anon** key, which cannot read `turns`, `turn_nodes`,
-`levelups`, `rituals`, `consumables` or `reports`. (**Not** `macros` — it has a
+`levelups`, `rituals` or `reports`. (**Not** `macros` — it has a
 public read policy and is genuinely empty. The six `card_*` / `deck_*` taxonomy
 tables were dropped 2026-08-27; a read of one now fails loudly with PGRST205.)
 PostgREST returns **HTTP 200 with an empty array**, not an error.
@@ -45,7 +45,7 @@ no error channel — **check the console when an autocomplete is empty**.
 **3. A command can exist in the source and not exist at runtime.** Commands are
 attached to the cog by `add_*_commands(cls)` functions called from
 `azoth_commands/__init__.py`. A module whose attacher is never called is dead
-code that still imports cleanly — `rituals.py` and `consumables.py` sat that way
+code that still imports cleanly — two retired command modules sat that way
 for months before being deleted. Check `__init__.py`, not just the file.
 
 ## Project Structure

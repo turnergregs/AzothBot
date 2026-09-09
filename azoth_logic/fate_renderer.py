@@ -1,3 +1,19 @@
+"""ARCHIVE -- dead code. Nothing imports this module and nothing may.
+
+Superseded on 2026-08-26 by `fate_render.py`, which targets the current
+`aspect_card.tscn` / `event_card.tscn`. This file is kept alongside
+`card_renderer.py` purely as the record of the previous card templates.
+
+Do not wire it back up, and do not treat anything in it as a description of
+how the bot works today. In particular it still speaks two retired
+vocabularies -- "fate" as a family covering aspects and events, and
+"consumable" / "ritual" as content types -- none of which the game or the
+database has any more. The live equivalents are aspects and Rites.
+
+`tests/test_command_registration.py` exempts this file from its
+unreachable-code check by name, which is the other half of this record.
+"""
+
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageChops
 import json
 import os

@@ -33,11 +33,11 @@ ANON_INSERT_ONLY = frozenset({
 	"turns", "turn_nodes", "levelups", "reports",
 })
 
-# Retired content types. Kept in the database on purpose -- they still hold data
-# worth referencing -- but nothing reads them at runtime, and RLS is deny-all, so
-# an anon read of either looks exactly like an empty table.
+# Retired content type. Kept in the database on purpose -- it still holds data
+# worth referencing -- but nothing reads it at runtime, and RLS is deny-all, so
+# an anon read of it looks exactly like an empty table.
 ANON_NO_POLICY = frozenset({
-	"rituals", "consumables",
+	"rituals",
 })
 
 # Views over the INSERT-only turn-grain tables. They are `security_invoker` and
@@ -224,7 +224,7 @@ import re
 
 # Content types that participate in decks. Order is the legacy first-match
 # priority used only for raw (manually-typed) names.
-# `ritual` and `consumable` were removed 2026-08-26 -- both concepts are retired.
+# `ritual` was removed 2026-08-26 -- the concept is retired.
 DECK_CONTENT_TYPES = ["card", "aspect", "event"]
 _ITEM_REF_RE = re.compile(r"^(card|aspect|event):(\d+)$")
 

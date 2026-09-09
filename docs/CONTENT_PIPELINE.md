@@ -32,7 +32,7 @@ different match semantics.
 ## Slash-command route
 
 `/create_card`, `/create_aspect`, `/create_rite` (and, once
-registered, `/create_ritual` and `/create_consumable`).
+registered, the retired content commands).
 
 Each one:
 
