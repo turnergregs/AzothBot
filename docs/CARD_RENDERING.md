@@ -82,7 +82,7 @@ that here — levelups are not rendered — so it is insurance, not a fix.
 ## Holographic sheen
 
 **Every card wears it**, not just upgraded ones. `card.tscn`, `aspect_card.tscn`
-and `event_card.tscn` all load `scenes/cards/base_card_material.tres`, where
+and `rite_card.tscn` all load `scenes/cards/base_card_material.tres`, where
 `_enableHolographic = true` at `_holoIntensity = 0.06`. `azoth_logic/holo.py` is
 the port.
 
@@ -464,7 +464,7 @@ would bake one aspect's hue into all 149.
 
 **Rites need eight — four baked, four as recolourable masks.**
 
-`event_card.gd::set_event_visuals()` picks one of four materials by **display
+`rite_card.gd::set_rite_visuals()` picks one of four materials by **display
 name** (Smith/Upgrade, Trash/Sever, Rest/Heal, everything else). That mapping is
 data, not a field, so `fate_layout.RITE_BACKGROUND_BY_NAME` tracks that match
 statement by hand.
@@ -522,7 +522,7 @@ does not help (the palette is already 2–3 colours); only frame count does.
 
 ### A rite's palette also tints its text
 
-`event_card.gd::set_event_text_color()` overrides **both** the name and the rules
+`rite_card.gd::set_rite_text_color()` overrides **both** the name and the rules
 text — and the name's outline — with `text_color` if authored, else
 `primary_color`. A rite with no palette keeps the scene's blue name and orange
 text.
@@ -588,7 +588,7 @@ is for inspecting content.
 | Commands (`/create_rite`, `/update_rite`, …) | `events` table |
 | `azoth_commands/rites.py` | `content_type` value |
 | `fate_render`, `fate_layout` | `eventimages` bucket |
-| Everything user-facing | `event_card.tscn` and the game's scripts |
+| Everything user-facing | `rite_card.tscn` and the game's scripts |
 
 `rites.py` marks the boundary with `TABLE_NAME`, `DB_KEY` and `MODEL_NAME`; the
 first two are what change when the tables are eventually renamed. A test asserts

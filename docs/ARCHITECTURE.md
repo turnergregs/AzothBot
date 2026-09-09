@@ -41,7 +41,7 @@ azoth_logic/
 
   # The current renderer (2026-08-26). See docs/CARD_RENDERING.md.
   card_layout.py            Geometry and type styling, transcribed from card.tscn
-  fate_layout.py            The same, for aspect_card.tscn / event_card.tscn
+  fate_layout.py            The same, for aspect_card.tscn / rite_card.tscn
   rich_text.py              Symbol tokens, wrapping, centred layout
   eigenfunction_art.py      .exr art -- the port of split_card_image.gdshader
   card_render.py            Composites a card face; PNG and GIF output

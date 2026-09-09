@@ -21,7 +21,7 @@ TABLE_NAME = "events"       # DB_KEY
 DB_KEY = "event"            # DB_KEY: content_type, bucket and asset-path key
 MODEL_NAME = "rite"         # what users see
 
-# A rite's `image` feeds the DRAFT THUMBNAIL, not the card face -- event_card.tscn
+# A rite's `image` feeds the DRAFT THUMBNAIL, not the card face -- rite_card.tscn
 # ships its Image node hidden. So this bucket is written to on create/update and
 # never read back by the renderer. Renders stream from memory; no directories.
 bucket = ASSET_BUCKET_NAMES[DB_KEY]
@@ -134,7 +134,7 @@ def add_rite_commands(cls):
 			return f"❌ Failed to update {MODEL_NAME} `{name}`."
 
 		# A rename changes what /get, /render and /search autocomplete on, and it
-		# also changes which BACKGROUND the rite draws -- event_card.gd picks the
+		# also changes which BACKGROUND the rite draws -- rite_card.gd picks the
 		# material by display name (fate_layout.RITE_BACKGROUND_BY_NAME).
 		if new_name:
 			content_index.invalidate()

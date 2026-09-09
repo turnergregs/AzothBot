@@ -1,6 +1,6 @@
 """Geometry and styling for aspect and rite cards.
 
-Transcribed from `scenes/cards/aspect_card.tscn` and `event_card.tscn` in the
+Transcribed from `scenes/cards/aspect_card.tscn` and `rite_card.tscn` in the
 azoth repo. Both use the same 560x897 viewport as `card.tscn`, so boxes resolve
 the same way: centre + offset.
 
@@ -81,7 +81,7 @@ RITE_TEXT_COLOR = (238, 84, 16)              # Color(0.93333334, 0.32941177, 0.0
 
 NAME_OUTLINE = GODOT_OUTLINE_3
 
-# Which background a rite gets, from event_card.gd::set_event_visuals(). It
+# Which background a rite gets, from rite_card.gd::set_rite_visuals(). It
 # branches on DISPLAY NAME, not on any field -- so this mapping is data, and it
 # has to be kept in step with that match statement by hand.
 RITE_BACKGROUND_BY_NAME = {
@@ -156,7 +156,7 @@ def rite_text_color(rite: dict):
     """The colour a rite foregrounds its NAME and RULES TEXT in, or None.
 
     Port of EventVisuals.text_color_for(), applied by
-    event_card.gd::set_event_text_color():
+    rite_card.gd::set_rite_text_color():
 
         text_color if the row authored one (for legibility), else primary_color,
         else None -- and None means keep the scene's own blue name and orange

@@ -69,7 +69,7 @@ def test_aspect_art_is_210_square():
     ("Ritual Gamble", "attribute"), ("", "attribute"), (None, "attribute"),
 ])
 def test_rite_background_follows_the_display_name(name, expected):
-    """event_card.gd::set_event_visuals() branches on DISPLAY NAME, not on a
+    """rite_card.gd::set_rite_visuals() branches on DISPLAY NAME, not on a
     field -- so this mapping is data and has to track that match statement."""
     assert F.rite_background_file(name) == f"rite_background_{expected}.png"
     assert F.rite_mask_file(name) == f"rite_background_{expected}_mask.png"
@@ -116,7 +116,7 @@ def test_text_colour_prefers_text_color_over_primary():
 
 
 def test_palette_rite_tints_its_name_and_text():
-    """event_card.gd::set_event_text_color() overrides BOTH labels, and the
+    """rite_card.gd::set_rite_text_color() overrides BOTH labels, and the
     name's outline too -- verified against Godot, whose Amplification name
     renders at exactly #ffb01f."""
     plain = np.asarray(Image.open(io.BytesIO(_uncropped("rite"))).convert("RGB"))
@@ -369,7 +369,7 @@ def test_animated_frames_use_the_rites_palette():
 
 
 def test_rite_never_draws_art():
-    """event_card.tscn ships the Image node with `visible = false`: a rite's
+    """rite_card.tscn ships the Image node with `visible = false`: a rite's
     visual IS its background. Drawing the `image` column puts a blob over the
     middle of a card the game renders clean."""
     plain = fate_render.render_rite(RITE)[0]

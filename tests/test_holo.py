@@ -1,7 +1,7 @@
 """`azoth_logic/holo.py` — the upgraded card's holographic sheen.
 
 A port of the holographic block in the game's `base_card_shader.gdshader`.
-EVERY card scene wears it -- card.tscn, aspect_card.tscn and event_card.tscn all
+EVERY card scene wears it -- card.tscn, aspect_card.tscn and rite_card.tscn all
 load `base_card_material.tres`, where `_enableHolographic = true` at intensity
 `0.06`; an upgraded card is raised to `0.15`.
 

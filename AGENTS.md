@@ -75,7 +75,7 @@ azoth_logic/
 
   # The renderer, rewritten 2026-08-26. See docs/CARD_RENDERING.md.
   card_layout.py              Geometry and type styling, from card.tscn
-  fate_layout.py              The same, for aspect_card.tscn / event_card.tscn
+  fate_layout.py              The same, for aspect_card.tscn / rite_card.tscn
   rich_text.py                Symbol tokens, wrapping, centred layout
   placeholders.py             {...} display placeholders, resolved flat
   eigenfunction_art.py        .exr art -- port of split_card_image.gdshader

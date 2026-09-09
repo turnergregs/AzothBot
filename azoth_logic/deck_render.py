@@ -119,7 +119,7 @@ def _bucket_for(item: dict, kind: str = "card") -> str | None:
     `.exr` always lives in `eigenfunctions` regardless of content type; flat art
     lives in the per-type bucket.
 
-    A RITE returns None. `event_card.tscn` ships its Image node hidden -- the
+    A RITE returns None. `rite_card.tscn` ships its Image node hidden -- the
     `image` column feeds the draft thumbnail, not the card face -- so fetching it
     is a download whose result is thrown away. Dispatching on `kind` is also what
     keeps an aspect out of the cards bucket in a mixed `/search` result -- and it

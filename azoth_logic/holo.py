@@ -3,7 +3,7 @@
 A port of the holographic block in `scenes/cards/base_card_shader.gdshader`
 (game repo, ~line 947) and the `metallicReflection` rainbow it calls.
 
-It is on for EVERY card: `card.tscn`, `aspect_card.tscn` and `event_card.tscn`
+It is on for EVERY card: `card.tscn`, `aspect_card.tscn` and `rite_card.tscn`
 all load `base_card_material.tres`, which sets `_enableHolographic = true` at
 `_holoIntensity = 0.06`. An upgraded card is raised to `0.15` by
 `base_card.gd::set_upgrade_card_visuals`.

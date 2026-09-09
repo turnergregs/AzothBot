@@ -296,7 +296,7 @@ def test_a_failed_download_does_not_sink_the_sheet(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_rite_art_is_not_fetched_at_all():
-    """`event_card.tscn` ships its Image node hidden.
+    """`rite_card.tscn` ships its Image node hidden.
 
     A rite's `image` feeds the DRAFT THUMBNAIL, not the card face, so fetching it
     is a download whose result is discarded. Before this was dispatched on

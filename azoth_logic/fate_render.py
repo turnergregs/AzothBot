@@ -108,7 +108,7 @@ def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
     """Returns (bytes, extension).
 
     `sheen` is the holographic material every card scene wears -- aspect_card
-    and event_card load the same `base_card_material.tres` that card.tscn does.
+    and rite_card load the same `base_card_material.tres` that card.tscn does.
     Off for deck and search grids, where 200px thumbnails cannot show it and a
     110-card sheet would pay for it once per card.
     """
@@ -207,7 +207,7 @@ def _rite_face(rite: dict) -> Image.Image:
 
 def _rite_text(canvas, rite: dict) -> None:
     # A rite that authored a palette foregrounds its NAME and RULES TEXT in it,
-    # per event_card.gd::set_event_text_color(). One that did not keeps the
+    # per rite_card.gd::set_rite_text_color(). One that did not keeps the
     # scene's own blue name and orange text -- 23 of the 44 live rites.
     foreground = F.rite_text_color(rite)
     name_color = foreground or F.RITE_NAME_COLOR
@@ -287,7 +287,7 @@ def render_rite_gif(rite: dict, fps: int = 15, sheen: bool = True) -> bytes | No
 def render_rite(rite: dict, art_bytes: bytes | None = None, sheen: bool = True):
     """Returns (bytes, extension). Always static, and never draws art.
 
-    `event_card.tscn` ships the Image node with `visible = false`: a rite's
+    `rite_card.tscn` ships the Image node with `visible = false`: a rite's
     visual IS its background pattern, and the `image` column feeds the draft
     thumbnail rather than the card face. Drawing it puts a blob over the middle
     of the card that the game never shows. `art_bytes` is accepted and ignored
