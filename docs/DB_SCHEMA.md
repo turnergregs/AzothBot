@@ -518,9 +518,22 @@ that never clears it ends in `no_boss_key` however well it otherwise went. So
 `banes_purged` is a signal in its own right — it marks the exact link that opened
 the gate.
 
-Identity is the card's **name**, via `PatternManager.ASCENDERS_BANE_NAME` — the
-same constant used to name it at creation, so renaming the card is a one-line
-change. No analytics-only field was added to the card's data.
+Identity is the card's **name**, via `PatternManager.FINAL_PATTERN_NAME` — the
+same constant used to name it at creation. No analytics-only field was added to
+the card's data.
+
+**The card is called The Final Pattern as of 2026-09-14, and the game's GDScript
+followed on 2026-09-15** — `FINAL_PATTERN_NAME`, `is_final_pattern()`,
+`count_final_patterns()`, and the rung 5 ritual effect string (`final_pattern`,
+read from `rituals.json`, never the DB). **These columns did not, and will not:**
+renaming them would reject every row from a client still sending the old keys,
+for no change anyone can see. So every query on this page is unaffected:
+`ascenders_bane_count` and `banes_purged` are still spelled exactly as they were
+on 2026-08-26.
+
+Because identity is the display name, `PatternManager.FINAL_PATTERN_NAMES`
+carries both spellings and `CardLogic.is_final_pattern()` matches either — a run
+saved mid-flight before the rename still counts.
 
 **Which runs even had a Bane?** `banes_purged` records an event, and an event
 cannot record a non-event — so the two directions aren't symmetric:
@@ -533,7 +546,7 @@ cannot record a non-event — so the two directions aren't symmetric:
 **`games.ascenders_bane_count`** is the run-invariant half. Together they give
 three unambiguous states:
 
-| `had_ascenders_bane` | `banes_purged` row | Meaning |
+| `ascenders_bane_count` | `banes_purged` row | Meaning |
 |---|---|---|
 | `0` | — | No Bane in this run |
 | `> 0` | none | Had one, **never solved it** → the `no_boss_key` population |
@@ -548,17 +561,17 @@ purge can precede it.
 `open_run` also runs on resume, and it upserts, so it recounts and overwrites.
 That's safe only because purged cards go to `trash`, `trash` is a configured
 zone, and `CardZones.get_save_data()` persists every zone — so a Bane solved
-before the reload is still found. `count_ascenders_banes()` scanning `trash` is
+before the reload is still found. `count_final_patterns()` scanning `trash` is
 load-bearing here, not merely defensive: without it, resuming a run would
 silently reset the count to 0.
 
-It's **observed, not derived**. `ritual >= 5` would work today — the Bane comes
+It's **observed, not derived**. `ritual >= 5` would work today — the card comes
 from ritual 5 (`assets/game_data/rituals/rituals.json` in the game repo, `effect:
-"ascenders_bane"`) and `RitualManager.apply_ritual_effects` applies every ritual
+"final_pattern"`) and `RitualManager.apply_ritual_effects` applies every ritual
 from 1 up to the player's level, so effects are cumulative. But that rule lives
-in a content file, and if the Bane is ever granted another way every historical
+in a content file, and if the card is ever granted another way every historical
 query built on the ritual level becomes silently wrong.
-`CardLogic.run_has_ascenders_bane()` looks for the card instead, scanning
+`CardLogic.count_final_patterns()` looks for the card instead, scanning
 `trash` so the answer stays true after it's purged.
 
 **Is the gate still shut on a given turn?** Derived, not stored — outstanding

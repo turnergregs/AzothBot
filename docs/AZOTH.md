@@ -83,14 +83,15 @@ source.
 
 A second content type was retired at the same time and for the same reason.
 
-## Patterns, and Ascender's Bane
+## Patterns, and The Final Pattern
 
 Each act, the game generates a deck of **pattern** cards (also called curses) —
 unplayable cards shuffled into the player's deck. They clog the hand and deal
 damage at end of turn if left unsolved. The player must solve or purge them. When
 the pattern deck runs low, the boss fight begins.
 
-**Ascender's Bane** is a special pattern with outsized analytics importance. It
+**The Final Pattern** (called Ascender's Bane until 2026-09-14; the analytics
+columns still use that name) is a special pattern with outsized analytics importance. It
 appears at Ritual 5+, is injected once at run start, and is designed to survive
 several acts. Purging it grants the **boss key** — without which a run ending
 after act 4 records `no_boss_key` instead of reaching act 5.
