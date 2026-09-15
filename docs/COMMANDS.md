@@ -525,8 +525,9 @@ before that. It still reads
 whether or not the migration below has been applied. Its `events` column was
 permanently zero until `db/migrations/2026-08-27_draft_pool_include_rites.sql`
 in the game repo widened the view to `usage_type in ('draft', 'rite')`; the Rites
-deck (id 36, 21 events) is `usage_type = 'rite'` and was excluded by a filter
-that predates that usage type. Until that migration runs, `events` reads 0.
+deck (id 36) was excluded by a filter that predated its usage type. That usage
+type is `weighted` since 2026-09-15, and the view reads only `weighted`
+(`2026-09-15_drop_rite_usage_type.sql`).
 
 Since 2026-09-03 it renders the element and valence splits as **bar charts**,
 the element one coloured to the game's own element colours inside an ` ```ansi `

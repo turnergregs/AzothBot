@@ -54,19 +54,20 @@ def test_the_vocabularies_match_the_game(rows):
     assert taxonomy.DECK_TYPES == ["base", "custom"]
 
 
-def test_rite_and_tutorial_are_present(rows):
-    """The regression this module exists for. The game's USAGE_TYPE_OPTIONS has
-    seven entries and omits both; the database has decks using each."""
+def test_weighted_and_tutorial_are_present(rows):
+    """The regression this module exists for: the game's old USAGE_TYPE_OPTIONS
+    omitted the Rites deck's usage type, which hid it from `draft_deck_view`.
+    That type is `weighted` since 2026-09-15; the database has decks using each."""
     rows({})
-    assert "rite" in taxonomy.DECK_USAGE_TYPES
+    assert "weighted" in taxonomy.DECK_USAGE_TYPES
     assert "tutorial" in taxonomy.DECK_USAGE_TYPES
 
 
-@pytest.mark.parametrize("retired", ["reactant", "boon_a", "boon_b", "boon_c"])
+@pytest.mark.parametrize("retired", ["rite", "reactant", "boon_a", "boon_b", "boon_c"])
 def test_retired_usage_types_are_not_offered(rows, retired):
-    """Retired 2026-08-27. The engine still understands `reactant`
-    (`CardLogic.DRAFT_INJECTED_USAGE_TYPES`), but no content uses any of these,
-    and a dead usage type in a picker is how a new deck ends up on one."""
+    """`reactant` and the boons retired 2026-08-27; `rite` became `weighted`
+    2026-09-15 and the game no longer reads it. A dead usage type in a picker is
+    how a new deck ends up on one."""
     rows({})
     assert retired not in taxonomy.values("deck_usage_types")
 

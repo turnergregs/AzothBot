@@ -365,10 +365,11 @@ weights stop being uniform the closed form above stops holding, and the field
 ⚠️ Two constants here are mirrored from the game and can go stale:
 `stats_format.INJECTED_POOL_PERCENT` (0.7) and the reactant fallback weight.
 Every number derived from them is labelled *"at the default rate"* for that
-reason. And the count is scoped to `usage_type = 'rite'` — reactants share the
-same budget and the same draw, but every reactant deck has been archived since
-2026-08-27, so the rite pool *is* the injected pool today. If reactants return
-they belong in that count, and the slot estimate is wrong until they are added.
+reason. And the count is scoped to rite rows in `usage_type = 'weighted'` decks
+(`rite` until 2026-09-15; `reactant` was folded into `weighted`). A weighted deck
+can also hold cards and aspects, which share the same budget and draw, but none
+does today, so the rite pool *is* the injected pool. If one gains them they
+belong in that count, and the slot estimate is wrong until they are added.
 
 #### The correction about rates
 

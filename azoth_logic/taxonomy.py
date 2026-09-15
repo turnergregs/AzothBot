@@ -59,16 +59,16 @@ CARD_ATTRIBUTES = ["Augment", "Ascending", "Decrement", "Descending", "Inert", "
 # and both `decks_with_contents` and `draft_deck_view` filter on it.
 DECK_TYPES = ["base", "custom"]
 
-# scripts/UI/codex/codex.gd::USAGE_TYPE_OPTIONS, plus `tutorial` and `rite`,
-# which that constant is missing. See the module docstring.
+# scripts/UI/codex/new_deck_dialog.gd (Draft, Starter, Weighted, Summon) and
+# `CardLogic.WEIGHTED_USAGE_TYPE`, plus `tutorial`. See the module docstring.
 #
-# `reactant`, `boon_a`, `boon_b` and `boon_c` are deliberately NOT here: retired
-# 2026-08-27, and the only decks that used them (32 Reactants, 33-35 Boon_*) are
-# all archived. The game's USAGE_TYPE_OPTIONS still lists them, and
-# `CardLogic.DRAFT_INJECTED_USAGE_TYPES` still understands `reactant` -- the
-# engine support is alive, there is just no content using it, and offering a dead
-# usage type in a picker is how a new deck ends up in one.
-DECK_USAGE_TYPES = ["draft", "starter", "summon", "rite", "tutorial"]
+# `weighted` replaced `rite` on 2026-09-15 (game repo
+# 2026-09-13_weighted_usage_type.sql): the game no longer reads `rite`, so a deck
+# made under it is never sampled into a draft. `reactant`, folded into
+# `weighted`, and `boon_a` / `boon_b` / `boon_c` are deliberately NOT here: the
+# only decks that used them (32 Reactants, 33-35 Boon_*) are all archived, and
+# offering a dead usage type in a picker is how a new deck ends up in one.
+DECK_USAGE_TYPES = ["draft", "starter", "summon", "weighted", "tutorial"]
 
 CANONICAL = {
     "card_elements": CARD_ELEMENTS,

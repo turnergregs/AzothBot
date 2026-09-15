@@ -580,7 +580,7 @@ migration `db/migrations/2026-09-14_rename_events_to_rites.sql` (plus
 were applied by hand on 2026-09-14.
 
 Not every Rite-typed row is a rite. The live rites are the **21 in the
-"Rites" deck** (`usage_type = rite`), and they are exactly the 21 that carry a
+"Rites" deck** (`usage_type = weighted`, `rite` before 2026-09-15), and they are exactly the 21 that carry a
 palette. `Boon_Left/Center/Right` hold nine more of the same type — Augury, Echo,
 Sever and the `Random *` set — which are **boons**, a different mechanic.
 `/render` covers everything of that type, boons included, since the command
