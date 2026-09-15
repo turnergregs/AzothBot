@@ -11,10 +11,9 @@ and draws.
 """
 from __future__ import annotations
 
-# Content types, in the vocabulary the commands use. "rite" is what the database
-# still calls an "event"; see azoth_commands/rites.py.
+# Content types, in the vocabulary the commands use. Their tables come from
+# content_index.tables(), which follows the events -> rites rename.
 KINDS = ("card", "aspect", "rite")
-KIND_TABLE = {"card": "cards", "aspect": "aspects", "rite": "events"}
 
 ELEMENTS = ("blood", "sol", "anima")
 COLOURLESS = "colourless"           # a card with element = null
@@ -52,9 +51,8 @@ def matches_query(item: dict, query: str) -> bool:
     for subtype in item.get("subtypes") or []:
         if needle in str(subtype).lower():
             return True
-    for field in ("valence", "foresight"):
-        if item.get(field) is not None and needle in str(item[field]).lower():
-            return True
+    if item.get("valence") is not None and needle in str(item["valence"]).lower():
+        return True
     for field in ("actions", "triggers", "properties"):
         if _deep_contains(item.get(field) or [], needle):
             return True

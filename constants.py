@@ -11,20 +11,19 @@ ASSET_RENDER_PATHS = {
     "aspect": "assets/renders/aspects",
     "deck": "assets/renders/decks",
     "hand": "assets/renders/hands",
-    "event": "assets/renders/events",
+    "rite": "assets/renders/rites",
     "hero": "assets/renders/heroes",
 }
 
 ASSET_DOWNLOAD_PATHS = {
     "card": "assets/downloaded_images/cards",
     "aspect": "assets/downloaded_images/aspects",
-    "event": "assets/downloaded_images/events",
+    "rite": "assets/downloaded_images/rites",
     "hero": "assets/downloaded_images/heroes",
 }
 
 ASSET_BUCKET_NAMES = {
     "card": "cardimages",
     "aspect": "aspectimages",
-    "event": "eventimages",
     "hero": "heroimages",
 }

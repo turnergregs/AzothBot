@@ -51,6 +51,7 @@ azoth_logic/
   content_index.py          Cached (kind, id, name) index behind /show and /render,
                             plus the deck-membership liveness filter
   content_search.py         The filters behind /search
+  rite_schema.py            Which side of the events -> rites rename the database is on
   bulk_report.py            Diffs and summaries for /bulk_insert and /bulk_update
   bulk_apply.py             The transactional write itself -- one RPC, one transaction
   taxonomy.py               Elements, card types, attributes, deck types -- was six tables
@@ -224,7 +225,9 @@ has one place to live rather than being re-derived at 60 call sites.
 ### Deck membership
 
 `deck_contents` is a universal join table — `(deck_id, content_type, content_id)`
-— so one deck can hold cards, aspects and events together.
+— so one deck can hold cards, aspects and rites together. A Rite row's
+`content_type` is `rite`, or `event` on a database the rename migration has not
+reached; readers accept both, and writers ask `rite_schema.db_content_type()`.
 
 ⚠️ It also has **`position` and `weight`** columns, which the bot never writes.
 `add_to_deck_by_ref` inserts only the three keys above, so every bot-added entry
@@ -244,7 +247,7 @@ reference rather than a bare name:
 `encode_item_ref` / `parse_item_ref` / `make_item_label` handle this.
 `add_to_deck` and `remove_from_deck` accept either form; a raw typed name falls
 back to `_resolve_name_to_ref`, which takes the **first match** in the priority
-order `card, aspect, event`. That fallback is legacy and can
+order `card, aspect, rite`. That fallback is legacy and can
 pick the wrong item — always select from autocomplete.
 
 ## Autocomplete

@@ -49,7 +49,7 @@ def _pool():
     """
     live = ci.live_ids()
     pool = []
-    for kind, table in cs.KIND_TABLE.items():
+    for kind, table in ci.tables().items():
         ids = live.get(kind) if any(live.values()) else None
         for row in fetch_all(table, limit=1000):
             if ids is None or row.get("id") in ids:

@@ -12,7 +12,7 @@ registered to a single dev guild.
 
 | Area | Commands | Docs |
 |---|---|---|
-| **Content CRUD** | `create/update/show/render` for cards, aspects, events, decks. Nothing deletes — see [Deletion](docs/COMMANDS.md#deletion--removed-2026-08-27) | [COMMANDS.md](docs/COMMANDS.md) |
+| **Content CRUD** | `create/update/show/render` for cards, aspects, rites, decks. Nothing deletes — see [Deletion](docs/COMMANDS.md#deletion--removed-2026-08-27) | [COMMANDS.md](docs/COMMANDS.md) |
 | **Deck curation** | `add_to_deck`, `remove_from_deck` | [COMMANDS.md](docs/COMMANDS.md#deck-curation) |
 | **Bulk ingest** | `bulk_insert`, `bulk_update` from a JSON attachment | [CONTENT_PIPELINE.md](docs/CONTENT_PIPELINE.md) |
 | **Analytics** | `/stats` subcommands, scheduled `daily_update` reports | [ANALYTICS.md](docs/ANALYTICS.md) |

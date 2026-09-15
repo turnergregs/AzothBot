@@ -168,6 +168,11 @@ without it is an open door to production content. Verify this on every review.
   and `name_column_for(content_type)` rather than re-deriving it.
 - **Deck items are referenced by encoded ref**, `"card:447"`, not by bare name —
   names collide across content types. Use `encode_item_ref` / `parse_item_ref`.
+- **Ask `rite_schema.current()` for the Rite table and type at call time.**
+  The game's `2026-09-14_rename_events_to_rites.sql` renamed `events`/`event`
+  to `rites`/`rite`, and migrations are hand-applied with no history, so the
+  bot has to work on either side. Never bind those names at import; code that
+  reads rows or refs accepts both spellings.
 - **Never commit `.env`.** It holds a service-role key on the deployed machine.
 - **Never touch `mtime` in `get_art`.** It is the fetch time `ART_TTL` measures;
   touching it on a hit means art never expires, and flat-named upserting uploads
@@ -243,7 +248,7 @@ real `turns` data. There is no CI. See `docs/TESTING.md` § Gaps.
   deck types live in `azoth_logic/taxonomy.py`, beside the game constants they
   mirror. Adding a value is a code change in both repos, not a new row.
 - **Don't re-add a `/delete_*` command.** All four were removed 2026-08-27.
-  `cards`, `aspects` and `events` have no `archived_at` column, so those deletes
+  `cards`, `aspects` and `rites` have no `archived_at` column, so those deletes
   were unrecoverable — and the game's `prune_content_dirs()` reads a missing row
   as the deletion signal, so one misclick also pruned the offline snapshot.
   Retire content with `/remove_from_deck`; see `docs/COMMANDS.md` § Deletion.

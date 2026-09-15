@@ -1195,7 +1195,7 @@ def draft_embellishment_offers(rows: list) -> int:
 # ---------------------------------------------------------------------------
 # Rites
 # ---------------------------------------------------------------------------
-# A rite IS drafted -- picked from a pack, held in the events zone, spent later
+# A rite IS drafted -- picked from a pack, held in the rites zone, spent later
 # (docs/EVENTS.md in the game repo). What differs is how it reaches the pack,
 # and therefore what "composition" means for it:
 #

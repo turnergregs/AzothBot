@@ -64,6 +64,12 @@ All docs live in `docs/`. Read before changing a system.
 - **`deck_contents` is a universal join table** — `(deck_id, content_type,
   content_id)`. Because names collide across types, autocomplete encodes refs
   (`"card:447"`); use `encode_item_ref` / `parse_item_ref`.
+- **The Rite table and type come from `rite_schema.current()` at call time.**
+  The game's `2026-09-14_rename_events_to_rites.sql` renamed `events`/`event`
+  to `rites`/`rite`, and migrations are hand-applied with no history, so the
+  bot has to work on either side. Code that NAMES the table or type asks
+  `current()` (never bind it at import); code that READS rows or refs accepts
+  both spellings. Rites carry no art, so nothing uploads one.
 - **Rituals use `challenge_name`, not `name`.** Use `get_display_name(obj, type)`
   and `name_column_for(content_type)`.
 - **Art generation is random and destructive.** Uploads are flat-named and
@@ -77,7 +83,7 @@ All docs live in `docs/`. Read before changing a system.
 - **Two commands cover all content lookup.** `/show` and `/render` dispatch on an
   encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
   `/render_*` commands were retired 2026-08-26.
-- **Only LIVE content is findable** (2026-08-28). `cards`/`aspects`/`events` have
+- **Only LIVE content is findable** (2026-08-28). `cards`/`aspects`/`rites` have
   no `archived_at`, so liveness is inferred as *in at least one unarchived deck*
   — 233 of 626 rows. `content_index` caches the deck membership beside the name
   index and every lookup path filters on it. Two invariants: `/add_to_deck` is
@@ -141,7 +147,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 782 tests, all offline** (`docs/TESTING.md`):
+**pytest, 798 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest
@@ -220,7 +226,7 @@ See `docs/CONTENT_PIPELINE.md`.
   deck types live in `azoth_logic/taxonomy.py`, beside the game constants
   they mirror; adding a value is a code change in both repos
 - Don't re-add a `/delete_*` command. All four were removed 2026-08-27 —
-  `cards`/`aspects`/`events` have no `archived_at`, so those deletes were
+  `cards`/`aspects`/`rites` have no `archived_at`, so those deletes were
   unrecoverable and also pruned the game's offline snapshot. Retire content
   with `/remove_from_deck` instead — since 2026-08-28 that also hides it from
   every lookup command; see `docs/COMMANDS.md` § Deletion

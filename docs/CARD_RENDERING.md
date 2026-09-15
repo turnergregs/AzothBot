@@ -428,7 +428,7 @@ overlaps far more, but there you hover to read a card; in a screenshot the name
 and rules text have to survive the overlap, and both sit on the card's left.
 
 **Non-card deck items are skipped** and the count is reported in the reply.
-Aspects and events would need the fate renderer.
+Aspects and rites would need the fate renderer.
 
 ## Aspects and rites
 
@@ -573,26 +573,30 @@ plausible-looking card. Pinned by a test.
 
 ## Naming: rite vs event
 
-**"Rite" is the current name for what the database calls an "event."** The rename
-landed 2026-08-26 in code and commands only.
+**"Rite" was the code's name for what the database called an "event."** The rename
+landed 2026-08-26 in code and commands; the game's 0.9.5 client and the
+migration `db/migrations/2026-09-14_rename_events_to_rites.sql` (plus
+`2026-09-14_riteimages_bucket.sql`) finish it in the database. Those migrations
+were applied by hand on 2026-09-14.
 
-Not every `content_type: event` row is a rite. The live rites are the **21 in the
+Not every Rite-typed row is a rite. The live rites are the **21 in the
 "Rites" deck** (`usage_type = rite`), and they are exactly the 21 that carry a
-palette. `Boon_Left/Center/Right` hold nine more events — Augury, Echo, Sever and
-the `Random *` set — which are **boons**, a different mechanic. `/render`
-covers everything with `content_type: event`, boons included, since the command
+palette. `Boon_Left/Center/Right` hold nine more of the same type — Augury, Echo,
+Sever and the `Random *` set — which are **boons**, a different mechanic.
+`/render` covers everything of that type, boons included, since the command
 is for inspecting content.
 
-| Says `rite` | Says `event` |
-|---|---|
-| Commands (`/create_rite`, `/update_rite`, …) | `events` table |
-| `azoth_commands/rites.py` | `content_type` value |
-| `fate_render`, `fate_layout` | `eventimages` bucket |
-| Everything user-facing | `rite_card.tscn` and the game's scripts |
+| | Before the migration | After |
+|---|---|---|
+| Table | `events` | `rites` |
+| `content_type` / `item_type` value | `event` | `rite` |
 
-`rites.py` marks the boundary with `TABLE_NAME`, `DB_KEY` and `MODEL_NAME`; the
-first two are what change when the tables are eventually renamed. A test asserts
-all three, so the boundary cannot drift silently.
+Nothing binds those names. `azoth_logic/rite_schema.py` probes which side the
+database is on (cached 5 minutes, printed on each change), and anything that
+names the table or type asks `rite_schema.current()` at call time.
+Anything that reads rows or refs accepts both spellings. `rites.py` keeps only
+`MODEL_NAME`; a test asserts it binds no `TABLE_NAME`, so a hard-coded table
+cannot creep back.
 
 ## Retired
 

@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 782 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 798 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -14,7 +14,8 @@ Added 2026-08-26. Before that there was no suite at all.
 | File | Tests | Covers |
 |---|---|---|
 | `tests/test_card_render.py` | 74 | The card face: geometry from `card.tscn`, symbol tokens, wrapping, split borders, the measured constants |
-| `tests/test_fate_render.py` | 58 | Aspects and rites: backgrounds, mask recolouring, the reversed aspect palette, the rite/event naming boundary |
+| `tests/test_fate_render.py` | 58 | Aspects and rites: backgrounds, mask recolouring, the reversed aspect palette, and that `rites.py` binds no table name |
+| `tests/test_rite_schema.py` | 12 | Which side of the `events` -> `rites` rename the database is on: a missing-table error (PGRST205 or 42P01) means before, any other failure raises rather than guessing old, the answer is cached yet a migration applied while running is picked up, a change of side is printed, and both spellings map to the current one |
 | `tests/test_supabase_helpers.py` | 46 | The access layer: the RLS pre-flight guard, raise-don't-swallow, query construction, deck item refs |
 | `tests/test_daily_update.py` | 45 | The daily report: turn-grain aggregation, send/claim ordering, state file, scheduling, embed limits, and the due-channel sweep surviving a failure |
 | `tests/test_helpers.py` | 35 | Key-role detection, autocomplete degradation, filename slugging, embed packing, missing-asset guidance |

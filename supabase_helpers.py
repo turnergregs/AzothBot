@@ -225,8 +225,16 @@ import re
 # Content types that participate in decks. Order is the legacy first-match
 # priority used only for raw (manually-typed) names.
 # `ritual` was removed 2026-08-26 -- the concept is retired.
-DECK_CONTENT_TYPES = ["card", "aspect", "event"]
-_ITEM_REF_RE = re.compile(r"^(card|aspect|event):(\d+)$")
+DECK_CONTENT_TYPES = ["card", "aspect", "rite"]
+# `event` is the pre-rename spelling of `rite`. Both parse, so a ref picked from
+# an autocomplete before the migration still works after it.
+_ITEM_REF_RE = re.compile(r"^(card|aspect|rite|event):(\d+)$")
+
+
+def _db_content_type(content_type: str) -> str:
+	"""A Rite type in the spelling the database stores now; see rite_schema."""
+	from azoth_logic import rite_schema
+	return rite_schema.db_content_type(content_type)
 
 
 def name_column_for(content_type: str) -> str:
@@ -280,7 +288,7 @@ def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict |
 	results = []
 
 	for content_type, ids in grouped.items():
-		table_name = f"{content_type}s"  # e.g. 'cards', 'aspects', 'events'
+		table_name = f"{content_type}s"  # e.g. 'cards', 'aspects', 'rites'
 
 		records = fetch_all(table_name, filters={"id": ids}, sort=["name"])
 		if not records:
@@ -310,6 +318,7 @@ def get_deck_contents(deck: dict, full: bool = False) -> tuple[bool, list[dict |
 
 def add_to_deck_by_ref(deck: dict, content_type: str, content_id, quantity: int = 1) -> tuple[bool, str]:
 	"""Add an exact item (resolved by id) to a deck."""
+	content_type = _db_content_type(content_type)
 	deck_id = deck.get("id")
 	if not deck_id:
 		return False, "Deck missing ID."
@@ -333,6 +342,7 @@ def add_to_deck_by_ref(deck: dict, content_type: str, content_id, quantity: int 
 
 def remove_from_deck_by_ref(deck: dict, content_type: str, content_id, quantity: int = 1) -> tuple[bool, str]:
 	"""Remove an exact item (resolved by id) from a deck."""
+	content_type = _db_content_type(content_type)
 	deck_id = deck.get("id")
 	if not deck_id:
 		return False, "Deck missing ID."
@@ -360,7 +370,7 @@ def _resolve_name_to_ref(item_name: str):
 	"""Legacy fallback for raw (non-encoded) names: first match by type priority.
 
 	Returns (content_type, content_id) or (None, None) if nothing matches."""
-	for content_type in DECK_CONTENT_TYPES:
+	for content_type in map(_db_content_type, DECK_CONTENT_TYPES):
 		name_column = name_column_for(content_type)
 		records = fetch_all(f"{content_type}s", filters={name_column: item_name})
 		if records:

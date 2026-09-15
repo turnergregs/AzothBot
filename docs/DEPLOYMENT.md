@@ -48,6 +48,12 @@ Success looks like:
 Both lines matter. Without the second, the process is connected but no commands
 are registered.
 
+A third line says which side of the game's `events` -> `rites` rename the
+database is on, ``🗂  Rites schema: after the rename (table `rites`)`` once
+`2026-09-14_rename_events_to_rites.sql` has been applied. A `⚠️  Could not tell
+which side...` line instead means every Rite command will fail until the probe
+succeeds; see `azoth_logic/rite_schema.py`.
+
 Python 3.11 (`.python-version`).
 
 ### Directories that have to be there

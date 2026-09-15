@@ -65,9 +65,6 @@ def _facts(kind: str, row: dict) -> list:
             split = row["split"]
             facts.append(("Split", f"{str(split.get('element','?')).capitalize()} "
                                    f"valence {split.get('valence','?')}"))
-    elif kind == "rite":
-        if row.get("foresight") is not None:
-            facts.append(("Foresight", str(row["foresight"])))
     return facts
 
 

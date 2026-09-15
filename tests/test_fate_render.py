@@ -1,8 +1,8 @@
 """Tests for the aspect and rite renderers.
 
-"Rite" is the current name for what the database calls an "event". These tests
-use the new name; where a DB key appears it stays `event`, and that boundary is
-asserted explicitly below.
+Rites were "events" until 0.9.5, when the database was renamed too. The table name
+now comes from `azoth_logic/rite_schema.py`; that the rite commands
+do not bind it at import is asserted below.
 """
 import io
 
@@ -30,12 +30,11 @@ RITE_PALETTE = {"name": "Amplification", "text": "[8mult] next link",
 # The event -> rite naming boundary
 # ---------------------------------------------------------------------------
 
-def test_db_keys_keep_the_old_name():
-    """The rename is user-facing only. Renaming the table, the content_type or
-    the Storage bucket means a migration, so those stay `event` until then."""
+def test_rite_commands_do_not_bind_a_table_name():
+    """The table name comes from rite_schema at call time. A name bound at
+    import is wrong on one side of the hand-applied rename migration."""
     from azoth_commands import rites
-    assert rites.TABLE_NAME == "events"
-    assert rites.DB_KEY == "event"
+    assert not hasattr(rites, "TABLE_NAME")
     assert rites.MODEL_NAME == "rite"
 
 

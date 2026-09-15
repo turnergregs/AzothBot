@@ -366,17 +366,18 @@ def add_stats_commands(cls):
         item_type: str = SlashOption(
             description="Restrict to one content type",
             required=False,
-            # The LABEL is Rite; the value stays `event` because that is what
-            # draft_rates_view.item_type stores. Renaming the value would need a
-            # view change for a word.
-            choices={"Card": "card", "Aspect": "aspect", "Rite": "event"},
+            # draft_rates_view.item_type says `rite`, or `event` on a database
+            # the rename migration has not reached. The filter below asks
+            # rite_schema which one to send.
+            choices={"Card": "card", "Aspect": "aspect", "Rite": "rite"},
         ),
     ):
         # draft_rates_view returns ONE ROW PER ITEM as of 2026-08-26, carrying
         # times_picked AND times_offered rather than a pre-formatted string, so
         # the limit has to be applied here or this dumps every draftable item.
         # The view is ordered pick_rate DESC, so "least" just reverses it.
-        filters = {"item_type": item_type} if item_type else None
+        from azoth_logic import rite_schema
+        filters = {"item_type": rite_schema.db_content_type(item_type)} if item_type else None
         sort = ["pick_rate", "-times_offered"] if order == "least" else None
 
         records = fetch_all("draft_rates_view", filters=filters, sort=sort, limit=limit)

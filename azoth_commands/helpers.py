@@ -150,7 +150,7 @@ def generate_and_upload_image(obj_data: dict, bucket: str) -> tuple[bool, str | 
 	from azoth_logic.image_generator import generate_image
 	from supabase_storage import upload_image
 	"""
-	Generates and uploads an image for any supported game object type (card, event, etc.)
+	Generates and uploads an image for any supported game object type (card, rite, etc.)
 	Returns (success: bool, file_path or error string)
 	"""
 

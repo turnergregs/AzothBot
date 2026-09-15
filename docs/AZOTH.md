@@ -55,12 +55,12 @@ These map one-to-one onto database tables and onto this bot's CRUD commands.
 |---|---|---|
 | **Card** | `cards` | The primary object. Element (`blood`/`sol`/`anima`/`default`), valence 1–6, rules text, actions, triggers, properties, subtypes |
 | **Aspect** | `aspects` | A permanent effect the player draws on. Lives in an **ordered** zone — order sets trigger firing order. Carries no element/valence. Each one fills a single slot on the aspect bar |
-| **Event** | `events` | A one-shot effect the player holds and spends later. Has `foresight`. Capacity-capped in the events zone |
+| **Rite** | `rites` (`events` before the game's `2026-09-14_rename_events_to_rites.sql`) | A one-shot effect the player holds and spends later. Capacity-capped in the rites zone (`max_rites`) |
 | **Hero** | `heroes` | Chosen at run start. Has a clickable ability costing life, and an RGB colour |
 | **Boss** | `bosses` | HP, damage, a cycling attack **timeline**, and triggers |
 | **Deck** | `decks` + `deck_contents` | A named collection. `deck_contents` is a universal join table carrying `content_type` + `content_id` |
 
-"Fate" was the umbrella for aspects and events — the non-card content that goes
+"Fate" was the umbrella for aspects and rites — the non-card content that goes
 into draft packs. It survives as the name of the renderer for those,
 `azoth_logic/fate_render.py`, and as the `fates` value that used to live in
 `decks.content_type`. That column was dropped 2026-08-27: a deck can hold cards
@@ -112,7 +112,7 @@ folding it in put a permanent floor under pattern counts and made
 | **Valence** | A card's number, 1–6 |
 | **Element** | `blood`, `sol`, `anima`, `default` |
 | **Attunement** | Capacity for aspects. `max_attunement` is how many the player can hold; each aspect takes one slot. It is **not** a per-aspect field |
-| **Foresight** | A field on events (Rites). The player-facing timeline meaning is not implemented |
+| **Foresight** | A player resource. Its timeline meaning is not implemented. Rites also had a `foresight` column, dropped 2026-09-14 |
 | **Ether** | Spent to play links, regenerates each turn |
 | **Draft** | Picking from a pack to add to the deck — the main deckbuilding step |
 | **Levelup** | Crossing a combo threshold pays out reward picks from a pack |

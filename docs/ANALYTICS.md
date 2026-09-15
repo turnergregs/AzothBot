@@ -330,7 +330,7 @@ view is exactly double — the same trap `scoreboard_sample` documents.
 #### Rites: templates, not pool members
 
 **A rite is drafted.** It is picked out of a pack like anything else and goes to
-the events zone to be held and later spent
+the rites zone to be held and later spent
 ([EVENTS.md](../../azoth/docs/EVENTS.md) in the game repo). An earlier pass
 today said rites were "injected, not drafted" and removed them from this view
 entirely; the first half of that is true and the conclusion does not follow.

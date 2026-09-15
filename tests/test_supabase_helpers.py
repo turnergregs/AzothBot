@@ -217,7 +217,7 @@ def test_mutations_raise_on_failure(monkeypatch, fake_supabase, fn, args):
 # Names collide across content types, so autocomplete round-trips an encoded
 # ref rather than a bare name.
 
-@pytest.mark.parametrize("ct,cid", [("card", 447), ("aspect", 12), ("event", 3)])
+@pytest.mark.parametrize("ct,cid", [("card", 447), ("aspect", 12), ("rite", 3), ("event", 3)])
 def test_item_ref_round_trips(ct, cid):
     assert h.parse_item_ref(h.encode_item_ref(ct, cid)) == (ct, cid)
 
@@ -238,7 +238,7 @@ def test_label_is_disambiguated_by_type_and_id():
     assert h.make_item_label("Diversity", "card", 447) == "Diversity (Card #447)"
 
 
-@pytest.mark.parametrize("ct", ["card", "aspect", "event"])
+@pytest.mark.parametrize("ct", ["card", "aspect", "rite", "event"])
 def test_name_column_is_uniform(ct):
     # `challenge_name` was the ritual-only exception; that table is retired.
     assert h.name_column_for(ct) == "name"
@@ -249,4 +249,4 @@ def test_display_name_reads_name():
 
 
 def test_deck_content_types_are_current():
-    assert h.DECK_CONTENT_TYPES == ["card", "aspect", "event"]
+    assert h.DECK_CONTENT_TYPES == ["card", "aspect", "rite"]

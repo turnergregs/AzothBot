@@ -16,14 +16,26 @@ import threading
 import time
 
 from supabase_helpers import fetch_all
+from azoth_logic import rite_schema
 
-# Kind -> table. "rite" is what the database still calls an "event".
-TABLES = {"card": "cards", "aspect": "aspects", "rite": "events"}
+KINDS = ("card", "aspect", "rite")
 
-# Kind -> the content_type an item ref encodes. Refs stay on the DB vocabulary so
-# they keep working with deck_contents and parse_item_ref.
-REF_TYPE = {"card": "card", "aspect": "aspect", "rite": "event"}
-KIND_FOR_REF = {v: k for k, v in REF_TYPE.items()}
+
+def tables() -> dict:
+    """Kind -> table. The Rite table is `rites`, or `events` on a database the
+    rename migration has not reached; rite_schema says which."""
+    return {"card": "cards", "aspect": "aspects", "rite": rite_schema.current().table}
+
+
+def ref_type(kind: str) -> str:
+    """The content_type a NEW item ref encodes. Refs use the database's own
+    spelling so they keep working with deck_contents and parse_item_ref."""
+    return rite_schema.current().content_type if kind == "rite" else kind
+
+
+# content_type -> kind, for READING refs and rows. Both Rite spellings, so a ref
+# encoded before the rename still resolves after it.
+KIND_FOR_REF = {"card": "card", "aspect": "aspect", "rite": "rite", "event": "rite"}
 
 # Kind -> what a user sees in an autocomplete label.
 DISPLAY = {"card": "Card", "aspect": "Aspect", "rite": "Rite"}
@@ -47,7 +59,7 @@ def invalidate() -> None:
 
 # --- Liveness ---------------------------------------------------------------
 #
-# `cards`, `aspects` and `events` have **no `archived_at` column** -- they hard
+# `cards`, `aspects` and `rites` have **no `archived_at` column** -- they hard
 # delete, and a row that is no longer used just sits there. Today that is 400
 # cards of which 154 are reachable in game, 149 aspects of which 58 are, and 77
 # rites of which 21 are. Two thirds of every autocomplete was content the player
@@ -82,7 +94,7 @@ def _fetch_live() -> dict:
     """
     live_decks = {d["id"] for d in fetch_all("decks", ["id", "archived_at"], limit=1000)
                   if not d.get("archived_at")}
-    found = {kind: set() for kind in TABLES}
+    found = {kind: set() for kind in KINDS}
     if not live_decks:
         return found
     for row in fetch_all("deck_contents", ["deck_id", "content_type", "content_id"],
@@ -98,7 +110,7 @@ def _fetch_live() -> dict:
 def _refresh() -> tuple:
     """(entries, live) read fresh from the database."""
     rows = []
-    for kind, table in TABLES.items():
+    for kind, table in tables().items():
         for row in fetch_all(table, ["id", "name"], limit=1000):
             if row.get("name"):
                 rows.append((kind, row["id"], row["name"]))
@@ -157,7 +169,7 @@ def label(kind: str, item_id, name: str) -> str:
     """Autocomplete label, e.g. 'Diversity (Card #447)'.
 
     Uses the DISPLAY name rather than the ref type, so an event shows as
-    'Rite' -- the value behind it still encodes `event:13`.
+    'Rite' -- the value behind it encodes `rite:13` (`event:13` before the rename).
     """
     return f"{name} ({DISPLAY.get(kind, kind.capitalize())} #{item_id})"
 
@@ -181,7 +193,7 @@ def choices(query: str, limit: int = 25, live_only: bool = True) -> dict:
         rank = 0 if low == needle else (1 if low.startswith(needle) else 2)
         scored.append((rank, low, kind, item_id, name))
     scored.sort(key=lambda r: (r[0], r[1]))
-    return {label(k, i, n): encode_item_ref(REF_TYPE[k], i)
+    return {label(k, i, n): encode_item_ref(ref_type(k), i)
             for _, _, k, i, n in scored[:limit]}
 
 
@@ -202,7 +214,7 @@ def resolve(value: str, live_only: bool = True):
     if ref_type:
         kind = KIND_FOR_REF.get(ref_type)
         if kind:
-            rows = fetch_all(TABLES[kind], filters={"id": item_id})
+            rows = fetch_all(tables()[kind], filters={"id": item_id})
             if rows and (not live_only or is_live(kind, rows[0]["id"])):
                 return kind, rows[0]
         return None, None
@@ -211,7 +223,7 @@ def resolve(value: str, live_only: bool = True):
     if not name:
         return None, None
     matches = []
-    for kind, table in TABLES.items():
+    for kind, table in tables().items():
         rows = fetch_all(table, filters={"name": name})
         if rows:
             matches.append((kind, rows[0]))

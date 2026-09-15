@@ -28,8 +28,10 @@ Shrinker" is both a Card and an Aspect. The old split handled that by making you
 pick the right command; now the label does it.
 
 The value behind each choice is the same encoded ref the deck commands use
-(`card:447`), so one lookup path serves both. Rites label as **Rite** while their
-ref still encodes `event:82`, matching the naming boundary.
+(`card:447`), so one lookup path serves both. Rites label as **Rite**; their ref
+uses the database's own spelling, `rite:82` after the rename migration and
+`event:82` before it (`content_index.ref_type`). An old `event:` ref still
+resolves on either side.
 
 Autocomplete is served from an in-process index
 (`azoth_logic/content_index.py`) with a 60s TTL — Discord fires it on every
@@ -45,7 +47,7 @@ name pickers cover **only content that is reachable in game**. That is
 rest is retired work that nobody can encounter, and it used to fill two thirds
 of every autocomplete.
 
-`cards`, `aspects` and `events` have **no `archived_at`** — they hard-delete,
+`cards`, `aspects` and `rites` have **no `archived_at`** — they hard-delete,
 and an unused row just sits there. So liveness is inferred:
 
 > **live == in at least one deck whose `archived_at` is null**
@@ -72,7 +74,7 @@ refresh.
 
 `/show` returns a **detail embed**, accented in the item's own colour: rules text
 as the body, and only the attributes that define the thing — element, valence,
-subtypes, split face or foresight, whichever apply. Empty and null
+subtypes or split face, whichever apply. Empty and null
 values are dropped rather than printed.
 
 It used to dump the raw database row as JSON. Deliberately **not** shown now:
@@ -190,15 +192,17 @@ out. Render one with `/render`.
 
 ## Rites
 
-> **"Rite" is the current name for what the database calls an "event."** The
-> commands and all new code say rite; the `events` table, the `event`
-> `content_type` and the `eventimages` bucket keep the old name until a
-> migration. See [CARD_RENDERING.md](CARD_RENDERING.md#naming-rite-vs-event).
+> **The database was renamed to match on 2026-09-14.** The game repo's
+> `db/migrations/2026-09-14_rename_events_to_rites.sql` turned the `events`
+> table and the `event` `content_type` into `rites` and `rite`. Migrations are
+> applied by hand, so the bot asks `azoth_logic/rite_schema.py` which side it
+> is on at call time. Rites carry no art: `/create_rite` and `/update_rite`
+> neither generate nor upload an image. See [CARD_RENDERING.md](CARD_RENDERING.md#naming-rite-vs-event).
 
 | Command | Access | Parameters |
 |---|---|---|
-| `/create_rite` | 🔒 | `name`, `text`, `foresight`, `deck?`*, `quantity?` |
-| `/update_rite` | 🔒 | `name`*, `new_name?`, `text?`, `foresight?`, `regenerate_image?` |
+| `/create_rite` | 🔒 | `name`, `text`, `deck?`*, `quantity?` |
+| `/update_rite` | 🔒 | `name`*, `new_name?`, `text?` |
 
 ## Heroes ⚠️ RETIRED
 
@@ -215,7 +219,7 @@ an oversight to fix. Hero cards were also never ported to the new renderer, so
 their modules, and `tests/test_command_registration.py` asserts they stay off the
 cog.
 
-Three of the four hard-deleted. `cards`, `aspects` and `events` have **no
+Three of the four hard-deleted. `cards`, `aspects` and `rites` have **no
 `archived_at` column** — the row was gone, with no undo and no backups configured
 from this repo. Worse, the game's `prune_content_dirs()` reads a missing row as
 the deletion signal, so one misclick also tore the item out of the offline
@@ -430,7 +434,7 @@ what you would want to force. Full policy:
 | `/stats draft composition` | — | — |
 | `/stats draft breakdown` | — | — |
 | `/stats draft embellishments` | — | — |
-| `/stats draft rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/event) |
+| `/stats draft rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/rite; sent as `event` to a database the rename has not reached) |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 
 All `/stats` subcommands reply with an **embed** — an aligned table for the

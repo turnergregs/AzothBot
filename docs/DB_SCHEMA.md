@@ -49,6 +49,15 @@ Three consequences, and all three have already cost something:
    tracks what has been applied, so the only safe assumption is that any file
    may be run again — or run for the first time long after it was written.
 
+> **`events` -> `rites`, applied 2026-09-14.** The game repo's
+> `db/migrations/2026-09-14_rename_events_to_rites.sql` renames the `events`
+> table to `rites` and the `'event'` type value to `'rite'`, and
+> `2026-09-14_riteimages_bucket.sql` adds the `riteimages` bucket. Both were
+> applied 2026-09-14, and this file describes the database after them.
+> Which side the live database is on is whatever `azoth_logic/rite_schema.py`
+> detects: the bot prints `Rites schema: before/after the rename` on startup and
+> on every change of side.
+
 ---
 
 ## [AzothBot] Which key you are holding
@@ -141,9 +150,9 @@ verbatim with their defects annotated but not fixed.
 | `player_act_view` | — | `player`, `act`, `avg_links_regular`, `avg_links_boss`, `regular_turns`, `boss_turns`. Added 2026-08-27 |
 | `turn_scoreboard_view` | — | One row per (`act`, `axis`) plus an `act IS NULL` rollup per axis: `turns_sampled`, `avg_count`, `avg_threshold`, `times_hit`, `hit_rate`, `times_won`, `won_rate`, `avg_life_when_won`. Added 2026-08-31; surfaced by `/stats scoreboard`. **Do not `sum(turns_sampled)`** — each turn appears once per axis plus once in the rollup |
 | `draft_deck_view` | 1 | `deck_name`, `cards`, `aspects`, plus `element_counts` and `valence_counts` — **jsonb histograms** keyed by the value, valence-less cards under `none`, elementless ones under `catalyst` (2026-09-03; they replace `anima`/`blood`/`sol`/`combo` and `1v`–`6v`, which could not report a value that had no column — four cards above valence 6 and 24 with none were counted by nothing). `cards`/`aspects` cover base, non-archived `usage_type = 'draft'` decks. **Rites are counted separately** as `rite_templates` + `rite_weight_counts` (jsonb, weight → templates carrying it): they are drawn WITH REPLACEMENT into ~`floor(0.7·pool/6.3)` injected slots, so they are templates rather than pool members and must never be added into `cards`. Surfaced by `/stats draft composition` |
-| `draft_rates_view` | ~88 | One row per item: `item_type`, `item_id`, `item_name`, `element`, `valence`, `times_offered`/`times_picked`/`times_reserved` and their rates. ⚠️ `times_reserved`/`reserve_rate` are **structurally 0** above the cutoff — the reserve mechanic was retired 2026-09-04 and was already unreachable from 0.7. AzothBot displays neither. Reshaped 2026-08-26 — it *was* one row of comma-joined strings. ⚠️ Censored by `having count(*) >= 5`, so **do not aggregate over it** — see `draft_dimension_rates_view` |
+| `draft_rates_view` | ~88 | One row per item: `item_type`, `item_id`, `item_name`, `element`, `valence`, `times_offered`/`times_picked`/`times_reserved` and their rates. `item_type` is `card`/`aspect`/`rite` (`event` before the rename migration). ⚠️ `times_reserved`/`reserve_rate` are **structurally 0** above the cutoff — the reserve mechanic was retired 2026-09-04 and was already unreachable from 0.7. AzothBot displays neither. Reshaped 2026-08-26 — it *was* one row of comma-joined strings. ⚠️ Censored by `having count(*) >= 5`, so **do not aggregate over it** — see `draft_dimension_rates_view` |
 | `draft_embellishment_rates_view` | ~10 | Card pick rate by draft embellishment. One row per (`dimension`, `bucket`) over dimensions `embellished` (bare/embellished), `kind` (upgrade/attribute/enhancement), `enhancement` (by name) and `attribute` (by name), each with `times_offered`, `times_picked`, `pick_rate`. Added 2026-09-04. Read `bare` vs `embellished` for the lift. **Do not sum `times_offered`** — an offer appears in several dimensions. Recorded era only (`draft_items.embellished is not null`), so it is empty until runs from a recording client land. Excludes `reserved` offers, which only exist in pre-0.7 data — the mechanic was retired 2026-09-04, so this never excludes a row either view returns. Surfaced by `/stats draft embellishments` |
-| `draft_dimension_rates_view` | ~17 | Draft pick rate by dimension: `type` (card/aspect/rite, every offer), `element` and `valence` (cards only). One row per (`dimension`, `bucket`) with `times_offered`, `times_picked`, `pick_rate`. Added 2026-09-03, aggregated from `draft_items` so it is not censored. **Do not sum `times_offered` across the view** — every offer appears once per dimension it has. The `rite` bucket is `draft_items.item_type = 'event'`, renamed here so it happens once. Surfaced by `/stats draft breakdown` |
+| `draft_dimension_rates_view` | ~17 | Draft pick rate by dimension: `type` (card/aspect/rite, every offer), `element` and `valence` (cards only). One row per (`dimension`, `bucket`) with `times_offered`, `times_picked`, `pick_rate`. Added 2026-09-03, aggregated from `draft_items` so it is not censored. **Do not sum `times_offered` across the view** — every offer appears once per dimension it has. The `rite` bucket is `draft_items.item_type = 'rite'` (`'event'` before the rename migration, when the view renamed it here). Surfaced by `/stats draft breakdown` |
 | `decks_with_contents` | — | **Not used by AzothBot.** Deck rows with contents inlined as JSON; consumed by the game / Codex editor |
 
 **They predate the turn-grain schema and violate several caveats below** — every
@@ -220,7 +229,9 @@ Three things about it that are load-bearing:
   `authenticated` and granted only to `service_role`.
 - **Table names are checked against a fixed allowlist** inside the function —
   content tables only, no analytics tables. The allowlist lives *only* here; the
-  bot deliberately does not keep a copy to drift against.
+  bot deliberately does not keep a copy to drift against. It names `rites`
+  (`events` before the rename migration, which rewrites it), so a
+  `/bulk_insert` payload keys Rites as `"rites"`.
 - **Only the columns present in each record are written.** The obvious
   formulation (`insert … select * from jsonb_populate_record(null::t, rec)`)
   names every column, so anything absent from the payload would be set to NULL
@@ -271,7 +282,7 @@ from pg_stat_user_tables order by pg_total_relation_size(relid) desc;
 ## Not captured here
 
 - **Postgres functions.** At least one exists and the game depends on it: `get_player_uuid_from_id`, called via `rpc/`. The introspection queries only cover tables.
-- **Content table columns.** `custom_actions`, `custom_properties`, `decks`, `events`, `heroes`, `macros`, `reports`, `rituals` exist with PKs and `created_by → players(id)` FKs, but their columns haven't been pulled. Fill in when needed. **This is the gap that matters most for AzothBot**, since the content CRUD commands write to exactly these tables.
+- **Content table columns.** `custom_actions`, `custom_properties`, `decks`, `rites` (`events` before the rename migration), `heroes`, `macros`, `reports`, `rituals` exist with PKs and `created_by → players(id)` FKs, but their columns haven't been pulled. Fill in when needed. **This is the gap that matters most for AzothBot**, since the content CRUD commands write to exactly these tables.
 
 ---
 
@@ -648,7 +659,9 @@ this rarely matters.
 
 `drafts` (`uuid`, `game_uuid`, `turn`, `act`, `available_drafts`, `pack_size`)
 with `draft_items` (`draft_uuid`, `item_type`, `item_id`, `picked`, `reserved`,
-`embellished`, `upgraded`, `attribute`, `enhancement`)
+`embellished`, `upgraded`, `attribute`, `enhancement`). `item_type` is
+`card`/`aspect`/`rite`; the rename migration backfills history from `event`, as
+it does `deck_contents.content_type`,
 at ~6 rows per draft, matching `draft_window_size`.
 
 Measured at ~4.7 `draft_items` rows and 0.5 kB per run. An earlier plan to
@@ -802,7 +815,7 @@ policy change as a security change.
 
 | Table group | anon policies | Assessment |
 |---|---|---|
-| `cards`, `aspects`, `bosses`, `events`, `heroes`, `decks`, `deck_contents`, `macros`, `custom_actions`, `custom_properties` | SELECT only | ✅ No vandalism path — confirmed, not assumed |
+| `cards`, `aspects`, `bosses`, `rites`, `heroes`, `decks`, `deck_contents`, `macros`, `custom_actions`, `custom_properties` | SELECT only | ✅ No vandalism path — confirmed, not assumed |
 | `games` | SELECT + INSERT + UPDATE `using (result is null)` | ⚠️ World-readable run history. The UPDATE lets `send_stats` close the stub row `open_run` wrote; a finished run can never be rewritten |
 | `drafts`, `draft_items`, `boss_fights` | SELECT + INSERT | ⚠️ Any player can read every other player's draft history |
 | `players` | SELECT + INSERT | ⚠️ World-readable, though it holds no PII beyond a display name |
@@ -815,13 +828,16 @@ anon can add and read but never modify or destroy.
 ### Tables with RLS enabled and NO policy
 
 **RLS on with no policy means deny-all.** Two tables are in this state:
-`rituals`, and one retired content table.
+`rituals`, and one retired content table. The rename migration adds a third,
+**`events_archive`**: its pre-rename snapshot of `events`, with `anon` and
+`authenticated` grants also revoked. Only the service role can read it, and
+nothing does.
 
 > The retired one is **`consumables`**, named here once because the schema
 > mirror has to be accurate about what exists. It is the only mention left in
 > this repo. The concept is gone: as of 2026-09-09 no code in AzothBot or the
 > game names it, and it is deliberately absent from `ANON_NO_POLICY`. Do not
-> re-add it — the Rites bar is the live equivalent and reads `events`.
+> re-add it — the Rites bar is the live equivalent and reads `rites`.
 
 It was nine until 2026-08-27. `fate_types` went on 2026-08-26; the six taxonomy
 tables were dropped when their vocabularies moved into `azoth_logic/taxonomy.py`.
@@ -1056,6 +1072,8 @@ popular purely because they're offered more.
 
 | Date | Change |
 |---|---|
+| 2026-09-14 | **Dropped `rites.foresight`** (by hand in the SQL editor; no migration file). Nothing in the game read it. The Codex Rite templates, the content validator and AzothBot's `/create_rite` / `/update_rite` stopped writing it in the same change, so a payload carrying it is now rejected by `bulk_apply` as an unknown column. The old values are kept in `events_archive`. |
+| 2026-09-14 | **Renamed `events` to `rites`** (`2026-09-14_rename_events_to_rites.sql`). **Applied 2026-09-14.** In place, so ids survive; snapshots `events_archive` first. Backfills `deck_contents.content_type` and `draft_items.item_type` from `'event'` to `'rite'`, rewrites content payloads (`"zone": "events"`, `max_events`, `{last_event.`), the views' `'event'` literal and the `bulk_apply` allowlist. Safe to re-run. The `riteimages` bucket is `2026-09-14_riteimages_bucket.sql`; Rites carry no image files, so none were copied. The bot handles both sides through `azoth_logic/rite_schema.py`. |
 | 2026-09-04 | **Retired the draft reserve mechanic** (`2026-09-04_retire_draft_reserve.sql`). It had been unreachable since ~0.7 — the Retain-draft-cards button's container is `visible = false` in `hud.tscn` and nothing showed it — which the data confirms exactly: 1.72% of 28,938 offers reserved in `0.6` across 27 players, then **0 across 3,162 offers** in `0.7`–`0.9`. `draft_items.reserved` is **frozen, not dropped** (510 real rows from 0.5/0.6) and made nullable, because the client stops sending the field and PostgREST omits absent keys — a NOT NULL column with no default would have rejected every insert. NULL now means "not applicable", distinct from the `false` that means "offered, not held". |
 | 2026-09-04 | **Draft embellishments recorded** (`2026-09-04_draft_item_embellishments.sql`): four columns on `draft_items` plus `draft_embellishment_rates_view`, surfaced by `/stats draft embellishments`. Cutoff unmoved; the view filters `embellished is not null`. It excludes reserved offers, measured a no-op (0 of 1,002 eligible), so the older views were deliberately left unchanged — and the mechanic was retired the same day. |
 | 2026-08-28 | **Analytics cutoff `0.8.2` → `0.9.0`** (`2026-08-28_bump_analytics_cutoff.sql`), tracking the game's `config/version`. `analytics_cutoff()` alone; no view touched. 19 eligible games → 2. |

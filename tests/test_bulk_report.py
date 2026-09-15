@@ -154,8 +154,10 @@ def test_colourless_is_named():
     assert "Colourless" in br.summarize_new("cards", {"id": 1, "name": "X", "element": None})
 
 
-def test_a_rite_shows_its_own_stat():
-    assert "foresight 3" in br.summarize_new("events", {"id": 1, "name": "R", "foresight": 3})
+def test_a_rite_is_not_reported_as_missing_art():
+    """Rites have no art column in use -- their face is a pattern coloured from
+    `image_data` -- and no stat since `foresight` was dropped."""
+    assert br.summarize_new("rites", {"id": 1, "name": "R", "image_data": {}}) == "• **R** `#1`"
 
 
 def test_a_stale_attunement_key_is_not_reported():
@@ -193,7 +195,7 @@ def test_empty_list_has_a_placeholder():
 
 def test_renderable_tables_map_to_kinds():
     """Only these three can be drawn; a bosses or custom_actions row cannot."""
-    assert br.RENDERABLE == {"cards": "card", "aspects": "aspect", "events": "rite"}
+    assert br.RENDERABLE == {"cards": "card", "aspects": "aspect", "rites": "rite", "events": "rite"}
     assert "bosses" not in br.RENDERABLE
 
 

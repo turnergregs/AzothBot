@@ -17,7 +17,7 @@ ROWS = {
               # In the ARCHIVED deck only -- the retired-content fixture.
               {"id": 999, "name": "Retired Relic"}],
     "aspects": [{"id": 100, "name": "Anima Shrinker"}, {"id": 120, "name": "Readiness"}],
-    "events": [{"id": 82, "name": "Amplification"}],
+    "rites": [{"id": 82, "name": "Amplification"}],
     # `Zeta` is an EXACT match for "zeta" but sorts alphabetically AFTER the two
     # that merely contain it. Without ranking it would come last -- which is what
     # makes this the fixture that can tell the two behaviours apart.
@@ -26,7 +26,7 @@ ROWS = {
                 {"id": 902, "name": "Beta Zeta"}],
 }
 
-# One live deck, one archived. `cards`, `aspects` and `events` have no
+# One live deck, one archived. `cards`, `aspects` and `rites` have no
 # `archived_at` of their own, so deck membership is the ONLY liveness signal.
 DECKS = [{"id": 1, "archived_at": None},
          {"id": 2, "archived_at": "2026-01-23T19:33:34+00:00"}]
@@ -34,7 +34,7 @@ DECKS = [{"id": 1, "archived_at": None},
 # (content_type, id) pairs that sit in the ARCHIVED deck instead of the live one.
 DEAD = {("card", 999)}
 
-CONTENT_TYPE = {"cards": "card", "aspects": "aspect", "events": "event"}
+CONTENT_TYPE = {"cards": "card", "aspects": "aspect", "rites": "rite"}
 
 
 def _deck_contents():
@@ -79,7 +79,7 @@ def stub_tables(monkeypatch):
 def test_index_reads_every_table_once(stub_tables):
     """Three content tables, plus the two that say what is live."""
     ci.entries()
-    assert sorted(stub_tables) == ["aspects", "cards", "deck_contents", "decks", "events"]
+    assert sorted(stub_tables) == ["aspects", "cards", "deck_contents", "decks", "rites"]
 
 
 def test_second_call_is_served_from_cache(stub_tables):
@@ -124,11 +124,23 @@ def test_label_shows_type_and_id():
 
 
 def test_rites_are_labelled_rite_not_event():
-    """The database calls them events; users see rites. The REF still encodes
-    `event:13`, so deck_contents and parse_item_ref keep working."""
+    """A ref encodes the database's own spelling, so deck_contents and
+    parse_item_ref keep working. After the rename that spelling is `rite`."""
     assert ci.label("rite", 13, "Sever") == "Sever (Rite #13)"
-    assert ci.REF_TYPE["rite"] == "event"
+    assert ci.ref_type("rite") == "rite"
+    assert ci.choices("Amplification")["Amplification (Rite #82)"] == "rite:82"
+
+
+def test_the_index_follows_a_database_the_rename_has_not_reached(monkeypatch, stub_tables):
+    """Migrations are applied by hand, so the bot can meet the `events` table."""
+    from azoth_logic import rite_schema
+    rite_schema.pin(rite_schema.BEFORE)
+    monkeypatch.setitem(ROWS, "events", ROWS["rites"])
+    monkeypatch.delitem(CONTENT_TYPE, "rites")
+    monkeypatch.setitem(CONTENT_TYPE, "events", "event")
+    ci.invalidate()
     assert ci.choices("Amplification")["Amplification (Rite #82)"] == "event:82"
+    assert "events" in stub_tables and "rites" not in stub_tables
 
 
 def test_choices_disambiguate_colliding_names():
@@ -175,6 +187,8 @@ def test_empty_query_returns_a_sample():
 @pytest.mark.parametrize("ref,kind,name", [
     ("card:447", "card", "Diversity"),
     ("aspect:100", "aspect", "Anima Shrinker"),
+    ("rite:82", "rite", "Amplification"),
+    # Encoded before the rename, resolved after it.
     ("event:82", "rite", "Amplification"),
 ])
 def test_resolve_an_encoded_ref(ref, kind, name):
@@ -204,7 +218,7 @@ def test_ambiguous_typed_name_resolves_in_a_fixed_order():
 # ---------------------------------------------------------------------------
 # Liveness
 # ---------------------------------------------------------------------------
-# `cards`, `aspects` and `events` have no `archived_at`. A row that is no longer
+# `cards`, `aspects` and `rites` have no `archived_at`. A row that is no longer
 # used just sits there, and two thirds of the live database is exactly that --
 # 400 cards, 154 of them reachable. Deck membership is the only signal.
 

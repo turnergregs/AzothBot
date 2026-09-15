@@ -48,8 +48,10 @@ def test_aspect_attunement_is_not_shown():
     assert _labels("aspect", {"attunement": 2}) == []
 
 
-def test_rite_shows_foresight():
-    assert _labels("rite", {"foresight": 3}) == ["Foresight"]
+def test_rite_foresight_is_not_shown():
+    """The column was dropped 2026-09-14. A stale key on an old row must not
+    bring the field back into the display."""
+    assert _labels("rite", {"foresight": 3}) == []
 
 
 def test_split_card_shows_its_second_face():

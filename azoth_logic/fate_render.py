@@ -10,8 +10,9 @@ enough to be worth separating:
 | Valence | Yes, plus a split face | No | No |
 | Colours | Element-driven | `image_data` primary/secondary | Fixed in the scene |
 
-**"Rite" is what the database still calls an "event".** New code says rite;
-`content_type`, the table and the Storage bucket stay `event`.
+**Rites were "events" until 0.9.5**, when the table, `content_type` and Storage
+bucket were renamed with the game. `azoth_logic/rite_schema.py` says which side
+of that a given database is on.
 
 Aspects animate, since their art is eigenfunction `.exr`. Rites carry flat PNG
 art and render static -- the same rule `card_render` applies.

@@ -19,7 +19,7 @@ print resolution (900 PPI, 8.5 mm bleed):
 | Renderer | Handles | Size |
 |---|---|---|
 | `CardRenderer` (`card_renderer.py`) | Cards, and the multi-card layouts | 1,176 lines |
-| `FateRenderer` (`fate_renderer.py`) | Aspects and events — two-sided cards | 1,526 lines |
+| `FateRenderer` (`fate_renderer.py`) | Aspects and rites — two-sided cards | 1,526 lines |
 
 These are the best-documented modules in the repo (~40 docstrings, ~540 comment
 lines between them). Read the code for detail; this page covers how the pieces fit
@@ -92,7 +92,9 @@ Three path maps in `constants.py`, keyed by content type:
 | `ASSET_DOWNLOAD_PATHS` | Local cache of images pulled from Supabase | `assets/downloaded_images/cards` |
 | `ASSET_BUCKET_NAMES` | Supabase Storage bucket | `cardimages` |
 
-Buckets: `cardimages`, `aspectimages`, `eventimages`, `heroimages`.
+Buckets: `cardimages`, `aspectimages`, `heroimages`. Rites use none: every
+Rite draws from `image_data`, and the Rite commands upload nothing
+(`eventimages` and `riteimages` still exist in Storage, unused).
 (the two retired content types' image buckets were dropped from the maps on 2026-08-26;
 the buckets themselves may still exist in Storage.)
 
@@ -157,7 +159,7 @@ stops being current — drawing a card face is
    then `art_cache.forget_art(bucket, file_path)` — uploads are flat-named and
    upserting, so the cache cannot see that the bytes changed.
 4. Give the type a layout module and a render function, add it to
-   `content_index.TABLES` so `/show` and `/render` can reach it, and to
+   `content_index.tables()` so `/show` and `/render` can reach it, and to
    `deck_render._bucket_for` / `_still_for` so it can appear in a `/search` grid.
 
 `generate_and_upload_image` in `azoth_commands/helpers.py` wraps generate → read

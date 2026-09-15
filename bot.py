@@ -28,6 +28,14 @@ async def on_ready():
 		print("   /stats and the turn-grain tables will be unavailable.")
 		print("   Commands that write content will fail. This is a dev key.")
 
+	# Say which side of the events -> rites rename the database is on. Every Rite
+	# command names that table, so a wrong answer fails all of them at once.
+	from azoth_logic import rite_schema
+	try:
+		rite_schema.current(force=True)
+	except Exception as e:
+		print(f"⚠️  Could not tell which side of the events -> rites rename the database is on: {e}")
+
 	try:
 		dev_guild_id = int(os.getenv("DEV_GUILD_ID"))
 		await bot.sync_application_commands(guild_id=dev_guild_id)

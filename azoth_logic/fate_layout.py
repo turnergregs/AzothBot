@@ -4,9 +4,9 @@ Transcribed from `scenes/cards/aspect_card.tscn` and `rite_card.tscn` in the
 azoth repo. Both use the same 560x897 viewport as `card.tscn`, so boxes resolve
 the same way: centre + offset.
 
-**"Rite" is the current name for what the database calls an "event".** The scene
-file, the table and the `content_type` value all still say event; everything new
-here says rite. See `azoth_commands/rites.py` for where that boundary sits.
+**Rites were "events" until 0.9.5**, when the scene file, the table and the
+`content_type` value were renamed too. `azoth_logic/rite_schema.py` says which
+side of that rename a given database is on.
 
 Unlike a card, neither has an element border or a valence -- and their
 backgrounds are procedural shaders rather than static art, which is why they are
@@ -63,7 +63,7 @@ ASPECT_DEFAULT_PRIMARY = (244, 144, 144)
 ASPECT_DEFAULT_SECONDARY = (237, 79, 95)
 
 
-# --- Rite (event) ----------------------------------------------------------
+# --- Rite ----------------------------------------------------------
 RITE_BACKGROUND_NODE = _box(-330.007, -448.8, 330.007, 448.8)     # scene box, FYI
 RITE_BACKGROUND = BACKGROUND_FULL
 RITE_ART        = _box(-167, -187.5, 167, 187.5)             # 334x375

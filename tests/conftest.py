@@ -108,3 +108,18 @@ class FakeSupabase:
 @pytest.fixture
 def fake_supabase():
     return FakeSupabase
+
+
+@pytest.fixture(autouse=True)
+def _rite_schema_after_the_rename():
+    """Answer "after the rename" without probing Supabase.
+
+    rite_schema.current() reads the database, which no test may do. Tests of the
+    detection itself unpin it (tests/test_rite_schema.py); tests of the old side
+    pin BEFORE. Both are undone here.
+    """
+    from azoth_logic import rite_schema
+    rite_schema.pin(rite_schema.AFTER)
+    yield
+    rite_schema.pin(None)
+    rite_schema.invalidate()

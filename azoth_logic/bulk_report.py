@@ -9,7 +9,8 @@ Pure functions over dicts. The commands do the I/O.
 from __future__ import annotations
 
 # Tables whose rows can be drawn, and the kind each maps to.
-RENDERABLE = {"cards": "card", "aspects": "aspect", "events": "rite"}
+# `events` is the Rite table on a database the rename migration has not reached.
+RENDERABLE = {"cards": "card", "aspects": "aspect", "rites": "rite", "events": "rite"}
 
 # The jsonb blobs that define the MECHANIC. Never diffed field by field.
 #
@@ -115,11 +116,11 @@ def summarize_new(table: str, row: dict) -> str:
         bits.append(str(element).capitalize() if element else "Colourless")
     if row.get("valence") is not None:
         bits.append(f"v{row['valence']}")
-    if row.get("foresight") is not None:
-        bits.append(f"foresight {row['foresight']}")
     if row.get("subtypes"):
         bits.append(", ".join(str(s) for s in row["subtypes"]))
-    if not row.get("image"):
+    # Rites have no art to be missing: their face is a pattern coloured from
+    # `image_data`, so "no art" on every one would be noise.
+    if not row.get("image") and table not in ("rites", "events"):
         bits.append("no art")
 
     name = row.get("name") or "(unnamed)"

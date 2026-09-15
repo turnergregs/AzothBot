@@ -2,7 +2,7 @@
 
 The expectations here are transcribed from the game's own suite,
 `tests/unit/helpers/test_luck_chance_display.gd` and
-`tests/unit/placeholders/test_last_event_placeholder.gd`, restricted to its
+`tests/unit/placeholders/test_last_rite_placeholder.gd`, restricted to its
 zero-luck / `luck_display_flat` rows: a Discord render shows content, not a run,
 so it always takes the flat path. Anything asserted here that disagrees with
 `scripts/placeholder_helper.gd` or `scripts/helpers/luck_helper.gd` is a bug
@@ -97,13 +97,13 @@ def test_last_rite_prints_none():
             == "Create last used Rite (None)")
 
 
-def test_last_event_is_not_the_display_token():
-    """`{last_event.name}` is the GAMEPLAY path and is null on an empty history.
+def test_last_rite_name_is_not_the_display_token():
+    """`{last_rite.name}` is the GAMEPLAY path and is null on an empty history.
 
     Recollection gates itself on that one. It has no printable value here, so it
     keeps the unresolved treatment rather than borrowing `{last_rite}`'s "None".
     """
-    assert placeholders.resolve("{last_event.name}") == "{last_event.name}"
+    assert placeholders.resolve("{last_rite.name}") == "{last_rite.name}"
 
 
 # ---------------------------------------------------------------------------

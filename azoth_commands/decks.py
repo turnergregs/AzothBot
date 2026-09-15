@@ -146,7 +146,7 @@ def add_deck_commands(cls):
 			counts[row["deck_id"]] = counts.get(row["deck_id"], 0) + 1
 			kinds.setdefault(row["deck_id"], set()).add(row["content_type"])
 
-		LABEL = {"card": "cards", "aspect": "aspects", "event": "rites"}
+		LABEL = {"card": "cards", "aspect": "aspects", "rite": "rites", "event": "rites"}
 
 		groups: dict = {}
 		for deck in decks:
@@ -219,7 +219,7 @@ def add_deck_commands(cls):
 		if len(content_result) == 0:
 			return f"⚠️ Deck `{name}` is empty."
 
-		# Cards only for now: aspects and events need the fate renderer.
+		# Cards only for now: aspects and rites need the fate renderer.
 		cards = [c for c in content_result if c.get("item_type") == "card"]
 		if not cards:
 			return f"⚠️ Deck `{name}` has no cards to render."
@@ -275,7 +275,7 @@ def add_deck_commands(cls):
 			f"✋ Hand of {min(hand_size, len(cards))} from `{name}`", file=file)
 
 
-	@nextcord.slash_command(name="add_to_deck", description="Add a card, aspect, or event to a deck.", guild_ids=[DEV_GUILD_ID])
+	@nextcord.slash_command(name="add_to_deck", description="Add a card, aspect, or rite to a deck.", guild_ids=[DEV_GUILD_ID])
 	@safe_interaction(timeout=5, error_message="❌ Failed to add to deck.", require_authorized=True)
 	async def add_to_deck_cmd(
 		self,
@@ -298,7 +298,7 @@ def add_deck_commands(cls):
 		return result
 
 
-	@nextcord.slash_command(name="remove_from_deck", description="Remove a card, aspect, or event from a deck.", guild_ids=[DEV_GUILD_ID])
+	@nextcord.slash_command(name="remove_from_deck", description="Remove a card, aspect, or rite from a deck.", guild_ids=[DEV_GUILD_ID])
 	@safe_interaction(timeout=5, error_message="❌ Failed to remove from deck.", require_authorized=True)
 	async def remove_from_deck_cmd(
 		self,
@@ -725,7 +725,9 @@ def add_deck_commands(cls):
 		input_lower = input.lower()
 		choices = {}
 
-		tables = [("cards", "card"), ("aspects", "aspect"), ("events", "event")]
+		from azoth_logic import rite_schema
+		rites = rite_schema.current()
+		tables = [("cards", "card"), ("aspects", "aspect"), (rites.table, rites.content_type)]
 		for table, content_type in tables:
 			records = fetch_all(table, columns=["id", "name"])
 			for r in records:

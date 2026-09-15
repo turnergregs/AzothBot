@@ -139,7 +139,8 @@ def test_content_type_changes_which_renderer_draws_it():
     assert upgraded["image"] == "ctrig.png", "the aspect has its own art"
 
 
-def test_the_database_says_event_and_the_renderer_says_rite():
+def test_both_spellings_of_a_rite_render_as_a_rite():
+    assert upgrades.kind_of({"content_type": "rite"}, "card") == "rite"
     assert upgrades.kind_of({"content_type": "event"}, "card") == "rite"
 
 

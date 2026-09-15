@@ -36,9 +36,9 @@ import copy
 
 ADDED_SUFFIX = "_added"
 
-# `content_type` on a row is the database's vocabulary; the renderers use
-# "rite" where the database still says "event".
-CONTENT_TYPE_TO_KIND = {"card": "card", "aspect": "aspect", "event": "rite"}
+# `content_type` on a row is the database's vocabulary: "rite", or "event" on a
+# row written before the rename. The renderers say "rite" either way.
+CONTENT_TYPE_TO_KIND = {"card": "card", "aspect": "aspect", "rite": "rite", "event": "rite"}
 
 
 def _level_of(entry: dict, position: int) -> int:
