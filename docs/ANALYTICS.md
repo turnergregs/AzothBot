@@ -627,13 +627,53 @@ Built from `games`, `players`, `drafts`, `draft_items` and the turn-grain tables
 
 | Section | Contents |
 |---|---|
-| Players & Games | Unique players, new players, **runs** started, restarts, co-op rows, the tutorial line, the opening-turn exclusion |
-| Highlights | Highest level / act / combo |
-| Session Stats | Avg duration, avg turns, total playtime, **avg links per regular turn**, **avg links per boss turn** |
-| Game Results | Outcome breakdown; NULL shows as `abandoned / in progress` |
-| Boss Fights | Boss turns, wins and losses — from `turns.boss_result` |
-| Most Picked Level-Up Rewards | Pick rate as `taken/offered`, from `levelups.chosen` vs `levelups.options` |
-| Draft Activity | Most / least drafted, and picks seen in high-combo games |
+| Players / New / Runs | Three labelled counts. Tutorial runs get a fourth, shown only on a day that has any |
+| Act Reached | Bar chart over `games.act_reached`, one row per act from 1 to the deepest reached |
+| Level-Up Picks | Pick rate as `taken/offered`, from `levelups.chosen` vs `levelups.options` |
+| Cards | Top 3 and bottom 3 drafted by pick rate, cards and aspects together |
+| Rites | Top and bottom Rite alone |
+
+#### What the report stopped saying (2026-09-17)
+
+It was ~35 lines across ten fields. It is now ~10. What went, and why:
+
+| Dropped | Why |
+|---|---|
+| Highlights (highest level / act / combo) | Fun, not actionable. The act chart carries progression |
+| Session Stats (duration, turns, playtime, links per turn) | Five averages over a handful of runs |
+| Game Results breakdown | **Replaced by the act chart** — see below |
+| Boss Fights | Also the act chart — advancing an act *is* beating its boss |
+| Picks Seen in High-Combo Games | `avg(log10(combo))` over two games by three players. A correlation with itself |
+| Draft Activity volume line | Drafts and picks per day answered no question anyone had |
+| The methodology asides | *"— of which 1 was a restart"*, *"(one per participant, not per session)"*, *"— not counted above"*, *"N restarts in the opening turn, excluded"*. **The rules did not change** — `_partition_games` still drops opening-turn restarts and still splits tutorial runs onto their own line — they are documented here instead of re-explained in every morning's embed. That prose was the main reason the report read as machine-written |
+| `100% (2/2)` | Now `2/2`. The percentage was the same fact twice, and at a day's sample size it was the more misleading of the two |
+| Top-5 draft lists | Now top 3. Five entries all at 100% is five ties padded out to length |
+
+**The act chart replaced the results breakdown and the boss section together.**
+An act is three regular turns then a boss, and *beating* that boss is what
+advances the act, so `act_reached` already encodes boss progress — a run sitting
+at act 2 cleared act 1's boss. One ladder says what an outcome list and a
+separate "reached a boss" count said between them.
+
+The ladder does not show how a run *ended*: a death and a win can sit at the
+same act. A win-count footer was tried and dropped the same day as not worth
+the line. If it comes back, count `no_boss_key` alongside `victory`
+([DB_SCHEMA.md caveat 3](DB_SCHEMA.md#query-caveats)).
+
+**An act nobody reached still gets a row.** Every act from 1 to the deepest one
+reached is drawn, zeroes included: a gap in the middle of the ladder is the
+shape worth seeing. The top of the range comes from the data, not from the five
+acts the game has today — a fixed set of buckets cannot report a value that
+postdates it, which this view layer has already been bitten by twice (the
+`draft_deck_view` histograms, `2026-09-03_draft_pool_histograms.sql`).
+
+**Cards and aspects share a list; Rites get their own.** A Rite is a template,
+not a pool member: `_shuffle_in_injected_pools` draws Rites *with replacement*
+into extra slots. Its pick **rate** is still comparable to a card's — the offer
+denominator divides the injection budget out — but its raw **count** is not, so
+never switch either list to rank by volume. The Rites list matches **both**
+spellings of the item type (`rite` and `event`), because migrations are
+hand-applied and this bot runs on either side of the rename.
 
 #### The day is bucketed on `started_at` (2026-09-08)
 
@@ -661,8 +701,9 @@ rows were runs on the Tutorial Deck, nine of them a developer iterating on the
 tutorial. The report was describing tutorial iteration as if it were play.
 
 **1. Opening-turn restarts are dropped outright.** `result = 'restart'` with
-`turns_played <= 1`. The report notes how many it excluded and counts them
-nowhere else.
+`turns_played <= 1`. They are counted nowhere. The report used to print how many
+it had excluded; that line went with the rest of the methodology asides on
+2026-09-17, so this doc is now the only place the exclusion is recorded.
 
 > **The boundary is off by one from the obvious reading.**
 > `GlobalVars.turn_count` is incremented at the *start* of a turn

@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta, timezone
 from nextcord import Interaction, SlashOption
 from nextcord.ext import tasks
 from azoth_commands.helpers import safe_interaction, AUTHORIZED_USER_IDS
+from azoth_logic import rite_schema
 from constants import DEV_GUILD_ID
 from supabase_client import supabase, SUPABASE_ROLE
 
@@ -151,6 +152,32 @@ def _resolve_item_names(items: list[dict]) -> dict[tuple[str, int], str]:
     return name_map
 
 
+# How many entries each draft ranking shows. Three, not five: over a day of a
+# handful of runs most entries sit at 100% or 0% and a longer list is mostly
+# ties padded out to length.
+RANK_LIMIT = 3
+
+# An item needs this many OFFERS before it can be called least-picked. A single
+# 0/2 is indistinguishable from noise; the most-picked side inherits the >= 2
+# floor applied when `pick_rates` is built.
+LEAST_PICKED_MIN_OFFERS = 3
+
+
+def _rank_most(rates: dict, limit: int = RANK_LIMIT) -> list:
+    """Highest pick rate first, ties broken by the larger sample."""
+    ranked = sorted(rates.items(), key=lambda kv: (-kv[1]["rate"], -kv[1]["offered"]))
+    return [(name, s) for (_type, name), s in ranked][:limit]
+
+
+def _rank_least(rates: dict, limit: int = RANK_LIMIT) -> list:
+    """Lowest pick rate first, ties broken by the larger sample."""
+    ranked = sorted(
+        [(k, v) for k, v in rates.items() if v["offered"] >= LEAST_PICKED_MIN_OFFERS],
+        key=lambda kv: (kv[1]["rate"], -kv[1]["offered"]),
+    )
+    return [(name, s) for (_type, name), s in ranked][:limit]
+
+
 def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     """Compute draft pick analytics for a set of games."""
     if not game_uuids:
@@ -192,28 +219,40 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     # Resolve names
     name_map = _resolve_item_names(all_items)
 
-    # Pick rate: how often each item was picked when offered
-    offer_count = {}   # name -> times offered
-    pick_count = {}    # name -> times picked
+    # Pick rate: how often each item was picked when offered.
+    #
+    # Keyed by (item_type, name), never by name alone: names collide across
+    # content types (the same reason `deck_contents` refs are encoded), and a
+    # collision here would silently pool a card's offers with a Rite's.
+    offer_count = {}   # (item_type, name) -> times offered
+    pick_count = {}    # (item_type, name) -> times picked
     for item in all_items:
         name = name_map.get((item["item_type"], item["item_id"]), f"{item['item_type']}#{item['item_id']}")
-        offer_count[name] = offer_count.get(name, 0) + 1
+        key = (item["item_type"], name)
+        offer_count[key] = offer_count.get(key, 0) + 1
         if item.get("picked"):
-            pick_count[name] = pick_count.get(name, 0) + 1
+            pick_count[key] = pick_count.get(key, 0) + 1
 
     pick_rates = {}
-    for name, offered in offer_count.items():
-        picked = pick_count.get(name, 0)
+    for key, offered in offer_count.items():
+        picked = pick_count.get(key, 0)
         if offered >= 2:  # only include items offered at least twice for meaningful rates
-            pick_rates[name] = {"picked": picked, "offered": offered, "rate": picked / offered}
+            pick_rates[key] = {"picked": picked, "offered": offered, "rate": picked / offered}
 
-    # Sort for most/least picked
-    sorted_by_rate = sorted(pick_rates.items(), key=lambda x: (-x[1]["rate"], -x[1]["offered"]))
-    most_picked = sorted_by_rate[:5]
-    least_picked = sorted(
-        [(n, s) for n, s in pick_rates.items() if s["offered"] >= 3],
-        key=lambda x: (x[1]["rate"], -x[1]["offered"])
-    )[:5]
+    # Two rankings: cards and aspects together, and Rites on their own.
+    #
+    # Rites are kept out of the main list. A Rite is a template, not a pool
+    # member: `_shuffle_in_injected_pools` draws them WITH REPLACEMENT into
+    # extra slots, so one can be offered twice in a run or not at all. The RATE
+    # is still comparable to a card's -- the offer denominator divides the
+    # injection budget out -- but raw counts are not, so never rank either list
+    # by volume (CLAUDE.md).
+    #
+    # Rites are matched against BOTH spellings (`rite`/`event`): the rename
+    # migration backfills `draft_items.item_type`, but this bot has to work on
+    # either side of it (azoth_logic/rite_schema.py).
+    cards = {k: v for k, v in pick_rates.items() if k[0] in ("card", "aspect")}
+    rites = {k: v for k, v in pick_rates.items() if k[0] in rite_schema.CONTENT_TYPES}
 
     # Performance correlation: for each picked item, the typical combo of the
     # games it appeared in.
@@ -260,8 +299,10 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     return {
         "total_drafts": len(all_drafts),
         "total_picks": sum(pick_count.values()),
-        "most_picked": most_picked,
-        "least_picked": least_picked,
+        "most_picked_cards": _rank_most(cards),
+        "least_picked_cards": _rank_least(cards),
+        "most_picked_rites": _rank_most(rites, limit=1),
+        "least_picked_rites": _rank_least(rites, limit=1),
         "top_performers": top_performers,
     }
 
@@ -550,6 +591,28 @@ def _fetch_daily_stats():
         r = g.get("result") or "abandoned / in progress"
         results[r] = results.get(r, 0) + 1
 
+    # How far runs got, as a distribution over `act_reached`.
+    #
+    # This replaced the `result` breakdown in the report (2026-09-17). An act is
+    # three regular turns then a boss, and BEATING that boss is what advances the
+    # act (docs/AZOTH.md), so `act_reached` already encodes boss progress -- a run
+    # sitting at act 2 cleared act 1's boss. One ladder says what the old results
+    # list and a separate "reached a boss" count said between them.
+    #
+    # Built from the values actually present rather than from a fixed 1..5 range.
+    # There are five acts today, but a fixed set of buckets cannot report a value
+    # that postdates it, and this view layer has already been bitten twice that
+    # way (CLAUDE.md, `draft_deck_view`). A sixth act would appear here on its own.
+    #
+    # The whole `regular` population, restarts included: this is a count of how
+    # far people got, not an average, so a short run is a real data point rather
+    # than something that drags a mean down.
+    act_distribution = {}
+    for g in regular:
+        act = _to_number(g.get("act_reached"))
+        if act >= 1:
+            act_distribution[int(act)] = act_distribution.get(int(act), 0) + 1
+
     boss_error = turn_grain.get("error")
     total_boss_fights = turn_grain.get("boss_turns", 0)
     boss_wins = turn_grain.get("boss_wins", 0)
@@ -566,6 +629,7 @@ def _fetch_daily_stats():
         "total_playtime_sec": total_playtime,
         "avg_turns": avg_turns,
         "game_results": results,
+        "act_distribution": act_distribution,
         "measured_games": len(measured),
         "restarts": restarts,
         "coop_rows": coop_rows,
@@ -596,6 +660,38 @@ def _format_duration(seconds):
     hours = minutes // 60
     mins = minutes % 60
     return f"{hours}h {mins}m"
+
+
+# Width of the longest bar in the act chart, in characters.
+BAR_WIDTH = 10
+
+
+def _ratio(part: int, whole: int) -> str:
+    """`picked/offered`, the rate and its sample size in one token."""
+    return f"{part}/{whole}"
+
+
+def _act_chart(distribution: dict) -> str:
+    """The act distribution as a bar chart, in a code block so it aligns.
+
+    Every act from 1 up to the deepest one reached gets a row, including the
+    ones nobody reached -- a gap in the middle of the ladder is the shape worth
+    seeing, and omitting the empty rows would hide it. The top of the range
+    comes from the data rather than from the five acts the game has today, so an
+    act added later appears here without a code change.
+
+    Bars are scaled to the busiest act, and any non-zero count draws at least
+    one block: a bar that rounds away reads as nothing happened.
+    """
+    peak = max(distribution.values())
+    lines = []
+    for act in range(1, max(distribution) + 1):
+        count = distribution.get(act, 0)
+        width = round(BAR_WIDTH * count / peak) if peak else 0
+        if count and width == 0:
+            width = 1
+        lines.append(f"act {act}  {'█' * width:<{BAR_WIDTH}} {count}")
+    return "```\n" + "\n".join(lines) + "\n```"
 
 
 def _embed_char_count(embed: nextcord.Embed) -> int:
@@ -630,7 +726,7 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
                 f"turn, excluded.)"
             )
         embed = nextcord.Embed(
-            title=f"Daily Activity Report — {yesterday}",
+            title=f"Daily Report — {yesterday}",
             description="\n".join(lines),
             color=color,
         )
@@ -639,144 +735,68 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
     # Collect all fields as (name, value, inline) tuples
     fields = []
 
-    # Player activity. "Runs", not "games": tutorial rows and opening-turn
-    # restarts are no longer in this count, and the lines below say where they
-    # went. Within the count restarts stay inclusive, so the averages further
-    # down can be read against the right denominator.
-    player_lines = [
-        f"**{stats['unique_players']}** unique players",
-        f"**{stats['new_players']}** new players",
-        f"**{stats['total_games']}** runs started",
-    ]
-    if stats.get("restarts"):
-        n = stats["restarts"]
-        player_lines.append(
-            f"— of which **{n}** {'was a restart' if n == 1 else 'were restarts'}")
-    if stats.get("coop_rows"):
-        player_lines.append(
-            f"— **{stats['coop_rows']}** co-op rows (one per participant, not per session)"
-        )
+    # Headline counts. Three inline fields, so Discord lays them out as labelled
+    # columns rather than as sentences.
+    #
+    # Nothing here is a sentence on purpose. The lines this replaced carried
+    # their own methodology ("-- of which 1 was a restart", "(one per
+    # participant, not per session)", "not counted above", "N restarts in the
+    # opening turn, excluded"), which is what made the report read as written by
+    # a machine defending itself. The rules did not change -- opening-turn
+    # restarts are still dropped in `_partition_games`, co-op is still one row
+    # per participant -- they are just documented in docs/ANALYTICS.md instead of
+    # re-explained every morning.
+    fields.append(("Players", f"**{stats['unique_players']}**", True))
+    fields.append(("New", f"**{stats['new_players']}**", True))
+    fields.append(("Runs", f"**{stats['total_games']}**", True))
+
+    # Tutorial runs keep a field of their own, shown only when there are any.
+    # Without it a tutorial-only day renders as zero runs by players who do not
+    # appear to have played anything -- these rows are split out of the counts,
+    # not hidden (see _partition_games).
     if stats.get("tutorial_games"):
-        tutorial_line = (
-            f"**{stats['tutorial_games']}** tutorial games from "
-            f"**{stats['tutorial_players']}** player"
-            f"{'' if stats.get('tutorial_players') == 1 else 's'}"
-        )
-        if stats.get("tutorial_restarts"):
-            tutorial_line += f" ({stats['tutorial_restarts']} restarted)"
-        # Counted separately and excluded from every number below: a scripted
-        # tutorial run's duration, act and combo are not comparable to a
-        # drafted one, whether it is a first-time player or a developer
-        # iterating on the tutorial.
-        player_lines.append(tutorial_line + " — not counted above")
-    if stats.get("dropped_opening_turn"):
-        n = stats["dropped_opening_turn"]
-        player_lines.append(
-            f"*{n} restart{'' if n == 1 else 's'} in the opening turn, excluded*"
-        )
-    fields.append(("Players & Games", "\n".join(player_lines), False))
+        fields.append(("Tutorial", f"**{stats['tutorial_games']}**", True))
 
-    # Game highlights
-    highlight_lines = [
-        f"Highest level reached: **{stats['max_level']}**",
-        f"Highest act reached: **{stats['max_act']}**",
-        f"Highest combo: **{stats['max_combo']}**",
-    ]
-    fields.append(("Highlights", "\n".join(highlight_lines), False))
-
-    # Time stats
-    measured = stats.get("measured_games", stats["total_games"])
-    tg = stats.get("turn_grain") or {}
-    time_lines = [
-        f"Avg game duration: **{_format_duration(stats['avg_duration_sec'])}**",
-        f"Avg turns per game: **{stats['avg_turns']:.1f}**",
-        f"Total playtime: **{_format_duration(stats['total_playtime_sec'])}**",
-    ]
-    # Links per turn, regular and boss kept apart -- a boss fight is one turn and
-    # runs until someone dies, so pooling the two makes both numbers meaningless.
-    # The turn count is shown because with a handful of runs the average is noise.
-    if tg.get("error"):
-        time_lines.append(f"Links per turn: *unavailable — {tg['error']}*")
-    else:
-        if tg.get("regular_turns"):
-            time_lines.append(
-                f"Avg links per regular turn: **{tg['avg_links_regular']:.1f}** "
-                f"({tg['regular_turns']} turns)"
-            )
-        if tg.get("boss_turn_count"):
-            time_lines.append(
-                f"Avg links per boss turn: **{tg['avg_links_boss']:.1f}** "
-                f"({tg['boss_turn_count']} fights)"
-            )
-    fields.append((
-        f"Session Stats (averages over {measured} completed solo run"
-        f"{'' if measured == 1 else 's'})",
-        "\n".join(time_lines), False))
-
-    # Game results breakdown
-    if stats["game_results"]:
-        result_lines = [f"{k}: **{v}**" for k, v in sorted(stats["game_results"].items())]
-        fields.append(("Game Results", "\n".join(result_lines), True))
-
-    # Boss fights, from turn-grain data (boss_fights was frozen 2026-08-25).
-    if stats.get("boss_error"):
-        fields.append((
-            "Boss Fights",
-            "⚠️ Unavailable — could not read `turns`. The turn-grain tables need "
-            "the service-role key; see docs/DB_SCHEMA.md.",
-            True))
-    elif stats["total_boss_fights"] > 0:
-        boss_lines = [
-            f"**{stats['total_boss_fights']}** boss turns",
-            f"**{stats['boss_wins']}** wins / **{stats['boss_losses']}** losses",
-        ]
-        fields.append(("Boss Fights", "\n".join(boss_lines), True))
+    # How far runs got. This replaced the `result` breakdown: beating an act's
+    # boss is what advances the act, so the ladder already says who reached and
+    # cleared a boss. See _fetch_daily_stats.
+    if stats.get("act_distribution"):
+        fields.append(("Act Reached", _act_chart(stats["act_distribution"]), False))
 
     # Level-up rewards. `options` is the denominator: raw pick counts are
     # uninterpretable on their own, because common rewards get offered far more
     # often than rare ones and would top any list by volume alone.
+    tg = stats.get("turn_grain") or {}
     if tg.get("top_rewards"):
-        lines = [
-            f"**{name}** — {r['rate'] * 100:.0f}% ({r['taken']}/{r['offered']})"
-            for name, r in tg["top_rewards"]
-        ]
         fields.append((
-            f"Most Picked Level-Up Rewards ({tg.get('levelup_packs', 0)} packs)",
-            "\n".join(lines), False))
+            f"Level-Up Picks · {tg.get('levelup_packs', 0)} packs",
+            " · ".join(f"{name} {_ratio(r['taken'], r['offered'])}"
+                       for name, r in tg["top_rewards"]),
+            False))
 
-    # Draft analytics
-    draft = stats.get("draft")
-    if draft and draft.get("total_drafts"):
-        draft_summary = f"**{draft['total_drafts']}** drafts, **{draft['total_picks']}** cards picked"
-        fields.append(("Draft Activity", draft_summary, False))
-
-        if draft.get("most_picked"):
-            lines = []
-            for name, s in draft["most_picked"]:
-                pct = s["rate"] * 100
-                lines.append(f"**{name}** — {pct:.0f}% ({s['picked']}/{s['offered']})")
-            fields.append(("Most Drafted", "\n".join(lines), True))
-
-        if draft.get("least_picked"):
-            lines = []
-            for name, s in draft["least_picked"]:
-                pct = s["rate"] * 100
-                lines.append(f"**{name}** — {pct:.0f}% ({s['picked']}/{s['offered']})")
-            fields.append(("Least Drafted", "\n".join(lines), True))
-
-        if draft.get("top_performers"):
-            # Correlation, not effect -- see _fetch_draft_stats.
-            lines = []
-            for name, s in draft["top_performers"]:
-                lines.append(f"**{name}** — typical combo ~10^{s['avg_combo_log10']:.1f} ({s['games']} games)")
-            fields.append(("Picks Seen in High-Combo Games", "\n".join(lines), False))
+    # Draft rankings, cards and Rites side by side as two inline fields.
+    #
+    # Both print a bare `picked/offered` ratio. The percentage that used to lead
+    # each line ("100% (2/2)") was the same fact twice, and at a day's sample
+    # size the rounder of the two numbers was the more misleading one.
+    draft = stats.get("draft") or {}
+    for label, most_key, least_key in (
+        ("Cards", "most_picked_cards", "least_picked_cards"),
+        ("Rites", "most_picked_rites", "least_picked_rites"),
+    ):
+        lines = [f"▲ {name} {_ratio(s['picked'], s['offered'])}"
+                 for name, s in draft.get(most_key) or []]
+        lines += [f"▼ {name} {_ratio(s['picked'], s['offered'])}"
+                  for name, s in draft.get(least_key) or []]
+        if lines:
+            fields.append((label, "\n".join(lines), True))
 
     # Pack fields into embeds, splitting at 5800 chars (buffer under 6000 limit)
     MAX_EMBED_CHARS = 5800
     MAX_FIELD_CHARS = 1024
     embeds = []
     current = nextcord.Embed(
-        title=f"Daily Activity Report — {yesterday}",
+        title=f"Daily Report — {yesterday}",
         color=color,
     )
 
@@ -792,7 +812,7 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
             # Current embed is full, start a new one
             embeds.append(current)
             current = nextcord.Embed(
-                title=f"Daily Activity Report — {yesterday} (cont.)",
+                title=f"Daily Report — {yesterday} (cont.)",
                 color=color,
             )
 

@@ -375,9 +375,11 @@ def test_oversized_field_values_are_truncated():
         "avg_duration_sec": 1, "total_playtime_sec": 1, "avg_turns": 1,
         "game_results": {"death": 1}, "total_boss_fights": 0, "boss_wins": 0,
         "boss_losses": 0, "boss_error": None, "turn_grain": {},
+        "act_distribution": {1: 1},
         "draft": {"total_drafts": 1, "total_picks": 1,
-                  "most_picked": [("N" * 400, {"rate": 1.0, "picked": 1, "offered": 1})] * 6,
-                  "least_picked": [], "top_performers": []},
+                  "most_picked_cards": [("N" * 400, {"rate": 1.0, "picked": 1, "offered": 1})] * 6,
+                  "least_picked_cards": [], "most_picked_rites": [],
+                  "least_picked_rites": [], "top_performers": []},
     }
     for embed in du._build_update_embeds(stats):
         for f in embed.fields:
@@ -662,7 +664,9 @@ def test_a_tutorial_only_day_is_not_reported_as_a_quiet_day():
         "total_boss_fights": 0, "boss_wins": 0, "boss_losses": 0, "draft": {},
     })
 
-    text = " ".join(f.value for e in embeds for f in e.fields)
+    # Name and value both, since the 2026-09-17 rewrite labels the count with
+    # the field name and puts the bare number in the value.
+    text = " ".join(f"{f.name} {f.value}" for e in embeds for f in e.fields)
     assert "11" in text and "tutorial" in text.lower()
     assert not any("No runs were played" in (e.description or "") for e in embeds)
 
@@ -767,3 +771,86 @@ def test_the_day_is_bucketed_on_started_at_not_finished_at(monkeypatch):
 
     assert filtered_on == ["started_at", "started_at"]
     assert "finished_at" not in filtered_on
+
+
+# ---------------------------------------------------------------------------
+# The 2026-09-17 report rewrite
+# ---------------------------------------------------------------------------
+
+def _draft_rows(monkeypatch, items, names):
+    """Install one draft holding `items`, with `names` resolving every id."""
+    data = {"drafts": [{"uuid": "d1", "game_uuid": "g1"}], "draft_items": items}
+    data.update(names)
+
+    class Q:
+        def __init__(self, t):
+            self.rows = data.get(t, [])
+        def select(self, *a, **k):
+            return self
+        def in_(self, col, vals):
+            self.rows = [r for r in self.rows if r[col] in vals]
+            return self
+        def execute(self):
+            return type("R", (), {"data": self.rows})()
+
+    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+
+
+@pytest.mark.parametrize("rite_type,table", [("rite", "rites"), ("event", "events")])
+def test_cards_and_aspects_rank_together_and_rites_apart(
+        monkeypatch, rite_type, table):
+    """Cards and aspects share the Cards list; a Rite appears only in Rites.
+
+    Migrations are hand-applied with no history, so the item_type is `event` on
+    one side of the rename and `rite` on the other. Matching only the new
+    spelling would silently drop every Rite from its list on a database that
+    has not been migrated yet.
+    """
+    _draft_rows(monkeypatch, [
+        {"id": 1, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": True},
+        {"id": 2, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": True},
+        {"id": 3, "draft_uuid": "d1", "item_type": rite_type, "item_id": 20, "picked": True},
+        {"id": 4, "draft_uuid": "d1", "item_type": rite_type, "item_id": 20, "picked": True},
+        {"id": 5, "draft_uuid": "d1", "item_type": "aspect", "item_id": 30, "picked": True},
+        {"id": 6, "draft_uuid": "d1", "item_type": "aspect", "item_id": 30, "picked": True},
+    ], {"cards": [{"id": 10, "name": "Salvage"}],
+        "aspects": [{"id": 30, "name": "Verdance"}],
+        table: [{"id": 20, "name": "Sealing"}]})
+
+    stats = du._fetch_draft_stats(["g1"], {"g1": {"uuid": "g1", "highest_combo": "1"}})
+
+    assert sorted(n for n, _ in stats["most_picked_cards"]) == ["Salvage", "Verdance"]
+    assert [n for n, _ in stats["most_picked_rites"]] == ["Sealing"]
+
+
+def test_a_name_shared_by_a_card_and_a_rite_is_not_pooled(monkeypatch):
+    """Names collide across content types -- the reason `deck_contents` refs are
+    encoded. Keying the pick counts by name alone would merge a card's offers
+    with a Rite's into one bogus rate."""
+    _draft_rows(monkeypatch, [
+        {"id": 1, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": True},
+        {"id": 2, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": True},
+        {"id": 3, "draft_uuid": "d1", "item_type": "rite", "item_id": 20, "picked": False},
+        {"id": 4, "draft_uuid": "d1", "item_type": "rite", "item_id": 20, "picked": False},
+    ], {"cards": [{"id": 10, "name": "Echo"}], "rites": [{"id": 20, "name": "Echo"}]})
+
+    stats = du._fetch_draft_stats(["g1"], {"g1": {"uuid": "g1", "highest_combo": "1"}})
+
+    assert dict(stats["most_picked_cards"])["Echo"]["picked"] == 2
+    assert dict(stats["most_picked_rites"])["Echo"]["picked"] == 0
+
+
+def test_an_act_nobody_reached_still_gets_a_row():
+    """A gap in the ladder is the shape worth seeing. Listing only the acts that
+    occurred would draw 1, 2, 4 as three adjacent bars and hide that act 3
+    stopped everyone."""
+    chart = du._act_chart({1: 3, 2: 1, 4: 3})
+    assert "act 3" in chart and chart.count("act ") == 4
+
+
+def test_a_non_zero_act_never_draws_an_empty_bar():
+    """One run out of a hundred rounds to zero blocks, which reads as nobody got
+    there -- the opposite of what the row says."""
+    chart = du._act_chart({1: 100, 5: 1})
+    act_5 = [ln for ln in chart.splitlines() if ln.startswith("act 5")][0]
+    assert "█" in act_5, act_5
