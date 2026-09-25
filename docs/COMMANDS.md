@@ -436,6 +436,7 @@ what you would want to force. Full policy:
 | `/stats draft embellishments` | — | — |
 | `/stats draft rates` | — | `limit?` (default 15), `order?` (most/least), `item_type?` (card/aspect/rite; sent as `event` to a database the rename has not reached) |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
+| `/daily_reports` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 
 All `/stats` subcommands reply with an **embed** — an aligned table for the
 multi-row views, labelled fields for the single-row ones. They are open to anyone
@@ -572,6 +573,25 @@ level-up pick rates. Those are **service-role only** — on an anon key those
 sections say "unavailable" rather than silently reporting zero. See
 [ANALYTICS.md](ANALYTICS.md#the-daily-report).
 
+`/daily_reports` posts player-submitted `reports` to the channel it is enabled
+in, once a day at its own send time: up to **10 per day, oldest first**, as
+one field each in a single embed — the player's text cut to 200 characters, then
+player · version · date · contact — with a footer saying how many are still
+waiting. If ten long ones would break Discord's 6,000-character embed cap, the
+ones that don't fit wait for the next update. `report_type =
+'crash'` is excluded — those are automatic and far too numerous. **No message at
+all** when nothing is unsent. A channel enabled for the first time starts at id 0
+and works through the whole history.
+
+It keeps its own state (`daily_reports_state.json`) with two fields that fail in
+opposite directions on purpose: the day is claimed *before* sending, so a failed
+send never re-fires every 10 minutes, while `last_report_id` advances only past
+reports the message actually carried, so a failed send retries them the
+next day instead of skipping them. Player text is truncated, markdown-escaped and
+sent with `AllowedMentions.none()` — anyone holding the anon key can insert a
+report. Needs the service-role key; on anon it fails loudly rather than posting
+nothing.
+
 ---
 
 ## Quick index
@@ -581,7 +601,7 @@ sections say "unavailable" rather than silently reporting zero. See
 of `/stats`.
 
 **Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
-`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`.
+`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`, `/daily_reports`.
 
 **Removed 2026-08-26:** all 10 commands for the two retired content types, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).

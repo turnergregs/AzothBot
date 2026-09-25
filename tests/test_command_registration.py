@@ -30,7 +30,7 @@ COMMAND_DIR = REPO / "azoth_commands"
 
 # Modules whose attachers are called from azoth_commands/__init__.py.
 ATTACHED = ["decks", "cards", "content", "aspects", "rites", "search", "cache",
-            "stats", "misc", "daily_update"]
+            "stats", "misc", "daily_update", "daily_reports"]
 
 # Deliberately NOT attached. `heroes.py` is retired, not broken -- see
 # azoth_commands/__init__.py and docs/CARD_RENDERING.md § Retired.

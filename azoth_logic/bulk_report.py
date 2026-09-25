@@ -21,10 +21,14 @@ RENDERABLE = {"cards": "card", "aspects": "aspect", "rites": "rite", "events": "
 # What actually changed is visible in the RULES TEXT, which the author edits in
 # the same payload. So these are collapsed into one note, and that note is only
 # worth printing when the text did NOT move -- see `diff`.
-_QUIET = ("actions", "triggers", "properties", "upgrades", "image_data")
+_QUIET = ("actions", "triggers", "properties", "upgrades", "image_data",
+          # A boss's attack timelines, one column per player count (2026-09-24).
+          "timeline_1p", "timeline_2p", "timeline_3p", "timeline_4p")
 
 # Written by the bot or the database, not by the author -- noise in a diff.
-_IGNORED = ("updated_at", "created_at", "created_by", "id")
+# `visuals` is a boss's pre-2026-09-24 shape, now derived by a DB trigger from
+# the stat and timeline columns, so it moves whenever they do.
+_IGNORED = ("updated_at", "created_at", "created_by", "id", "visuals")
 
 MAX_VALUE_CHARS = 60
 

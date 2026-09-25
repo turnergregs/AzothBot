@@ -40,15 +40,21 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict):
+    _atomic_write_json(STATE_FILE, state)
+
+
+def _atomic_write_json(path: str, data: dict):
     # Atomic write: dump to a temp file in the same dir, then os.replace() (atomic
     # on the same filesystem). Prevents a crash mid-write from truncating/corrupting
     # the state file, which _load_state would otherwise silently reset to empty.
-    dir_ = os.path.dirname(STATE_FILE) or "."
-    fd, tmp_path = tempfile.mkstemp(dir=dir_, prefix=".daily_update_state.", suffix=".tmp")
+    # Shared with daily_reports.py, whose state file has the same failure mode.
+    dir_ = os.path.dirname(path) or "."
+    prefix = "." + os.path.splitext(os.path.basename(path))[0] + "."
+    fd, tmp_path = tempfile.mkstemp(dir=dir_, prefix=prefix, suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump(state, f)
-        os.replace(tmp_path, STATE_FILE)
+            json.dump(data, f)
+        os.replace(tmp_path, path)
     except Exception:
         try:
             os.unlink(tmp_path)

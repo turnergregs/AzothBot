@@ -26,6 +26,7 @@ venv/
 
 # Logs and local state
 daily_update_state.json
+daily_reports_state.json
 
 # Render/art cache -- safe to delete at any time (azoth_logic/art_cache.py)
 cache/

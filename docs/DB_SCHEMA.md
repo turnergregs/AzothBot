@@ -249,7 +249,10 @@ untested.
 - The turn-grain chain is `ON DELETE CASCADE` (2026-08-26), so deleting a `games` row takes its turns, nodes and level-ups with it. `drafts`/`draft_items` and `boss_fights` are deliberately not cascaded — legacy paths, left alone.
 - All integer measures are `bigint`. Booleans are real booleans.
 - `created_at timestamptz not null default now()` on essentially every table.
-- Content payloads (actions, triggers, properties, visuals) are `jsonb`.
+- Content payloads (actions, triggers, properties, timelines) are `jsonb`. Boss
+  stats are plain columns since 2026-09-24 (`hp`, `damage`, `timeline_1p`..`timeline_4p`, …);
+  `bosses.visuals` is derived from them by trigger and a bulk payload that writes
+  it is refused. The game repo's `docs/DB_SCHEMA.md` § Changes has the details.
 
 ## Regenerating
 
@@ -282,7 +285,7 @@ from pg_stat_user_tables order by pg_total_relation_size(relid) desc;
 ## Not captured here
 
 - **Postgres functions.** At least one exists and the game depends on it: `get_player_uuid_from_id`, called via `rpc/`. The introspection queries only cover tables.
-- **Content table columns.** `custom_actions`, `custom_properties`, `decks`, `rites` (`events` before the rename migration), `heroes`, `macros`, `reports`, `rituals` exist with PKs and `created_by → players(id)` FKs, but their columns haven't been pulled. Fill in when needed. **This is the gap that matters most for AzothBot**, since the content CRUD commands write to exactly these tables.
+- **Content table columns.** `custom_actions`, `custom_properties`, `decks`, `rites` (`events` before the rename migration), `heroes`, `macros`, `rituals` exist with PKs and `created_by → players(id)` FKs, but their columns haven't been pulled. Fill in when needed. **This is the gap that matters most for AzothBot**, since the content CRUD commands write to exactly these tables.
 
 ---
 
@@ -734,6 +737,27 @@ Reported by `draft_embellishment_rates_view`.
 
 `id`, `name`, `created_at`, `updated_at`, `uuid`. No email or PII beyond a
 display name.
+
+### `reports`
+
+Written by the game (`report_popup.gd` for manual reports, `ReportManager` for
+crashes). INSERT-only for anon. Columns pulled 2026-09-25:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint | PK. `/daily_reports` uses it as a per-channel watermark |
+| `player_uuid` | uuid | → `players(uuid)` |
+| `report_type` | text | `crash` (automatic, numerous) or a manual type — `bug`, `feature_request`, `content_idea`, … |
+| `category` | text | The popup's dropdown value, e.g. `Bug Report`, `Feature Request`, `Vision`, `General Suggestion` |
+| `description` | text | The player's free text |
+| `contact_info` | text | Optional, player-entered |
+| `game_version` | text | |
+| `game_state` | text | |
+| `os_info` | text | |
+| `error_message` | text | Mostly crashes |
+| `event_log` | jsonb | |
+| `extra_context` | jsonb | |
+| `created_at` | timestamptz | |
 
 ---
 
