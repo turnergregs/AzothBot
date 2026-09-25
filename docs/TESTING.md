@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 855 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 880 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -33,7 +33,7 @@ Added 2026-08-26. Before that there was no suite at all.
 | `tests/test_deck_render.py` | 38 | Grid and hand layout, art deduplication, per-kind bucket routing — plus the upgrade comparison: gif-vs-png selection, a still side holding while the other animates, and cache keys that cover both faces |
 | `tests/test_placeholders.py` | 25 | The `{...}` display placeholders, transcribed from the game's own suite: flat odds for every live row, Godot's half-away-from-zero rounding, and a malformed or run-state token staying visible |
 | `tests/test_sync_assets.py` | 8 | The vendored-asset sync, and the shader-exported backgrounds it deliberately cannot sync |
-| `tests/test_procedural_art.py` | 35 | Procedural art (`image_data.art`): the numpy port against GPU samples of the game's own shader (`tests/fixtures/procedural_art_reference.json`) for every family, framing, warp and the wobble, colour zones included; and the routing: art wins over `image`, is never downloaded, animates with no bytes, and misses the render cache when it changes |
+| `tests/test_procedural_art.py` | 60 | Procedural art (`image_data.art`): the numpy port against GPU samples of the game's own shader (`tests/fixtures/procedural_art_reference.json`) for every family, silhouette, warp, Neumann circles and the wobble, colour zones included; and the routing: art wins over `image`, is never downloaded, animates with no bytes, and misses the render cache when it changes |
 
 ## What these tests are for
 

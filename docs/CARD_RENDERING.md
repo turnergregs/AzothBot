@@ -266,8 +266,9 @@ derivation from `ArtVisuals.apply_params`, in numpy.
 
 - **It reads like an .exr to everything downstream.** `procedural_art.Field`
   gives a field per frame (`at(t)`, already shaped by the gap rescale and the
-  2px edge fade the shader applies) and a zone map (`zone(z)`, 1.0 / 0.5 like an
-  `.exr`'s alpha). `eigenfunction_art._animate` thresholds, loops and
+  envelope: one of six silhouettes fixed to the art's square, which the field
+  fades to zero inside, with softness and rounded corners) and a zone map
+  (`zone(z)`, 1.0 / 0.5 like an `.exr`'s alpha). `eigenfunction_art._animate` thresholds, loops and
   cross-fades both kinds the same way, and the GIF encoding is shared.
 - **The zone map moves with the field.** Under the sign rule a blob's colour
   follows the field's sign, so the zone is taken from each frame's (blended)
@@ -279,9 +280,10 @@ derivation from `ArtVisuals.apply_params`, in numpy.
 - **Verified against the GPU, not by eye.** `tests/test_procedural_art.py`
   compares the port with values the game rendered from the real shader
   (`tests/fixtures/procedural_art_reference.json`, made by the azoth repo's
-  `tools/procedural_art_reference.gd`): every sample within 0.01 of the
-  threshold (measured worst 0.003, where art peaks at 5-8), the edge fade
-  included, and every colour zone equal. **Regenerate the fixture after a change
+  `tools/procedural_art_reference.gd`): 24 renders over every family and
+  silhouette, softness, roundness, warp, Neumann circles and the wobble, every
+  sample within 0.01 of the threshold (measured worst 0.0022, where art peaks at
+  5-8) and every colour zone equal. **Regenerate the fixture after a change
   to either side's maths**; the tool's header has the command.
 - **Cost.** The art itself is ~0.85s for a 4s GIF; the holographic sheen, as on
   every animated card, is most of the ~7s.

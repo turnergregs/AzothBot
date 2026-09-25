@@ -20,9 +20,11 @@ look. This module is those three, in numpy, and nothing else: it hands
 thresholding, the loop and the GIF encoding are shared.
 
 **Where art_field is shaped to read like an .exr's field** (the gap rescale that
-lands the threshold where the normalised field crosses `gap`, and the fade over
-the last two pixels inside the domain's edge), this follows it line for line,
-because the host threshold and its antialiasing depend on exactly that shape.
+lands the threshold where the normalised field crosses `gap`, and the envelope:
+a silhouette fixed to the art's square that the field fades to zero inside),
+this follows it line for line, because the host threshold and its antialiasing
+depend on exactly that shape. The silhouettes are Inigo Quilez's 2D distance
+functions as the shader fits them to the square.
 
 The circle family reads the game's own Bessel table
 (`assets/shaders/bessel_lookup.exr`, vendored by tools/sync_assets.py) and
@@ -54,10 +56,16 @@ MAX_TERMS = 6
 # ArtVisuals constants.
 DEFAULT_GAP = 0.2
 DEFAULT_ZONE_RADIUS = 0.5
+DEFAULT_SOFTNESS = 0.2
+SOFTNESS_MIN, SOFTNESS_MAX = 0.02, 0.6
+DEFAULT_ROUNDNESS = 0.25
+ROUNDNESS_MAX = 0.33
+# The shader's art_envelope order: the three families' own domains first.
+SILHOUETTES = ("triangle", "circle", "square", "hexagon", "pentagon", "heart")
 FAMILY_FRAMING = {
-    TRIANGLE: {"scale": 0.95, "center": [0.0, 0.866]},
-    CIRCLE: {"scale": 0.9, "center": [0.0, 0.0]},
-    SQUARE: {"scale": 0.85, "center": [0.0, 0.0]},
+    TRIANGLE: {"scale": 1.0, "center": [0.0, 0.866]},
+    CIRCLE: {"scale": 1.0, "center": [0.0, 0.0]},
+    SQUARE: {"scale": 1.0, "center": [0.0, 0.0]},
 }
 FAMILY_NORM = {TRIANGLE: 4.4, CIRCLE: 1.0, SQUARE: 1.0}
 DEFAULT_ART = {
@@ -68,7 +76,9 @@ DEFAULT_ART = {
     "is_even": [0, 0],
     "is_dirichlet": [1, 1],
     "gap": DEFAULT_GAP,
-    "scale": 0.95,
+    "softness": DEFAULT_SOFTNESS,
+    "roundness": DEFAULT_ROUNDNESS,
+    "scale": 1.0,
     "center": [0.0, 0.866],
     "rotation": 0.0,
     "framing": "whole",
@@ -76,11 +86,10 @@ DEFAULT_ART = {
 }
 FILL_BASES = ("off", "on", "sign", "sign_inverted", "centre", "centre_inverted")
 
-# procedural_art.gdshaderinc: per-term wobble clocks, and the edge fade width.
+# procedural_art.gdshaderinc: per-term wobble clocks.
 _WOBBLE_F1 = (1.000, 1.310, 0.870, 1.130, 0.790, 1.230)
 _WOBBLE_F2 = (0.370, 0.530, 0.610, 0.290, 0.470, 0.410)
 _WOBBLE_F3 = (0.710, 0.890, 0.570, 0.930, 0.670, 0.830)
-EDGE_PX = 2.0
 
 # eigenfunctions.gdshaderinc: the Bessel table's range and switch point.
 BESSEL_MAX_X = 25.0
@@ -99,6 +108,23 @@ BESSEL_ZEROS = np.array([
     [14.4755, 18.4335, 22.0470, 25.5095, 28.8874, 32.2119, 35.5007, 38.7618],
     [15.5898, 19.6160, 23.2759, 26.7733, 30.1790, 33.5264, 36.8343, 40.1118],
     [16.6983, 20.7899, 24.4949, 28.0267, 31.4600, 34.8305, 38.1577, 41.4511],
+])
+# The zeros of J_m' (bessel_prime_zeros): the Neumann circle waves, strongest at
+# the rim. m=0's first zero, 0, is the constant wave and is skipped.
+BESSEL_PRIME_ZEROS = np.array([
+    [3.8317, 7.0156, 10.1735, 13.3237, 16.4706, 19.6159, 22.7601, 25.9037],
+    [1.8412, 5.3314, 8.5363, 11.7060, 14.8636, 18.0155, 21.1644, 24.3113],
+    [3.0542, 6.7061, 9.9695, 13.1704, 16.3475, 19.5129, 22.6716, 25.8260],
+    [4.2012, 8.0152, 11.3459, 14.5858, 17.7887, 20.9725, 24.1449, 27.3101],
+    [5.3176, 9.2824, 12.6819, 15.9641, 19.1960, 22.4010, 25.5898, 28.7678],
+    [6.4156, 10.5199, 13.9872, 17.3128, 20.5755, 23.8036, 27.0103, 30.2028],
+    [7.5013, 11.7349, 15.2682, 18.6374, 21.9317, 25.1839, 28.4098, 31.6179],
+    [8.5778, 12.9324, 16.5294, 19.9419, 23.2681, 26.5450, 29.7907, 33.0152],
+    [9.6474, 14.1155, 17.7740, 21.2291, 24.5872, 27.8893, 31.1553, 34.3966],
+    [10.7114, 15.2867, 19.0046, 22.5014, 25.8913, 29.2186, 32.5052, 35.7638],
+    [11.7709, 16.4479, 20.2230, 23.7607, 27.1820, 30.5345, 33.8420, 37.1180],
+    [12.8265, 17.6003, 21.4309, 25.0085, 28.4609, 31.8384, 35.1667, 38.4604],
+    [13.8788, 18.7451, 22.6293, 26.2460, 29.7290, 33.1314, 36.4805, 39.7919],
 ])
 
 BESSEL_TABLE_PATH = (Path(__file__).resolve().parent.parent
@@ -167,6 +193,19 @@ def peak_amplitude(terms) -> float:
     return max((abs(t["amplitude"]) for t in terms), default=0.0)
 
 
+def silhouette_of(look: dict) -> str:
+    """ArtVisuals.silhouette_of: the look's `silhouette`, or what an older
+    look's `framing` meant (the family's own shape for "whole", the square for
+    "cropped", edge to edge)."""
+    picked = str(look.get("silhouette", ""))
+    if picked in SILHOUETTES:
+        return picked
+    if str(look.get("framing", "whole")) == "cropped":
+        return SQUARE
+    family = str(look.get("family", TRIANGLE))
+    return family if family in SILHOUETTES else TRIANGLE
+
+
 def fill_index(look: dict) -> int:
     fill = look.get("fill")
     base = str(fill.get("base", "sign")) if isinstance(fill, dict) else "sign"
@@ -185,7 +224,9 @@ class Look:
         self.center = (float(center[0]), float(center[1])) \
             if isinstance(center, list) and len(center) >= 2 else (0.0, 0.0)
         self.rotation = float(look.get("rotation", 0.0))
-        self.clip = str(look.get("framing", "whole")) != "cropped"
+        self.silhouette = silhouette_of(look)
+        self.softness = min(max(float(look.get("softness", DEFAULT_SOFTNESS)), SOFTNESS_MIN), SOFTNESS_MAX)
+        self.roundness = min(max(float(look.get("roundness", DEFAULT_ROUNDNESS)), 0.0), ROUNDNESS_MAX)
         self.peak = peak_amplitude(self.terms)
         self.norm = max(self.peak, 0.001) * FAMILY_NORM.get(self.family, 1.0)
         self.gap = float(look.get("gap", DEFAULT_GAP))
@@ -282,11 +323,13 @@ def bessel_j(m: int, x):
     return np.where(x < 0.001, small, out)
 
 
-def _circle_term(px, py, m: int, n: int, phase: float):
+def _circle_term(px, py, m: int, n: int, phase: float, zeros=BESSEL_ZEROS):
+    """circleWave: J_m(j r) cos(m theta + phase), j from `zeros` (the Dirichlet
+    table, or BESSEL_PRIME_ZEROS for the Neumann wave)."""
     m = min(max(m, 0), 12)
     n = min(max(n, 1), 8)
     r = np.hypot(px, py)
-    radial = bessel_j(m, BESSEL_ZEROS[m, n - 1] * r)
+    radial = bessel_j(m, zeros[m, n - 1] * r)
     if m > 0:
         return radial * np.cos(m * np.arctan2(py, px) + phase)
     return radial
@@ -310,10 +353,82 @@ def _organic(t, f1, f2, f3, phase_amp):
     return np.sin(t * f1 + np.sin(t * f2) * phase_amp) * np.cos(t * f3)
 
 
-def _fwidth(values):
-    """|d/dx| + |d/dy| per pixel, GLSL's fwidth."""
-    gy, gx = np.gradient(values)
-    return np.abs(gx) + np.abs(gy)
+def _smoothstep(edge0, edge1, x):
+    t = np.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+# ---------------------------------------------------------------------------
+# The silhouettes (art_sd_* in procedural_art.gdshaderinc), in quad units:
+# negative inside. `r` rounds the corners.
+# ---------------------------------------------------------------------------
+
+def _length(x, y):
+    return np.hypot(x, y)
+
+
+def _sd_triangle(ex, ey, r):
+    k = 1.7320508
+    h = max(1.0 - r * k, 0.0)
+    tx, ty = np.abs(ex) - h, ey + 0.2886751 + h / k
+    flip = tx + k * ty > 0.0
+    tx, ty = np.where(flip, (tx - k * ty) / 2.0, tx), np.where(flip, (-k * tx - ty) / 2.0, ty)
+    tx = tx - np.clip(tx, -2.0 * h, 0.0)
+    return -_length(tx, ty) * np.sign(ty) - r
+
+
+def _sd_box(ex, ey, r):
+    dx, dy = np.abs(ex) - (1.0 - r), np.abs(ey) - (1.0 - r)
+    return _length(np.maximum(dx, 0.0), np.maximum(dy, 0.0)) \
+        + np.minimum(np.maximum(dx, dy), 0.0) - r
+
+
+def _reflect(px, py, kx, ky):
+    d = 2.0 * np.minimum(kx * px + ky * py, 0.0)
+    return px - d * kx, py - d * ky
+
+
+def _sd_hexagon(ex, ey, r):
+    kx, ky, kz = -0.866025404, 0.5, 0.577350269
+    a = 0.8660254 - r
+    px, py = _reflect(np.abs(ex), np.abs(ey), kx, ky)
+    px, py = px - np.clip(px, -kz * a, kz * a), py - a
+    return _length(px, py) * np.sign(py) - r
+
+
+def _sd_pentagon(ex, ey, r):
+    kx, ky, kz = 0.809016994, 0.587785252, 0.726542528
+    a = 0.8506508 - r
+    px, py = np.abs(ex), -(ey + 0.1003)
+    px, py = _reflect(px, py, -kx, ky)
+    px, py = _reflect(px, py, kx, ky)
+    px, py = px - np.clip(px, -a * kz, a * kz), py - a
+    return _length(px, py) * np.sign(py) - r
+
+
+def _sd_heart(ex, ey, r):
+    s = 1.6568542 * (1.0 - r)
+    px, py = np.abs(ex) / s, ey / s + 0.5517767
+    upper = (_length(px - 0.25, py - 0.75) - 0.3535534) * s - r
+    m = 0.5 * np.maximum(px + py, 0.0)
+    lower = np.sqrt(np.minimum(px * px + (py - 1.0) ** 2, (px - m) ** 2 + (py - m) ** 2)) \
+        * np.sign(px - py) * s - r
+    return np.where(py + px > 1.0, upper, lower)
+
+
+def envelope_distance(silhouette: str, ex, ey, roundness: float):
+    r = min(max(roundness, 0.0), 0.33)
+    if silhouette == "triangle":
+        return _sd_triangle(ex, ey, r)
+    if silhouette == "circle":
+        return _length(ex, ey) - 1.0
+    if silhouette == "hexagon":
+        return _sd_hexagon(ex, ey, r)
+    if silhouette == "pentagon":
+        return _sd_pentagon(ex, ey, r)
+    if silhouette == "heart":
+        return _sd_heart(ex, ey, r)
+    return _sd_box(ex, ey, r)
 
 
 # ---------------------------------------------------------------------------
@@ -340,26 +455,26 @@ class Field:
 
         qx = (self.u - 0.5) * 2.0
         qy = -((self.v - 0.5) * 2.0)
-        c, s = np.cos(lk.rotation), np.sin(lk.rotation)
-        warp_room = 1.0 + lk.warp if lk.clip else 1.0
-        zoom = warp_room / max(lk.scale, 0.001)
-        px = (c * qx - s * qy) * zoom + lk.center[0]
-        py = (s * qx + c * qy) * zoom + lk.center[1]
+        # The envelope: warped with the waves, fixed to the quad (scale, centre
+        # and rotation move only the waves inside it).
+        ex, ey = qx * (1.0 + lk.warp), qy * (1.0 + lk.warp)
         if lk.warp > 0.0:
             w = lk.warp_seed * 6.2831853
-            dx = np.sin(py * 1.7 + w * 1.3) + 0.5 * np.sin(px * 2.3 + py * 0.9 + w * 2.1)
-            dy = np.sin(px * 1.9 + w * 0.7) + 0.5 * np.sin(py * 2.1 - px * 1.1 + w * 3.3)
-            px, py = px + lk.warp * dx, py + lk.warp * dy
+            dx = np.sin(ey * 1.7 + w * 1.3) + 0.5 * np.sin(ex * 2.3 + ey * 0.9 + w * 2.1)
+            dy = np.sin(ex * 1.9 + w * 0.7) + 0.5 * np.sin(ey * 2.1 - ex * 1.1 + w * 3.3)
+            ex, ey = ex + lk.warp * dx, ey + lk.warp * dy
+        soft = max(lk.softness, 0.02)
+        envelope = _smoothstep(0.0, soft, -envelope_distance(lk.silhouette, ex, ey, lk.roundness))
+        if lk.warp > 0.0:
+            # Where the bend still pushes the outline past the quad, the quad's
+            # own square fades it first.
+            envelope = envelope * _smoothstep(0.0, soft, 1.0 - np.maximum(np.abs(qx), np.abs(qy)))
+        self.envelope = envelope
 
-        if lk.family == TRIANGLE:
-            edge = np.minimum(py, (1.7320508 * (1.0 - np.abs(px)) - py) * 0.5)
-        elif lk.family == CIRCLE:
-            edge = 1.0 - np.hypot(px, py)
-        else:
-            edge = 1.0 - np.maximum(np.abs(px), np.abs(py))
-        self.inside = edge > 0.0
-        edge_per_px = np.maximum(_fwidth(edge), 1e-6)
-        self.edge_fade = np.clip(edge / (EDGE_PX * edge_per_px), 0.0, 1.0)
+        c, s = np.cos(lk.rotation), np.sin(lk.rotation)
+        zoom = 1.0 / max(lk.scale, 0.001)
+        px = (c * ex - s * ey) * zoom + lk.center[0]
+        py = (s * ex + c * ey) * zoom + lk.center[1]
 
         # Each term's value over the quad, before its (time-varying) amplitude.
         self.values = []
@@ -373,8 +488,14 @@ class Field:
                 neumann = _mix(_u2(tx, ty, k, l), _v2(tx, ty, k, l), ev)
                 value = _mix(neumann, dirichlet, term["is_dirichlet"])
             elif lk.family == CIRCLE:
+                # is_dirichlet picks the rings: 1 fades at the rim, 0 (Neumann)
+                # is strongest there, between them a blend.
                 order_peak = 1.0 if k < 0.5 else 0.675 * k ** (-1.0 / 3.0)
-                value = _circle_term(px, py, int(k), max(int(l), 1), term["phase"] * np.pi) / order_peak
+                phase, dirichlet = term["phase"] * np.pi, term["is_dirichlet"]
+                m, n = int(k), max(int(l), 1)
+                dir_value = _circle_term(px, py, m, n, phase) if dirichlet > 0.0 else 0.0
+                neu_value = _circle_term(px, py, m, n, phase, BESSEL_PRIME_ZEROS) if dirichlet < 1.0 else 0.0
+                value = _mix(neu_value, dir_value, dirichlet) / order_peak
             else:
                 sq = _square_terms(px, py, k, l)
                 ev = term["is_even"]
@@ -391,10 +512,8 @@ class Field:
                 t + i * 17.0, _WOBBLE_F1[i], _WOBBLE_F2[i], _WOBBLE_F3[i], 1.4)
             total = total + amplitude * value
         z = total / max(lk.norm, 1e-6)
-        field = z * self.threshold / max(lk.gap, 0.001)
-        if lk.clip:
-            field = np.where(self.inside, field * self.edge_fade, 0.0)
-        return field
+        return np.where(self.envelope > 0.0,
+                        z * self.envelope * self.threshold / max(lk.gap, 0.001), 0.0)
 
     def zone(self, field: np.ndarray) -> np.ndarray:
         """art_zone as the .exr's alpha does it: 1.0 secondary, 0.5 primary, so

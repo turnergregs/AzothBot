@@ -25,7 +25,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "procedural_art_reference.json"
 REFERENCE = json.loads(FIXTURE.read_text())
 
 # In threshold units, where art peaks at 5-8. The fixture's packing resolves
-# about 0.002; the port measured within 0.003 everywhere, the edge fade included.
+# about 0.002; the port measured within 0.0022 everywhere, envelope edges included.
 FIELD_TOLERANCE = 0.01
 
 ART = {"version": 1, "family": "circle", "modes": [[3, 4], [0, 2]],
@@ -77,11 +77,14 @@ def test_zones_match_the_gpu(case):
     assert np.array_equal(zone[ys, xs][clear], samples[:, 3][clear].astype(bool))
 
 
-def test_the_fixture_covers_every_family_and_framing():
+def test_the_fixture_covers_every_family_and_silhouette():
     arts = [c["art"] for c in REFERENCE["cases"]]
     assert {a["family"] for a in arts} == set(pa.FAMILIES)
-    assert {a.get("framing", "whole") for a in arts} == {"whole", "cropped"}
+    assert {pa.silhouette_of(a) for a in arts} == set(pa.SILHOUETTES)
+    assert any(a.get("framing") == "cropped" for a in arts), "older looks still read"
     assert any(a.get("warp") for a in arts)
+    assert any(a["family"] == "circle" and 0 in a.get("is_dirichlet", [1]) for a in arts), \
+        "the Neumann circle is covered"
     assert {c["t"] for c in REFERENCE["cases"]} >= {0.0}
     assert any(c["departure"] > 0 for c in REFERENCE["cases"]), "the wobble is covered"
 
@@ -100,8 +103,15 @@ def test_an_unreadable_version_is_no_art():
 
 def test_resolve_takes_the_family_framing():
     look = pa.resolve({"family": "square"})
-    assert look["scale"] == 0.85 and look["center"] == [0.0, 0.0]
+    assert look["scale"] == 1.0 and look["center"] == [0.0, 0.0]
     assert pa.resolve({"family": "nonsense"})["family"] == "triangle"
+
+
+def test_an_older_look_s_framing_picks_its_silhouette():
+    """ArtVisuals.silhouette_of: looks saved before silhouettes existed."""
+    assert pa.silhouette_of({"family": "circle"}) == "circle"
+    assert pa.silhouette_of({"family": "circle", "framing": "cropped"}) == "square"
+    assert pa.silhouette_of({"family": "circle", "silhouette": "heart", "framing": "cropped"}) == "heart"
 
 
 # ---------------------------------------------------------------------------
