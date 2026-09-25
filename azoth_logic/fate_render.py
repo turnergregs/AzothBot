@@ -75,7 +75,8 @@ def _draw_text_block(canvas, text, font, box, color, stroke=0, stroke_color=(0, 
 # ---------------------------------------------------------------------------
 
 def is_animated(item: dict) -> bool:
-    return str(item.get("image") or "").lower().endswith(".exr")
+    """Procedural art (image_data.art) or eigenfunction (.exr) art."""
+    return ef.is_animated(item)
 
 
 def _aspect_face(aspect: dict) -> Image.Image:
@@ -118,10 +119,9 @@ def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
     size = (round(F.ASPECT_ART[2]), round(F.ASPECT_ART[3]))
     base, accent = aspect_art_colors(aspect)
 
-    if art_bytes and animate and is_animated(aspect):
-        with card_render._temp(art_bytes, ".exr") as path:
-            frames = ef.frames(path, base, accent, duration=duration, fps=fps,
-                               departure=ef.departure_for_card(aspect))
+    frames = ef.item_frames(aspect, art_bytes, base, accent, duration=duration, fps=fps) \
+        if animate else None
+    if frames:
         pages = []
         for art in frames:
             frame = face.copy()
@@ -129,12 +129,11 @@ def render_aspect(aspect: dict, art_bytes: bytes | None, animate: bool = True,
             pages.append(frame)
         return card_render.to_gif(holo.apply_all(pages) if sheen else pages, fps=fps), "gif"
 
-    if art_bytes:
-        if is_animated(aspect):
-            with card_render._temp(art_bytes, ".exr") as path:
-                art = ef.still(path, base, accent)
-        else:
-            art = Image.open(io.BytesIO(art_bytes)).convert("RGBA")
+    if is_animated(aspect):
+        art = ef.item_still(aspect, art_bytes, base, accent)
+    else:
+        art = Image.open(io.BytesIO(art_bytes)).convert("RGBA") if art_bytes else None
+    if art is not None:
         face.alpha_composite(art.resize(size, Image.LANCZOS), pos)
 
     if sheen:
@@ -308,11 +307,10 @@ def render_rite(rite: dict, art_bytes: bytes | None = None, sheen: bool = True):
 # ---------------------------------------------------------------------------
 
 def fetch_art(item: dict, bucket: str) -> bytes | None:
-    name = item.get("image")
-    if not name:
+    if not ef.needs_download(item):
         return None
-    source = card_render.EXR_BUCKET if is_animated(item) else bucket
-    return art_cache.fetch_art_cached(source, name, card_render.download_art)
+    source = card_render.EXR_BUCKET if ef.is_exr(item) else bucket
+    return art_cache.fetch_art_cached(source, item["image"], card_render.download_art)
 
 
 def render(item: dict, kind: str):

@@ -203,19 +203,27 @@ renders as a silent gap, so `Upgraded -> Aspect` came out as `Upgraded   Aspect`
 | `azoth_logic/card_layout.py` | Geometry and type styling, transcribed from `card.tscn` |
 | `azoth_logic/rich_text.py` | Symbol tokens, wrapping, centred layout |
 | `azoth_logic/placeholders.py` | `{...}` display placeholders — see [Display placeholders](#display-placeholders) |
-| `azoth_logic/eigenfunction_art.py` | `.exr` art — the port of `split_card_image.gdshader` |
+| `azoth_logic/eigenfunction_art.py` | `.exr` art — the port of `split_card_image.gdshader` — and `item_frames` / `item_still`, which pick an item's art source |
+| `azoth_logic/procedural_art.py` | Procedural art (`image_data.art`) — the port of `procedural_art.gdshaderinc` and `ArtVisuals`. See [Procedural art](#procedural-art) |
 | `azoth_logic/card_render.py` | Composites the face; PNG and GIF output |
 | `tools/sync_assets.py` | Refreshes vendored art from a local azoth checkout |
 
-## Two art paths
+## Three art paths
 
-A card's `image` extension decides everything, mirroring
+Checked in the game's order (`ImageCache.has_animated_art`): procedural art
+first, then the `image` extension, mirroring
 `ImageCache.eigenfunction_name_for_image()`:
 
-| Extension | Bucket | Output | Count |
+| Source | Bucket | Output | Count |
 |---|---|---|---|
-| `.exr` | `eigenfunctions` | Animated GIF | 246 / 400 |
-| `.png` | `cardimages` | Static PNG | 154 / 400 |
+| `image_data.art` | none: computed from the row | Animated GIF | new (2026-09-25) |
+| `image` ends `.exr` | `eigenfunctions` | Animated GIF | 246 / 400 |
+| `image` ends `.png` | `cardimages` | Static PNG | 154 / 400 |
+
+A card with procedural art usually still names an `.exr` in `image`: the game
+keeps it for older clients, which cannot draw the art. The bot ignores it and
+downloads nothing (`eigenfunction_art.needs_download`), exactly as a current
+client draws the art rather than the image.
 
 Wrapping a static PNG in a GIF would be a larger file showing the same thing, so
 it isn't done.
@@ -246,6 +254,37 @@ hard-edged images and ghost; blending the smooth scalar field slides the edge an
 keeps it crisp.
 
 Defaults: **4s at 15fps, cropped to the card, ~283 KB.**
+
+### Procedural art
+
+Art made in the game's Codex is stored as numbers under `image_data.art` (three
+eigenfunction families, framing, gap, warp, fill; see the game's
+`docs/PROCEDURAL_ART.md`) and evaluated per pixel by
+`procedural_art.gdshaderinc`. `azoth_logic/procedural_art.py` is that shader,
+the three families from `eigenfunctions.gdshaderinc`, and the uniform
+derivation from `ArtVisuals.apply_params`, in numpy.
+
+- **It reads like an .exr to everything downstream.** `procedural_art.Field`
+  gives a field per frame (`at(t)`, already shaped by the gap rescale and the
+  2px edge fade the shader applies) and a zone map (`zone(z)`, 1.0 / 0.5 like an
+  `.exr`'s alpha). `eigenfunction_art._animate` thresholds, loops and
+  cross-fades both kinds the same way, and the GIF encoding is shared.
+- **The zone map moves with the field.** Under the sign rule a blob's colour
+  follows the field's sign, so the zone is taken from each frame's (blended)
+  field, as the shader does, where an `.exr`'s is fixed.
+- **The circle reads the game's own Bessel table**
+  (`assets/card_art/bessel_lookup.exr`, vendored by `tools/sync_assets.py`),
+  sampled as the shader samples it (linear in x, each order's row at its texel
+  centre) and blended into the same asymptotic form above x = 20.
+- **Verified against the GPU, not by eye.** `tests/test_procedural_art.py`
+  compares the port with values the game rendered from the real shader
+  (`tests/fixtures/procedural_art_reference.json`, made by the azoth repo's
+  `tools/procedural_art_reference.gd`): every sample within 0.01 of the
+  threshold (measured worst 0.003, where art peaks at 5-8), the edge fade
+  included, and every colour zone equal. **Regenerate the fixture after a change
+  to either side's maths**; the tool's header has the command.
+- **Cost.** The art itself is ~0.85s for a 4s GIF; the holographic sheen, as on
+  every animated card, is most of the ~7s.
 
 ### The card is transparent, and cropped to itself
 

@@ -49,6 +49,11 @@ BACKGROUND = "assets/images/cards/borders/blurred_card_background2.png"
 
 FONT = "assets/fonts/Aldrich-Regular.ttf"
 
+# The circle family's Bessel table, which procedural art (image_data.art) reads
+# exactly as eigenfunctions.gdshaderinc samples it. See azoth_logic/procedural_art.py.
+BESSEL_TABLE = "assets/shaders/bessel_lookup.exr"
+DEST_BESSEL = "assets/card_art/bessel_lookup.exr"
+
 # Where vendored copies land, relative to the bot root.
 DEST_BORDERS = "assets/card_art/borders"
 DEST_BACKGROUNDS = "assets/card_art/backgrounds"
@@ -164,6 +169,14 @@ def sync(azoth: Path, dry_run: bool = False) -> int:
         if not src.is_file():
             report.append(f"MISSING  {src}"); missing += 1
     elif not _copy(src, BOT_ROOT / DEST_FONTS / Path(FONT).name, report):
+        missing += 1
+
+    # The Bessel table for procedural circle art.
+    src = azoth / BESSEL_TABLE
+    if dry_run:
+        if not src.is_file():
+            report.append(f"MISSING  {src}"); missing += 1
+    elif not _copy(src, BOT_ROOT / DEST_BESSEL, report):
         missing += 1
 
     # Backgrounds: verified, never copied.

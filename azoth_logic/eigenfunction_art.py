@@ -15,6 +15,12 @@ So the alpha channel is a *zone map*, not opacity: 0.5 marks the base zone and
 Only cards whose `image` ends in `.exr` use this path -- roughly 246 of 400.
 The rest carry a plain PNG and are drawn without any of it, matching
 `ImageCache.eigenfunction_name_for_image()`.
+
+**Procedural art** (`image_data.art`, made in the game's Codex) is the third
+kind, and wins over `image` as it does in the game. It is not an `.exr` but it
+reads exactly like one here: `procedural_art.Field` hands over a field and a
+zone map, and `_shade` and the looping in `_animate` treat both the same.
+`item_frames` / `item_still` pick the source for an item.
 """
 from __future__ import annotations
 
@@ -26,6 +32,8 @@ os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
+
+from azoth_logic import procedural_art  # noqa: E402
 
 # split_card_image.gdshader, `const float threshold_norm`.
 THRESHOLD = 0.0005
@@ -166,13 +174,21 @@ def frames(exr_path, primary=BASE_COLOR, secondary=BASE_COLOR,
     ghost. The shape stays crisp for the whole blend.
     """
     r, g, b, a = load_exr(exr_path)
-    total = max(1, int(round(duration * fps)))
-    fade_start = int(total * (1.0 - crossfade))
 
     def field(t):
         w1, w2 = mode_weights(t, departure)
         return r + w1 * g + w2 * b
 
+    return _animate(field, lambda z: a, primary, secondary, duration, fps, crossfade)
+
+
+def _animate(field, zone_of, primary, secondary, duration, fps, crossfade) -> list:
+    """The loop both kinds of art share: `field(t)` per frame, cross-faded in
+    field space over the last `crossfade` (see `frames`), then shaded with
+    `zone_of(z)`. An .exr's zone map is fixed; procedural art's can follow the
+    field's sign, so it is taken from the blended field, as the shader does."""
+    total = max(1, int(round(duration * fps)))
+    fade_start = int(total * (1.0 - crossfade))
     out = []
     for i in range(total):
         t = i / fps
@@ -181,5 +197,73 @@ def frames(exr_path, primary=BASE_COLOR, secondary=BASE_COLOR,
             s = (i - fade_start) / (total - fade_start)
             s = s * s * (3.0 - 2.0 * s)          # ease the handover
             z = (1.0 - s) * z + s * field(t - duration)
-        out.append(Image.fromarray(_shade(z, a, primary, secondary), "RGBA"))
+        out.append(Image.fromarray(_shade(z, zone_of(z), primary, secondary), "RGBA"))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Procedural art, and picking an item's source
+# ---------------------------------------------------------------------------
+
+def is_exr(item: dict) -> bool:
+    return str(item.get("image") or "").lower().endswith(".exr")
+
+
+def is_animated(item: dict) -> bool:
+    """Procedural art or `.exr` art: the two kinds that animate. Mirrors
+    ImageCache.has_animated_art, which checks procedural art first."""
+    return procedural_art.has_art(item) or is_exr(item)
+
+
+def needs_download(item: dict) -> bool:
+    """Whether the item's art is a file in Storage. Procedural art is computed,
+    so a card that has it downloads nothing, whatever its `image` still names
+    (the `.exr` kept there for clients that cannot draw the art)."""
+    return not procedural_art.has_art(item) and bool(item.get("image"))
+
+
+def procedural_field(item: dict, size=ART_SIZE[0]) -> procedural_art.Field:
+    return procedural_art.Field(procedural_art.art_of(item), size,
+                                departure_for_card(item), THRESHOLD)
+
+
+def item_frames(item: dict, art_bytes, primary, secondary,
+                duration=4.0, fps=15) -> list | None:
+    """An item's animated art as RGBA frames at ART_SIZE, or None when it has
+    none that animates (flat art, or an `.exr` whose bytes are missing)."""
+    if procedural_art.has_art(item):
+        field = procedural_field(item)
+        return _animate(field.at, field.zone, primary, secondary, duration, fps, 0.25)
+    if is_exr(item) and art_bytes:
+        path = _write_temp(art_bytes)
+        try:
+            return frames(path, primary, secondary, duration=duration, fps=fps,
+                          departure=departure_for_card(item))
+        finally:
+            os.unlink(path)
+    return None
+
+
+def item_still(item: dict, art_bytes, primary, secondary):
+    """An item's animated art at t = 0 as one RGBA frame at ART_SIZE, or None
+    (see item_frames). Flat art is the caller's: it resizes differently."""
+    if procedural_art.has_art(item):
+        field = procedural_field(item)
+        z = field.at(0.0)
+        return Image.fromarray(_shade(z, field.zone(z), primary, secondary), "RGBA")
+    if is_exr(item) and art_bytes:
+        path = _write_temp(art_bytes)
+        try:
+            return still(path, primary, secondary)
+        finally:
+            os.unlink(path)
+    return None
+
+
+def _write_temp(data: bytes) -> str:
+    """OpenCV's EXR reader takes a path, not bytes."""
+    import tempfile
+    f = tempfile.NamedTemporaryFile(suffix=".exr", delete=False)
+    f.write(data)
+    f.close()
+    return f.name

@@ -92,7 +92,8 @@ def fetch_art_many(cards, workers: int = DOWNLOAD_WORKERS, kinds=None) -> dict:
         kind = kinds[i] if kinds else "card"
         bucket = _bucket_for(item, kind)
         name = item.get("image")
-        return (bucket, name) if bucket and name else None
+        # Procedural art is computed from the row, never downloaded.
+        return (bucket, name) if bucket and name and ef.needs_download(item) else None
 
     keys = [key_for(i, item) for i, item in enumerate(cards)]
     wanted = {k: None for k in keys if k}
@@ -128,7 +129,7 @@ def _bucket_for(item: dict, kind: str = "card") -> str | None:
     """
     if kind == "rite":
         return None
-    if card_render.is_animated(item):
+    if ef.is_exr(item):
         return card_render.EXR_BUCKET
     if kind == "aspect":
         return "aspectimages"
@@ -246,12 +247,12 @@ def _frames_for(item, kind, art, duration: float, fps: int) -> list:
     """
     from azoth_logic import fate_render
 
-    if kind == "card" and art and card_render.is_animated(item):
-        face = card_render._base_face(item)
+    arts = None
+    if kind == "card":
         primary, secondary = ef.colors_for_card(item)
-        with card_render._temp(art, ".exr") as path:
-            arts = ef.frames(path, primary, secondary, duration=duration, fps=fps,
-                             departure=ef.departure_for_card(item))
+        arts = ef.item_frames(item, art, primary, secondary, duration=duration, fps=fps)
+    if arts:
+        face = card_render._base_face(item)
         pos = (round(L.ART[0]), round(L.ART[1]))
         frames = []
         for art_frame in arts:
@@ -260,14 +261,13 @@ def _frames_for(item, kind, art, duration: float, fps: int) -> list:
             frames.append(frame)
         return frames
 
-    if kind == "aspect" and art and fate_render.is_animated(item):
+    if kind == "aspect":
+        base, accent = fate_render.aspect_art_colors(item)
+        arts = ef.item_frames(item, art, base, accent, duration=duration, fps=fps)
+    if kind == "aspect" and arts:
         face = fate_render._aspect_face(item)
         pos = (round(F.ASPECT_ART[0]), round(F.ASPECT_ART[1]))
         size = (round(F.ASPECT_ART[2]), round(F.ASPECT_ART[3]))
-        base, accent = fate_render.aspect_art_colors(item)
-        with card_render._temp(art, ".exr") as path:
-            arts = ef.frames(path, base, accent, duration=duration, fps=fps,
-                             departure=ef.departure_for_card(item))
         frames = []
         for art_frame in arts:
             frame = face.copy()
@@ -281,7 +281,8 @@ def _frames_for(item, kind, art, duration: float, fps: int) -> list:
 def _animates(item, kind: str, art) -> bool:
     """Whether this face has anything to animate."""
     from azoth_logic import fate_render
-    if not art:
+    # Procedural art has no bytes to wait for; an .exr does.
+    if not art and ef.needs_download(item):
         return False
     if kind == "card":
         return card_render.is_animated(item)

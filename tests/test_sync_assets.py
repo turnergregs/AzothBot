@@ -73,12 +73,14 @@ def test_a_complete_set_reports_clean(tmp_path, monkeypatch, capsys):
     dest.mkdir(parents=True)
     (dest / "only.png").write_bytes(b"x")
 
-    # A complete fake checkout: every border and the font the script copies.
+    # A complete fake checkout: every border, the font and the Bessel table the
+    # script copies.
     azoth = tmp_path / "azoth"
     (azoth / "scripts/autoloads").mkdir(parents=True)
     (azoth / "scripts/autoloads/utils.gd").write_text("var replace_dict = {\n}\n")
     for rel in list(sync_assets.BORDERS.values()) + [sync_assets.BACKGROUND,
-                                                     sync_assets.FONT]:
+                                                     sync_assets.FONT,
+                                                     sync_assets.BESSEL_TABLE]:
         src = azoth / rel
         src.parent.mkdir(parents=True, exist_ok=True)
         src.write_bytes(b"x")

@@ -8,9 +8,11 @@ Discord. Deliberately NOT reproduced:
   * Enhancements and attributes. Both are applied during a run and never present
     on a card as authored.
 
-Two art paths, because the content has two: a card whose `image` ends in `.exr`
-carries eigenfunction art and animates; anything else is a flat PNG and does not.
-That split mirrors `ImageCache.eigenfunction_name_for_image()`.
+Three art paths, because the content has three, checked in the game's order
+(`ImageCache.has_animated_art`): procedural art under `image_data.art` (made in
+the game's Codex; computed, never downloaded), then a card whose `image` ends in
+`.exr` (eigenfunction art), both of which animate; anything else is a flat PNG
+and does not.
 """
 from __future__ import annotations
 
@@ -215,15 +217,17 @@ def _draw_centered_line(draw, text, font, box, fill, outline=0, outline_color=(0
 
 
 def is_animated(card: dict) -> bool:
-    """Only eigenfunction (.exr) art animates -- 246 of 400 cards."""
-    return str(card.get("image") or "").lower().endswith(".exr")
+    """Procedural art or eigenfunction (.exr) art. See the module docstring."""
+    return ef.is_animated(card)
 
 
 def _art_still(card, art_bytes):
+    """The art as one frame, or None when there is nothing to draw."""
     primary, secondary = ef.colors_for_card(card)
     if is_animated(card):
-        with _temp(art_bytes, ".exr") as p:
-            return ef.still(p, primary, secondary)
+        return ef.item_still(card, art_bytes, primary, secondary)
+    if not art_bytes:
+        return None
     img = Image.open(io.BytesIO(art_bytes)).convert("RGBA")
     return img.resize(ef.ART_SIZE, Image.LANCZOS)
 
@@ -250,9 +254,9 @@ class _temp:
 def render_still(card: dict, art_bytes: bytes | None) -> Image.Image:
     """The card as a single RGBA frame."""
     face = _base_face(card)
-    if art_bytes:
-        face.alpha_composite(_art_still(card, art_bytes),
-                             (round(L.ART[0]), round(L.ART[1])))
+    art = _art_still(card, art_bytes)
+    if art is not None:
+        face.alpha_composite(art, (round(L.ART[0]), round(L.ART[1])))
     return face
 
 
@@ -349,7 +353,7 @@ def to_gif(frames, fps: int = 15, colors: int = GIF_COLORS,
     return buf.getvalue()
 
 
-def render_gif(card: dict, art_bytes: bytes, duration=4.0, fps=15) -> bytes:
+def render_gif(card: dict, art_bytes: bytes | None, duration=4.0, fps=15) -> bytes:
     """The card as a looping GIF. Only meaningful when `is_animated(card)`.
 
     The face is drawn once; each frame differs only inside the art box, which is
@@ -358,9 +362,8 @@ def render_gif(card: dict, art_bytes: bytes, duration=4.0, fps=15) -> bytes:
     """
     face = _base_face(card)
     primary, secondary = ef.colors_for_card(card)
-    with _temp(art_bytes, ".exr") as path:
-        art_frames = ef.frames(path, primary, secondary, duration=duration, fps=fps,
-                               departure=ef.departure_for_card(card))
+    art_frames = ef.item_frames(card, art_bytes, primary, secondary,
+                                duration=duration, fps=fps)
 
     pos = (round(L.ART[0]), round(L.ART[1]))
     frames = []
@@ -399,12 +402,13 @@ def render_png(card: dict, art_bytes: bytes | None) -> bytes:
 
 # Eigenfunction art and flat art live in different Storage buckets, keyed by the
 # card's `image` extension. Mirrors ImageCache.eigenfunction_name_for_image().
+# Procedural art is in neither: it is computed from the row.
 EXR_BUCKET = "eigenfunctions"
 PNG_BUCKET = "cardimages"
 
 
 def art_bucket(card: dict) -> str:
-    return EXR_BUCKET if is_animated(card) else PNG_BUCKET
+    return EXR_BUCKET if ef.is_exr(card) else PNG_BUCKET
 
 
 def download_art(bucket: str, filename: str) -> bytes:
@@ -418,10 +422,9 @@ def fetch_art(card: dict) -> bytes | None:
     Returns None when the card has no image set. A genuine download failure
     raises rather than rendering a card with a blank middle.
     """
-    name = card.get("image")
-    if not name:
+    if not ef.needs_download(card):
         return None
-    return art_cache.fetch_art_cached(art_bucket(card), name, download_art)
+    return art_cache.fetch_art_cached(art_bucket(card), card["image"], download_art)
 
 
 def render(card: dict, animate: bool = True, duration=4.0, fps=15):
@@ -438,7 +441,8 @@ def render(card: dict, animate: bool = True, duration=4.0, fps=15):
     and served stale images after any change.
     """
     art = fetch_art(card)
-    if animate and is_animated(card) and art:
+    # Procedural art needs no bytes; an .exr does.
+    if animate and is_animated(card) and (art or ef.procedural_art.has_art(card)):
         key = art_cache.render_key(card, art, "card", duration=duration, fps=fps)
         hit = art_cache.get_render(key, "gif")
         if hit is not None:

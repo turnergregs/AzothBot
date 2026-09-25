@@ -43,7 +43,7 @@ All docs live in `docs/`. Read before changing a system.
 | `DB_SCHEMA.md` | **Full schema mirror.** Read the query caveats before writing ANY query |
 | `ANALYTICS.md` | `/stats` views, the daily report, and their defects |
 | `CONTENT_PIPELINE.md` | Idea → JSON → database row |
-| `CARD_RENDERING.md` | **How `/render` draws cards, aspects and rites.** Layout, symbols, animation, caching, and the vendored assets |
+| `CARD_RENDERING.md` | **How `/render` draws cards, aspects and rites.** Layout, symbols, animation, caching, the vendored assets, and **procedural art** (`image_data.art` from the game's Codex, ported from the shader and checked against GPU samples) |
 | `RENDERING.md` | ⚠️ Legacy renderers. Still current for art *generation* and the Storage buckets |
 | `TESTING.md` | The pytest suite, what it guards, and how it was mutation-tested |
 | `DEPLOYMENT.md` | Where it runs, config, security posture |
@@ -147,7 +147,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 820 tests, all offline** (`docs/TESTING.md`):
+**pytest, 855 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest
@@ -165,7 +165,9 @@ only raises when someone runs the command in Discord. It shells out to `pyflakes
 and fails on undefined names only.
 
 Still uncovered: command BODIES are never executed, renders are not compared
-against Godot, and the turn-grain queries have never run against live data. No
+against Godot (except procedural art's field, which is: see
+`docs/CARD_RENDERING.md` § Procedural art), and the turn-grain queries have
+never run against live data. No
 CI. See `docs/TESTING.md` § Gaps.
 
 ## Writing Queries
