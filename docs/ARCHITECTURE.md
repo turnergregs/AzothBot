@@ -46,6 +46,7 @@ azoth_logic/
   eigenfunction_art.py      .exr art -- the port of split_card_image.gdshader
   card_render.py            Composites a card face; PNG and GIF output
   fate_render.py            Composites aspect and rite faces
+  rite_background.py        A rite's procedural background (image_data.background)
   deck_render.py            Deck grid, fanned sample hand, upgrade comparison
   art_cache.py              On-disk caches for art and animated renders
   content_index.py          Cached (kind, id, name) index behind /show and /render,

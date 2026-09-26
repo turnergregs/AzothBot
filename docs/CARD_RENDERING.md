@@ -205,6 +205,7 @@ renders as a silent gap, so `Upgraded -> Aspect` came out as `Upgraded   Aspect`
 | `azoth_logic/placeholders.py` | `{...}` display placeholders — see [Display placeholders](#display-placeholders) |
 | `azoth_logic/eigenfunction_art.py` | `.exr` art — the port of `split_card_image.gdshader` — and `item_frames` / `item_still`, which pick an item's art source |
 | `azoth_logic/procedural_art.py` | Procedural art (`image_data.art`) — the port of `procedural_art.gdshaderinc` and `ArtVisuals`. See [Procedural art](#procedural-art) |
+| `azoth_logic/rite_background.py` | A rite's procedural background (`image_data.background`) — `reactant_card.gdshader`'s procedural branch and `RiteVisuals`' frames. See [Procedural rite backgrounds](#procedural-rite-backgrounds) |
 | `azoth_logic/card_render.py` | Composites the face; PNG and GIF output |
 | `tools/sync_assets.py` | Refreshes vendored art from a local azoth checkout |
 
@@ -478,11 +479,53 @@ three shapes:
 
 | | Card | Aspect | Rite |
 |---|---|---|---|
-| Background | Static PNG + element border | One shader pattern, tinted per aspect | One of **four** shader patterns |
+| Background | Static PNG + element border | One shader pattern, tinted per aspect | `image_data.background` (procedural), else one of **four** baked shader patterns |
 | Art | `.exr` or PNG, 275×275 | `.exr`, 210×210 | **None** — the Image node is hidden |
 | Valence | Yes, plus a split face | No | No |
-| Colours | Element-driven | `image_data` primary/secondary | Fixed in the scene |
-| Animates | `.exr` cards | Yes | No |
+| Colours | Element-driven | `image_data` primary/secondary | `image_data` background/primary/secondary, else the material's |
+| Animates | `.exr` cards | Yes | Yes |
+
+### Procedural rite backgrounds
+
+Since 2026-09-25 every live rite (22) carries `image_data.background`: a look in
+card art's format, made in the game's rite look editor (the azoth repo's
+`docs/PROCEDURAL_ART.md` § The rite adapter). The game's
+`reactant_card.gdshader` draws it in its `procedural` branch instead of the
+legacy pattern; `azoth_logic/rite_background.py` is that branch plus the parts
+of `RiteVisuals` it depends on. **Until then `/render` ignored the key and drew
+the old baked pattern for every rite**, which is what
+`tests/test_rite_background.py` guards.
+
+- **The field is card art's.** `procedural_art.Field`, the GPU-verified port,
+  sampled over the whole 560×897 viewport instead of a 275px square (its `uv`
+  argument) with the placement replaced (`placement`), as
+  `RiteVisuals.apply_frame` overwrites `art_scale` / `art_center`.
+- **The frame.** The art sits in a square fixed on the card, picked by the
+  background's `frame`: `card` (the top 560px square) or `full` (a square
+  1757px across centred 222px above the card, the legacy look's full-art
+  circle; 21 of the 22 use it). Scale, centre and rotation are read against the
+  `card` square whatever the frame, and `wave_mapping` converts them, so a
+  frame switch moves only the silhouette. Only the card sizes are ported: the
+  Rites bar's bigger frames never reach a render.
+- **The colour.** `fill` defaults to `off` here (card art's default is `sign`):
+  the shimmer, `mix(primary, secondary, cp)` with `cp` the shader's radial wave
+  `0.5 + 0.5·cos(3·dist − t)` about the attribute material's one SDF object.
+  Any other fill paints each blob flat in one of the pair. One colour of the
+  pair stands in for a missing other (`RiteVisuals._apply_colors`); neither
+  keeps the act-1 ladder pair.
+- **The card's rounded silhouette** is the alpha of the vendored
+  `rite_background_attribute_mask.png`, which already carries it in place.
+- **The loop** is a 4s, 15fps cross-fade, like card art's, blending both the
+  field and `cp` over the last quarter (both are smooth). About 9s and 0.9 MB
+  with the sheen. Ping-pong (below) is only for the legacy WebP.
+- **Not checked against the GPU.** The field is; the frame mapping and the
+  colouring are ported by reading the shader and `RiteVisuals`, and have not
+  yet been compared against the game side by side. **Keep `FRAMES`, `REFERENCE_FRAME`, the Background
+  node's box and the shimmer constants in step with `rite_visuals.gd` and
+  `reactant_card.gdshader` by hand.**
+
+A rite without a readable background (none, malformed, an unknown `version`)
+takes the legacy path below, as the game does.
 
 ### The backgrounds are pre-rendered
 

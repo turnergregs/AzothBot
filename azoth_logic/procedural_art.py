@@ -446,12 +446,20 @@ class Field:
     """One look evaluated over one art quad. Everything that does not move with
     time is computed once; `at(t)` is a frame's field."""
 
-    def __init__(self, art: dict, size: int, departure: float, threshold: float):
+    def __init__(self, art: dict, size: int, departure: float, threshold: float,
+                 uv=None, placement=None):
+        """`uv` samples the quad somewhere other than a size x size grid (a
+        rite's background, whose quad is a frame larger than the card: see
+        rite_background); `size` is then unused. `placement` is (scale, center)
+        standing in for the look's own, as RiteVisuals.apply_frame overwrites
+        art_scale and art_center after ArtVisuals.apply_params."""
         self.look = Look(art)
         self.departure = float(departure)
         self.threshold = float(threshold)
-        self.u, self.v = uv_grid(size)
+        self.u, self.v = uv if uv is not None else uv_grid(size)
         lk = self.look
+        if placement is not None:
+            lk.scale, lk.center = float(placement[0]), tuple(placement[1])
 
         qx = (self.u - 0.5) * 2.0
         qy = -((self.v - 0.5) * 2.0)

@@ -5,10 +5,10 @@ enough to be worth separating:
 
 | | Card | Aspect | Rite |
 |---|---|---|---|
-| Background | Static PNG + element border | One shader pattern, tinted per aspect | One of four shader patterns |
+| Background | Static PNG + element border | One shader pattern, tinted per aspect | `image_data.background` (rite_background), else one of four shader patterns |
 | Art | `.exr` or PNG, 275x275 | `.exr`, 210x210 | **None** -- the Image node is hidden |
 | Valence | Yes, plus a split face | No | No |
-| Colours | Element-driven | `image_data` primary/secondary | Fixed in the scene |
+| Colours | Element-driven | `image_data` primary/secondary | `image_data` palette, else the material's |
 
 **Rites were "events" until 0.9.5**, when the table, `content_type` and Storage
 bucket were renamed with the game. `azoth_logic/rite_schema.py` says which side
@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw
 
 from azoth_logic import art_cache
 from azoth_logic import holo, card_render, eigenfunction_art as ef, fate_layout as F, rich_text
+from azoth_logic import rite_background
 from azoth_logic.card_layout import CARD_W, CARD_H
 
 BACKGROUND_DIR = Path(__file__).resolve().parent.parent / "assets" / "card_art" / "backgrounds"
@@ -193,6 +194,10 @@ def _recolored_rite_background(rite: dict, overrides) -> Image.Image:
 
 
 def _rite_face(rite: dict) -> Image.Image:
+    if rite_background.has_background(rite):
+        # A procedural background (image_data.background) replaces the baked
+        # pattern outright, as the shader's `procedural` branch does.
+        return rite_background.RiteBackground(rite).frame(0.0)
     canvas = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
     overrides = F.rite_colors(rite)
     if overrides is None:
@@ -269,7 +274,10 @@ def _rite_background_frames(rite: dict, overrides):
 
 def render_rite_gif(rite: dict, fps: int = 15, sheen: bool = True) -> bytes | None:
     """A rite as a looping GIF, or None when its background does not animate."""
-    frames = _rite_background_frames(rite, F.rite_colors(rite))
+    if rite_background.has_background(rite):
+        frames = rite_background.RiteBackground(rite).frames(fps=fps)
+    else:
+        frames = _rite_background_frames(rite, F.rite_colors(rite))
     if not frames:
         return None
     pages = []
