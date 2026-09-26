@@ -485,7 +485,7 @@ axis plus a rollup row, so the column totals six times the real count.
 The three draft replies were grouped under **`/stats draft`** on 2026-09-03 —
 `composition`, `rates` and `breakdown`. They are grouped, **not merged**: the
 composition is content with no games behind it and no cutoff, the two rate
-replies are ~2 games at `0.9.0`, and one embed carries one footer. See
+replies are games at `0.9.10`+, and one embed carries one footer. See
 [ANALYTICS.md](ANALYTICS.md#why-these-are-three-commands-and-not-one).
 
 `/stats draft breakdown` is new: card pick rate by element and by valence, from
@@ -560,9 +560,9 @@ than drawing a partial distribution as a whole one. Full account in
 > The views behind `/stats` were rebuilt on 2026-08-26 — a cutoff enforced in
 > one place, `restart` runs and co-op duplicates excluded, and combo averaged in
 > log space as **`avg_combo_log10`** (an order of magnitude, not a linear mean).
-> The cutoff moved to `0.9.0` on 2026-08-28. Read [ANALYTICS.md](ANALYTICS.md)
+> The cutoff moved to `0.9.10` on 2026-09-25. Read [ANALYTICS.md](ANALYTICS.md)
 > before quoting a number: the trustworthy dataset is still only a couple of runs
-> deep, so most of these will be thin or empty until there is play at `0.9.0`+.
+> deep, so most of these will be thin or empty until there is play at `0.9.10`+.
 
 `/daily_update` is per-channel: enabling it in a channel registers that channel
 with its own send time, and the report covers the previous day (CST). Disabling

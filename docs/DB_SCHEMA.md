@@ -207,8 +207,8 @@ the exposure open through the outer two while looking fixed.
 
 | Function | Purpose |
 |---|---|
-| `version_key(text)` | Numeric sort key for a dotted version string; NULL if unparseable. `0.9.0` → `9000` |
-| `analytics_cutoff()` | The cutoff in one place — currently `9000` (`0.9.0`, raised 2026-08-28). Bump this, not seven WHERE clauses |
+| `version_key(text)` | Numeric sort key for a dotted version string; NULL if unparseable. `0.9.10` → `9010` |
+| `analytics_cutoff()` | The cutoff in one place — currently `9010` (`0.9.10`, raised 2026-09-25). Bump this, not seven WHERE clauses |
 | `combo_numeric(text)` | Safe numeric read of the BigNum-backed combo column; NULL rather than an error |
 | `run_cleared(uuid)` | True when the run beat the **act 3 boss** — the milestone that grants the next ritual. Independent of how the run ended, so a run that cleared act 3 and died in act 4 is still cleared |
 | `bulk_apply(jsonb, text)` | **All-or-nothing bulk insert/update for AzothBot.** See below |
@@ -289,13 +289,14 @@ from pg_stat_user_tables order by pg_total_relation_size(relid) desc;
 
 ---
 
-## ⚑ The analytics cutoff is `0.9.0`
+## ⚑ The analytics cutoff is `0.9.10`
 
-**Game version `0.9.0` is the current cutoff** — raised from `0.8.2` on
-2026-08-28 to track the game's shipped `config/version`, so `/stats` describes
-the build being played rather than pooling across a balance boundary. It cost 17
-of the 19 games that qualified at `0.8.2`; expect thin or empty replies until
-there is play at `0.9.0`.
+**Game version `0.9.10` is the current cutoff** — raised from `0.9.0` on
+2026-09-25. `0.9.10` is the release that opened the game to new playtesters,
+and the cutoff tracks it so `/stats` describes their play rather than pooling it
+with developer runs on earlier builds. Expect thin or empty replies until they
+have played. (The previous bump, `0.8.2` → `0.9.0` on 2026-08-28, cost 17 of
+19 games.)
 
 `0.8.2` remains the floor below which the data is not merely older but *wrong*:
 
@@ -1109,6 +1110,7 @@ popular purely because they're offered more.
 
 | Date | Change |
 |---|---|
+| 2026-09-25 | **Analytics cutoff `0.9.0` → `0.9.10`** (`2026-09-25_bump_analytics_cutoff.sql`), the release that let in new playtesters. `analytics_cutoff()` alone; no view touched. Eligible population not measured at apply time. |
 | 2026-09-14 | **Dropped `rites.foresight`** (by hand in the SQL editor; no migration file). Nothing in the game read it. The Codex Rite templates, the content validator and AzothBot's `/create_rite` / `/update_rite` stopped writing it in the same change, so a payload carrying it is now rejected by `bulk_apply` as an unknown column. The old values are kept in `events_archive`. |
 | 2026-09-14 | **Renamed `events` to `rites`** (`2026-09-14_rename_events_to_rites.sql`). **Applied 2026-09-14.** In place, so ids survive; snapshots `events_archive` first. Backfills `deck_contents.content_type` and `draft_items.item_type` from `'event'` to `'rite'`, rewrites content payloads (`"zone": "events"`, `max_events`, `{last_event.`), the views' `'event'` literal and the `bulk_apply` allowlist. Safe to re-run. The `riteimages` bucket is `2026-09-14_riteimages_bucket.sql`; Rites carry no image files, so none were copied. The bot handles both sides through `azoth_logic/rite_schema.py`. |
 | 2026-09-04 | **Retired the draft reserve mechanic** (`2026-09-04_retire_draft_reserve.sql`). It had been unreachable since ~0.7 — the Retain-draft-cards button's container is `visible = false` in `hud.tscn` and nothing showed it — which the data confirms exactly: 1.72% of 28,938 offers reserved in `0.6` across 27 players, then **0 across 3,162 offers** in `0.7`–`0.9`. `draft_items.reserved` is **frozen, not dropped** (510 real rows from 0.5/0.6) and made nullable, because the client stops sending the field and PostgREST omits absent keys — a NOT NULL column with no default would have rejected every insert. NULL now means "not applicable", distinct from the `false` that means "offered, not held". |

@@ -174,8 +174,8 @@ CI. See `docs/TESTING.md` § Gaps.
 
 **Read `docs/DB_SCHEMA.md` § Query caveats first.** The ones that bite most:
 
-- Filter `version_key(version) >= analytics_cutoff()` — `0.9.0` since
-  2026-08-28. Earlier rows are a different dataset — no turn rows, `result`
+- Filter `version_key(version) >= analytics_cutoff()` — `0.9.10` since
+  2026-09-25. Earlier rows are a different dataset — no turn rows, `result`
   NULL on most, dominated by developer testing.
 - **Never `avg()` a combo.** Exponentially growing BigNum stored as `text`. Use
   `turn_nodes.combo_log10`.
@@ -186,9 +186,9 @@ CI. See `docs/TESTING.md` § Gaps.
   participant.
 - Report censored metrics as two numbers: "cleared in 2.3 links, 78% of the time".
 
-Note the trustworthy dataset is currently ~2 games (`0.9.0`, measured
-2026-08-28; it was 19 at the old `0.8.2` cutoff). Almost everything `/stats`
-reports comes from data the cutoff exists to exclude.
+The cutoff moved to `0.9.10` on 2026-09-25 — the release that let in new
+playtesters — so the trustworthy dataset starts over from their runs. Check a
+reply's footer and game count before quoting it.
 
 ## Authoring Content
 

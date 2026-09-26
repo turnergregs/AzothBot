@@ -227,7 +227,7 @@ def add_stats_commands(cls):
     # --- Draft ---------------------------------------------------------
     # A subcommand GROUP, 2026-09-03. The three replies are neighbours but they
     # are not one reply: the composition is content with no games behind it and
-    # no cutoff, while the two rate views are ~2 games at 0.9.0 filtered further
+    # no cutoff, while the two rate views are games at 0.9.10+ filtered further
     # by `having times_offered >= 5`. One embed carries one footer, and merging
     # them would have to either claim the cutoff over content numbers or drop it
     # over game numbers. Grouping gets the tidiness without the lie.

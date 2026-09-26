@@ -23,15 +23,17 @@ Three facts govern everything below.
 return zero rows with an HTTP 200 under an anon key — not an error. See
 [DB_SCHEMA.md § Which key you are holding](DB_SCHEMA.md#azothbot-which-key-you-are-holding).
 
-**2. `0.9.0` is the analytics cutoff** (raised from `0.8.2` on 2026-08-28 —
-`db/migrations/2026-08-28_bump_analytics_cutoff.sql` in the game repo), and as of
+**2. `0.9.10` is the analytics cutoff** (raised from `0.9.0` on 2026-09-25 —
+`db/migrations/2026-09-25_bump_analytics_cutoff.sql` in the game repo — for the
+release that let in the new playtesters; `0.8.2` → `0.9.0` was 2026-08-28), and as of
 the 2026-08-26 rebuild every game-facing view enforces it via
 `analytics_cutoff()`. Bump that one function to move the cutoff; don't edit WHERE
 clauses. `azoth_logic/stats_format.CUTOFF_VERSION` mirrors it for the footer and
 must move with it, or the footer states a threshold the views aren't enforcing.
 
-**3. The trustworthy dataset is small, but no longer negligible.** As of
-**2026-09-03** there are **21 solo, non-restart runs** at `0.9.0`–`0.9.2` (90
+**3. The trustworthy dataset restarted at the 0.9.10 bump.** The figures below
+are from **before** it and describe the `0.9.0` cutoff; the 0.9.10 population
+has not been measured yet. As of **2026-09-03** there are **21 solo, non-restart runs** at `0.9.0`–`0.9.2` (90
 games at those versions before the `restart` and co-op filters), carrying 590
 card draft offers. It was **2 games** when the cutoff was raised on 2026-08-28,
 so this is real growth — but 21 runs still means a per-hero or per-player split
@@ -220,7 +222,7 @@ Three helper functions now carry the rules:
 | Function | Purpose |
 |---|---|
 | `version_key(text)` | Numeric sort key — `0.8.2` → `8002`. Returns NULL on anything unparseable instead of raising, which is what the old inline `split_part(...)::integer` did on a two-component version string |
-| `analytics_cutoff()` | The cutoff, in one place — `9000` (`0.9.0`) since 2026-08-28. Was duplicated across seven WHERE clauses, which is why it went stale |
+| `analytics_cutoff()` | The cutoff, in one place — `9010` (`0.9.10`) since 2026-09-25. Was duplicated across seven WHERE clauses, which is why it went stale |
 | `combo_numeric(text)` | `highest_combo` as numeric, or NULL if malformed — so one bad row can't take down every combo view |
 
 #### The combo fix
@@ -272,10 +274,10 @@ one reply**. They are neighbours, but they do not rest on the same thing:
 | | Population | Cutoff |
 |---|---|---|
 | `composition` | content — 136 cards, 54 aspects | none; a deck has no version |
-| `rates`, `breakdown` | ~2 games at `0.9.0` | `analytics_cutoff()` |
+| `rates`, `breakdown` | games at `0.9.10`+ | `analytics_cutoff()` |
 
 **One embed carries one footer.** A merged reply would have to either claim
-`version >= 0.9.0` over the composition numbers, which are not version-filtered
+`version >= 0.9.10` over the composition numbers, which are not version-filtered
 at all, or drop the cutoff over the rate numbers — the thing this document opens
 by saying not to do. Grouping gets the tidiness without the lie.
 
@@ -504,7 +506,7 @@ be drawn as a whole one.
 | `hero_info_view` returns one row | The data, not the SQL — see below |
 | ~~`draft_deck_view.combo` definition~~ | Settled 2026-09-03. The two definitions — NULL element, vs NULL element **and** NULL valence — select the **same 24 rows**: every colourless card in the pool is valence-less and vice versa. The column is now `colourless` in `element_counts` and the valence histogram reports the `none` bucket beside it, so a future divergence is visible as two different numbers rather than hidden inside one |
 | `most_drafted` has no denominator | Still a comma-joined label on `player_info_view`. Per-item numbers live in `draft_rates_view` now |
-| The trustworthy dataset is ~2 games | Nothing to do but wait for play at `0.9.0`+ |
+| The trustworthy dataset restarted at `0.9.10` | Nothing to do but wait for playtester runs at `0.9.10`+ |
 
 ### A note on `hero_info_view`
 
