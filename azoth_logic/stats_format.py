@@ -15,6 +15,8 @@ Pure functions over dicts. The commands do the I/O.
 """
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
+
 # Discord's limits, and what a phone can read without horizontal scrolling.
 MAX_DESCRIPTION = 4096
 MAX_FIELD = 1024
@@ -68,6 +70,12 @@ def heading(column: str) -> str:
     return HEADINGS.get(column, column.replace("_", " ").capitalize())
 
 
+# Where a combo stops being compacted ("53.3T") and is shown as a power of
+# two -- the way the game talks about combos (levels sit on 2^14, 2^62, ...).
+_MAGNITUDE_FROM = Decimal(2) ** 50
+_LOG10_2 = Decimal(2).log10()
+
+
 def _compact(number: float) -> str:
     """A big number at a glance. Combos reach 10^30; nobody counts digits."""
     for limit, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
@@ -102,10 +110,23 @@ def value(column: str, raw) -> str:
         return str(raw)
 
     if column in ("max_combo", "highest_combo", "combo", "combo_numeric"):
+        # Not float(raw): `combo_numeric()` returns `numeric`, PostgREST sends
+        # it as a bare JSON number, and a combo past ~1.8e308 arrives as a
+        # Python int that float() refuses with OverflowError -- which took
+        # down all of /stats active_players over one player's run. Past the
+        # "T" suffix the compact form stops being readable anyway, so a combo
+        # that large is shown as a power of two: `2^1328.8`, or `2^62` when
+        # it lands exactly on one.
         try:
-            return _compact(float(raw))
-        except (TypeError, ValueError):
+            number = Decimal(str(raw))
+        except (TypeError, ValueError, InvalidOperation):
             return str(raw)
+        if not number.is_finite():
+            return str(raw)
+        if abs(number) >= _MAGNITUDE_FROM:
+            exponent = f"{abs(number).log10() / _LOG10_2:.1f}".removesuffix(".0")
+            return f"2^{exponent}"
+        return _compact(float(number))
 
     if column in ("pick_rate", "reserve_rate"):
         # A proportion, stored 0-1. Left alone it renders as `0.7`, which reads

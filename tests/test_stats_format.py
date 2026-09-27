@@ -37,6 +37,22 @@ def test_a_big_combo_is_compacted():
     assert sf.value("max_combo", 53_300_000_000_000) == "53.3T"
 
 
+def test_a_combo_past_float_range_does_not_crash_the_table():
+    """2026-09-26: /stats active_players failed with "int too large to convert
+    to float". `highest_combo` is `numeric`, arrives as a JSON number, and a
+    combo past ~1.8e308 is a Python int that float() refuses with
+    OverflowError -- which the old except clause did not catch."""
+    assert sf.value("highest_combo", 10 ** 400) == "2^1328.8"
+    assert sf.value("max_combo", str(10 ** 400)) == "2^1328.8"
+
+
+def test_a_combo_past_trillions_is_shown_as_a_power_of_two():
+    """`_compact` has no suffix past T; 10^30 used to print as 19 digits of T.
+    Powers of two because that is how the game states combos."""
+    assert sf.value("combo", 2 * 10 ** 30) == "2^100.7"
+    assert sf.value("combo", 2 ** 62) == "2^62"
+
+
 def test_a_small_combo_is_left_alone():
     assert sf.value("max_combo", 32) == "32"
 
