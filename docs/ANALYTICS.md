@@ -52,10 +52,9 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 |---|---|---|
 | `/stats leaderboard` | `leaderboard_view` | Top combos, optionally by player / hero / version |
 | `/stats player` | `player_info_view` + `player_act_view` + `player_run_view` + `player_link_view` | One player's aggregates, plus a per-hero table (runs, highest ritual, act 3 clears) and three bar charts: games by hero and ritual, runs by furthest act, regular turns by links played. See [Rituals in /stats](#rituals-in-stats-2026-09-28) |
-| `/stats active_players` | `player_activity_view` | Play counts, highest ritual played, hours. The footer counts the players shown |
+| `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
-| `/stats engagement` | `player_engagement_view` + `player_engagement_actions_view` | Players bucketed by the share of their active time spent in the Codex tools, a per-player time table, and what was made in the Codex. Developers excluded by default. See [Engagement](#engagement-2026-09-28) |
 | `/stats draft composition` | `draft_deck_view` | Draft pool composition, as bar charts. **The view kept its old name** through two command renames. See [The draft pool](#the-draft-pool) |
 | `/stats draft rates` | `draft_rates_view` | Pick rate, per item |
 | `/stats draft breakdown` | `draft_dimension_rates_view` | Pick rate by type, element and valence (2026-09-03) |
@@ -128,29 +127,37 @@ cohorts fought still appears, as unfought. On a view without the column the
 filter is skipped and the footer says so, rather than labelling everyone as
 new playtesters.
 
-### Engagement (2026-09-28)
+### Players (2026-09-28)
 
-Are some players here for the tools rather than the game? The game repo's
-`EngagementTracker` writes `engagement_spans`: active time (within a minute of
-the last input) per surface, `run`, `custom_run`, `codex_browse`, `codex_edit`
-and `art_tools`, plus counts of what was made in the Codex. See the game repo's
-docs/ANALYTICS.md § Engagement spans.
+`/stats players` is the engagement report: who plays, and how each player
+spends their time with the game. It replaced `/stats active_players` and
+`/stats engagement`, and reads `player_summary_view` (one row per player,
+with the cohort column, so `players:` works as elsewhere; the old
+`stats.DEVELOPERS` name list is gone in favour of the `developer` cohort).
 
-`/stats engagement` has three fields:
+- **Headline tiles:** players, runs, time in runs, time in the Codex.
+- **Where their time goes:** a bar per player whose length is their total
+  active time (one scale for everyone) split into runs, custom runs, Codex and
+  art tools, in the dataviz palette's first four slots. Then runs and top
+  ritual. Most active first; capped at 15 rows with a "+ N more" line.
+- **Made in the Codex:** one tile per kind of thing made (new cards, card
+  edits, exports...), most first.
 
-- **Players by share of time in the tools**: `none`, `<25%`, `25-50%`,
-  `50-75%`, `75%+`, each with its share of players. Tools are the three Codex
-  surfaces; play is runs and custom runs.
-- **Time per player**: play, tools and share, most tool time first.
-- **Made in the Codex**: the eight most common actions over everyone shown.
-  Counts are not comparable across kinds (a hero is far more work than a deck
-  edit), so this says what kind of building happens, not how much.
+**Two sources of time.** Run time is `games.elapsed_sec`, recorded by every
+build: wall-clock with the run open, idle included, so every player has it all
+the way back. Custom runs, Codex and art tools exist only in the tracker's
+active time (`engagement_spans`), from the first build carrying
+`EngagementTracker`. The tracker's own `run` spans are ignored so runs are not
+counted twice. Idle counts on one side only, so the tools' share reads slightly
+low (the cautious direction), and the footer says so along with how many
+players are on a tracked build. A roster with no time at all drops its bars and
+time column.
 
-Players with under 5 minutes of active time in total are counted in the footer
-rather than charted (`MIN_ENGAGEMENT_SEC`). **Turner and Caleb are recorded but
-excluded by default** (`stats.DEVELOPERS`, matched on `players.name`):
-`include_devs:True` puts them back, which is the quickest way to check a new
-build's tracking before any playtester has opened the Codex.
+**The legend rule** (Turner, 2026-09-28) applies to every image report: a
+legend lists only what the chart draws, and a section with nothing in it is
+not drawn. So the act legend omits acts nobody reached, this card's legend
+omits surfaces nobody used, and "Made in the Codex" appears only once
+something has been made. `stats_charts.Legend` states the rule.
 
 ### Breakdown (2026-09-28)
 

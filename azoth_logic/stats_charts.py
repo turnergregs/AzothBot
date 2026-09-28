@@ -282,20 +282,32 @@ class ColumnHeads(Block):
 
 
 @dataclass
-class ActLegend(Block):
-    """The act colours, named. A fallback: each segment already says how many
-    runs it holds, and its colour says which act."""
+class Legend(Block):
+    """Colour swatches, named: `[(label, colour)]`.
+
+    HOUSE RULE (Turner, 2026-09-28): a legend lists only what the chart above
+    it actually draws. An act nobody reached or a surface nobody used is not a
+    key to anything, only something to read past. Callers pass the present
+    items; `act_legend` does it for acts.
+    """
+    items: list
     height: float = 22
 
     def draw(self, d, top):
         cy = top + px(self.height) // 2
         x = px(PAD + LABEL_W)
-        for act, colour in enumerate(ACT_COLOURS, start=1):
+        for label, colour in self.items:
             d.rounded_rectangle([x, cy - px(5), x + px(10), cy + px(5)], radius=px(2), fill=colour)
             x += px(14)
-            label = f"Act {act}"
             d.text((x, cy), label, font=font(11), fill=MUTED, anchor="lm")
             x += d.textlength(label, font=font(11)) + px(12)
+
+
+def act_legend(acts) -> Legend:
+    """The legend for the acts in `acts` (any iterable of act numbers), in
+    order, and no others."""
+    present = sorted({min(max(int(a), 1), len(ACT_COLOURS)) for a in acts})
+    return Legend([(f"Act {a}", ACT_COLOURS[a - 1]) for a in present])
 
 
 @dataclass
@@ -406,3 +418,68 @@ class Rule(Block):
     def draw(self, d, top):
         y = top + px(self.height) // 2
         d.line([(px(PAD), y), (px(WIDTH - PAD), y)], fill=TRACK, width=px(0.5))
+
+
+@dataclass
+class StatTiles(Block):
+    """A row of headline numbers, label over value: when the answer is a
+    number, the number is the chart. `[(label, value)]`, spread evenly over
+    `columns` slots so rows of tiles line up."""
+    tiles: list
+    columns: int = 4
+    height: float = 58
+
+    def draw(self, d, top):
+        w = (WIDTH - PAD * 2) / self.columns
+        for i, (label, value) in enumerate(self.tiles):
+            x = px(PAD + i * w)
+            d.text((x, top + px(8)), label, font=font(11), fill=MUTED)
+            d.text((x, top + px(24)), value, font=font(22, True), fill=INK)
+
+
+def tile_rows(tiles: list, columns: int = 4, height: float = 52) -> list:
+    """`tiles` wrapped into StatTiles rows of `columns`."""
+    return [StatTiles(tiles[i:i + columns], columns, height)
+            for i in range(0, len(tiles), columns)]
+
+
+@dataclass
+class TimeRow(Block):
+    """A total split into coloured parts on one bar whose LENGTH is the total
+    against `scale`: how much, and how it divides. Then `total_text` and up to
+    two small trailing columns. `parts` is `[(amount, colour)]`; an empty or
+    all-zero `parts` draws the bare track and a dash."""
+    label: str
+    parts: list
+    scale: float
+    total_text: str = "—"
+    extra: tuple = ()          # up to two right-hand values, rightmost last
+    bar: bool = True           # False: no track and no total, just the columns
+    height: float = 28
+
+    TOTAL_W, EXTRA_W = 48, 40
+
+    def draw(self, d, top):
+        cy = top + px(self.height) // 2
+        d.text((px(PAD), cy), self.label, font=font(15), fill=INK, anchor="lm")
+        right = px(WIDTH - PAD)
+        for j, value in enumerate(reversed(self.extra)):
+            d.text((right, cy), value, font=font(13), fill=MUTED if j == 0 else INK_2, anchor="rm")
+            right -= px(self.EXTRA_W)
+        if not self.bar:
+            return
+        x0 = px(PAD + LABEL_W)
+        x1 = px(WIDTH - PAD - self.TOTAL_W - self.EXTRA_W * 2 - 8)
+        h = px(14)
+        d.rounded_rectangle([x0, cy - h // 2, x1, cy + h // 2], radius=px(3), fill=TRACK)
+        parts = [(n, c) for n, c in self.parts if n]
+        x = x0
+        for i, (n, colour) in enumerate(parts):
+            w = (x1 - x0) * n / self.scale if self.scale else 0
+            right = x + w - (px(1.5) if i < len(parts) - 1 else 0)
+            d.rounded_rectangle([x, cy - h // 2, max(right, x + px(2)), cy + h // 2],
+                                radius=px(3), fill=colour)
+            x += w
+        right = px(WIDTH - PAD - self.EXTRA_W * 2)
+        d.text((right, cy), self.total_text, font=font(15, True),
+               fill=INK if parts else MUTED, anchor="rm")

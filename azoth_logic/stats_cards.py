@@ -357,7 +357,7 @@ def breakdown_card(rows: list, by: str, population: str = "") -> sc.Card:
         card.add(sc.Rule())
         card.add(sc.ActStripRow("All runs", totals, sum(g["cleared"] for g in groups),
                                 strong=True))
-    card.add(sc.ActLegend())
+    card.add(sc.act_legend(a for g in groups for a, n in g["acts"].items() if n))
     card.add(sc.Spacer(6))
 
     if by == "hero":
@@ -388,3 +388,150 @@ def breakdown_card(rows: list, by: str, population: str = "") -> sc.Card:
 def breakdown_footer(rows: list, by: str) -> str:
     runs = sum(g["runs"] for g in breakdown_groups(rows, by))
     return f"version >= {CUTOFF_VERSION} · {runs} solo runs · grouped by {by}"
+
+
+# ---------------------------------------------------------------------------
+# /stats players
+# ---------------------------------------------------------------------------
+# The engagement side (2026-09-28): who plays, and how each player spends their
+# time with the game -- runs, custom runs, the Codex, the art tools -- from
+# player_summary_view. It replaced /stats active_players and /stats engagement.
+#
+# Run time is games.elapsed_sec (wall-clock with the run open, idle included),
+# recorded by every build, so every player has it all the way back. Custom
+# runs, the Codex and the art tools exist only in the tracker's active time
+# (engagement_spans), from the first build carrying EngagementTracker. Idle
+# counts on one side and not the other, so the tools' share reads slightly
+# low; the footer says so.
+
+# Where time goes, as (label, view column, colour). The dataviz palette's
+# first four slots, which pass the colour-blindness checks as neighbours on
+# the dark card, in that validated order.
+TIME_SURFACES = [
+    ("Runs", "run_sec", "#3987e5"),
+    ("Custom runs", "custom_run_sec", "#d95926"),
+    ("Codex", "codex_sec", "#199e70"),
+    ("Art tools", "art_sec", "#c98500"),
+]
+
+# Beyond this the card gets tall enough to scroll past on a phone; the rest
+# are counted in one line.
+MAX_ROSTER = 15
+
+
+def duration(seconds) -> str:
+    """`45s`, `12m`, `1.5h`."""
+    seconds = int(seconds or 0)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{round(seconds / 60)}m"
+    return f"{seconds / 3600:.1f}".rstrip("0").rstrip(".") + "h"
+
+
+def _tracked(row: dict) -> int:
+    """All the time a row has, runs included."""
+    return sum(int(row.get(col) or 0) for _, col, _ in TIME_SURFACES)
+
+
+def _on_tracker(row: dict) -> bool:
+    """Has this player run a build carrying EngagementTracker? The view's
+    tracker columns are NULL until they have."""
+    return any(row.get(col) is not None for col in ("custom_run_sec", "codex_sec", "art_sec"))
+
+
+def _plural(noun: str) -> str:
+    return noun + ("es" if noun.endswith(("s", "o")) else "s")
+
+
+def action_label(key: str) -> str:
+    """A Codex action key (`verb:type`) as a tile label. Creations and edits
+    keep their type ("New cards", "Deck edits"); everything else is one tile
+    per verb, since "Exports" says enough."""
+    verb, _, what = str(key).partition(":")
+    what = what or "content"
+    if verb == "created":
+        return f"New {_plural(what)}"
+    if verb == "edited":
+        return f"{what.capitalize()} edits"
+    return {"cloned": "Clones", "drafted": "Shipped edits", "exported": "Exports",
+            "design_saved": "Designs saved", "look_saved": "Deck looks"}.get(verb, verb)
+
+
+def codex_tiles(rows: list) -> list:
+    """`[(label, count)]` for every kind of thing made, most first. Only kinds
+    that happened: a tile reading 0 is the empty legend entry again."""
+    totals: dict = {}
+    for row in rows:
+        for key, n in (row.get("actions") or {}).items():
+            label = action_label(key)
+            totals[label] = totals.get(label, 0) + int(n or 0)
+    return sorted(((k, v) for k, v in totals.items() if v), key=lambda kv: (-kv[1], kv[0]))
+
+
+def players_card(rows: list, population: str = "") -> sc.Card:
+    rows = [r for r in rows if int(r.get("runs") or 0) or _tracked(r)]
+    play = sum(int(r.get("run_sec") or 0) + int(r.get("custom_run_sec") or 0) for r in rows)
+    tools = sum(int(r.get("codex_sec") or 0) + int(r.get("art_sec") or 0) for r in rows)
+    card = sc.Card("Players", " · ".join(filter(None, [population, f"version ≥ {CUTOFF_VERSION}"])))
+
+    # Only numbers that exist (the house rule): no Codex tile before anyone
+    # has Codex time.
+    tiles = [("Players", str(len(rows))), ("Runs", str(sum(int(r.get("runs") or 0) for r in rows)))]
+    if play:
+        tiles.append(("Time in runs", duration(play)))
+    if tools:
+        tiles.append(("Time in the Codex", duration(tools)))
+    card.add(sc.StatTiles(tiles))
+    card.add(sc.Spacer(6))
+
+    # Most active time first; players with no tracked time after them, by runs.
+    ordered = sorted(rows, key=lambda r: (-_tracked(r), -int(r.get("runs") or 0),
+                                          str(r.get("player"))))
+    shown, rest = ordered[:MAX_ROSTER], ordered[MAX_ROSTER:]
+    scale = max((_tracked(r) for r in rows), default=0)
+    right = sc.WIDTH - sc.PAD
+    # Before anyone has run a tracked build there is no time to draw: no bars,
+    # no time column, and a heading that promises only what is there.
+    timed = scale > 0
+    card.add(sc.SectionHeader("Where their time goes" if timed else "Who is playing"))
+    heads = [("Runs", right - sc.TimeRow.EXTRA_W, "rm"), ("Ritual", right, "rm")]
+    if timed:
+        heads.insert(0, ("Time", right - sc.TimeRow.EXTRA_W * 2, "rm"))
+    card.add(sc.ColumnHeads(heads))
+    for r in shown:
+        tracked = _tracked(r)
+        ritual = r.get("max_ritual")
+        card.add(sc.TimeRow(
+            str(r.get("player") or "—"),
+            [(int(r.get(col) or 0), colour) for _, col, colour in TIME_SURFACES],
+            scale,
+            total_text=duration(tracked) if tracked else "—",
+            extra=(str(int(r.get("runs") or 0)), f"R{ritual}" if ritual is not None else "—"),
+            bar=timed,
+        ))
+    if rest:
+        card.add(sc.Note(f"+ {len(rest)} more player{'' if len(rest) == 1 else 's'} "
+                         "with less time"))
+    # Only the surfaces someone used (the house legend rule), and no legend at
+    # all before anyone has tracked time: there is nothing for it to key.
+    used = [(label, colour) for label, col, colour in TIME_SURFACES
+            if any(int(r.get(col) or 0) for r in rows)]
+    # One colour needs no key: the heading already says what it is.
+    if len(used) > 1:
+        card.add(sc.Legend(used))
+
+    made = codex_tiles(rows)
+    if made:
+        card.add(sc.Spacer(6))
+        card.add(sc.SectionHeader("Made in the Codex"))
+        card.add(*sc.tile_rows([(label, str(n)) for label, n in made]))
+    return card
+
+
+def players_footer(rows: list) -> str:
+    listed = [r for r in rows if int(r.get("runs") or 0) or _tracked(r)]
+    on_tracker = sum(1 for r in listed if _on_tracker(r))
+    return (f"version >= {CUTOFF_VERSION} · {len(listed)} player{'' if len(listed) == 1 else 's'}"
+            f" · run time includes idle; Codex time is active, from tracked builds"
+            f" ({on_tracker} of {len(listed)} players so far)")

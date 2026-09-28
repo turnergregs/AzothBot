@@ -20,10 +20,6 @@ from azoth_logic import stats_cards
 # trim in stats_format.table would throw away the combo -- the column anyone
 # actually came for. Anything trimmed beyond this is named in the footer.
 COLUMNS = {
-    # Ritual sits beside Games, not at the end: the width trim takes columns off
-    # the right, and "which ritual are they on" is why it was added.
-    "active_players": ["player", "game_count", "max_ritual", "hours_played",
-                       "highest_combo"],
     "leaderboard": ["player", "combo", "hero", "turns", "act", "level"],
     # Was ABSENT until 2026-09-03, which is exactly the failure the note above
     # describes. draft_rates_view returns item_type, item_id, item_name,
@@ -43,14 +39,13 @@ COLUMNS = {
 # default value. test_command_registration checks that every /stats report is
 # listed here, so a new one cannot be missed.
 ALL_REPORTS = [
-    ("active players", "stats_active_players", {"limit": 25}),
+    ("players", "stats_players", {"players": "new"}),
     ("leaderboard", "stats_leaderboard", {"limit": 10, "player": None, "hero": None,
                                           "version": None}),
     ("player", "stats_player", {}),     # player filled in at run time
     ("breakdown by:hero", "stats_breakdown", {"by": "hero", "players": "new"}),
     ("breakdown by:ritual", "stats_breakdown", {"by": "ritual", "players": "new"}),
     ("breakdown by:version", "stats_breakdown", {"by": "version", "players": "new"}),
-    ("engagement", "stats_engagement", {"include_devs": False}),
     ("bosses", "stats_bosses", {"players": "new"}),
     ("scoreboard", "stats_scoreboard", {}),
     ("draft composition", "stats_draft_composition", {}),
@@ -58,13 +53,6 @@ ALL_REPORTS = [
     ("draft embellishments", "stats_draft_embellishments", {}),
     ("draft rates", "stats_draft_rates", {"limit": 15, "order": "most", "item_type": None}),
 ]
-
-
-# Left out of /stats engagement unless asked for. Recorded like anyone else --
-# their sessions are how a new build's tracking gets checked first -- but the
-# two people who build content for a living would otherwise define "a player
-# who prefers the tools". Matched on players.name, so a rename needs this too.
-DEVELOPERS = {"Turner", "Caleb Gannon"}
 
 
 class _Deferred:
@@ -137,32 +125,39 @@ def add_stats_commands(cls):
     async def stats_cmd(self, interaction: Interaction):
         pass
 
-    # --- Active Players ---
-    @stats_cmd.subcommand(name="active_players", description="List active players and their play statistics")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch active players.")
-    async def stats_active_players(
+    # --- Players ---
+    # The engagement side, drawn as an image (2026-09-28): who plays and how
+    # each player splits their time between runs and the Codex, from
+    # player_summary_view. It replaced /stats active_players (a text table of
+    # games and hours) and /stats engagement, whose developer list by name is
+    # now the `developer` cohort. See stats_cards § /stats players.
+    @stats_cmd.subcommand(name="players", description="Who is playing, and where their time goes")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch players.")
+    async def stats_players(
         self,
         interaction: Interaction,
-        limit: int = SlashOption(description="How many players to return", default=25)
+        players: str = SlashOption(
+            description="Whose rows to show (default: new playtesters)",
+            required=False,
+            default="new",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
     ):
-        records = fetch_all("player_activity_view", sort=["-game_count"], limit=limit)
+        try:
+            rows = fetch_all("player_summary_view")
+        except SupabaseError:
+            return ("❌ `player_summary_view` is not migrated — run "
+                    "`db/migrations/2026-09-28_player_summary_view.sql`.")
 
-        if not records:
-            return "❌ No active players found."
+        wanted = stats_cards.COHORTS[players]
+        rows = [r for r in rows if r.get("cohort") in wanted]
+        if not rows:
+            return "❌ No players recorded yet."
 
-        # The row count, not "by games played": the order is plain from the
-        # Games column, and how many people are playing is not. With a limit
-        # it is the players SHOWN, which is what the reader is looking at.
-        #
-        # `max_ritual` arrives with 2026-09-28_ritual_stats.sql. Before that the
-        # column would render as a row of dashes, so it is left out and the
-        # footer says why rather than implying nobody has played a ritual.
-        columns = COLUMNS["active_players"]
-        note = f"{len(records)} player{'' if len(records) == 1 else 's'}"
-        if "max_ritual" not in records[0]:
-            columns = [c for c in columns if c != "max_ritual"]
-            note += " · ritual: run 2026-09-28_ritual_stats.sql"
-        await _send_table(interaction, "Active players", records, columns, note=note)
+        await _send_card(interaction,
+                         stats_cards.players_card(rows, stats_cards.COHORT_LABELS[players]),
+                         "players.png", footer=stats_cards.players_footer(rows),
+                         colour=0x3498DB)
 
     # --- Leaderboard ---
     @stats_cmd.subcommand(name="leaderboard", description="Show top combos")
@@ -372,51 +367,6 @@ def add_stats_commands(cls):
         if failed:
             summary += f" {len(failed)} replied with text instead of an embed: " + ", ".join(failed)
         await interaction.followup.send(summary)
-
-    # --- Engagement ---
-    # 2026-09-28. Time in runs against time in the Codex tools, per player,
-    # from engagement_spans. See stats_format § Engagement.
-    @stats_cmd.subcommand(name="engagement", description="Time in the game vs time in the Codex tools")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch engagement.")
-    async def stats_engagement(
-        self,
-        interaction: Interaction,
-        include_devs: bool = SlashOption(description="Include Turner and Caleb",
-                                         required=False, default=False),
-    ):
-        try:
-            rows = fetch_all("player_engagement_view")
-            actions = fetch_all("player_engagement_actions_view")
-        except SupabaseError:
-            return ("❌ `player_engagement_view` is not migrated — run "
-                    "`db/migrations/2026-09-28_engagement_spans.sql`.")
-
-        excluded = 0
-        if not include_devs:
-            excluded = sum(1 for r in rows if r.get("player") in DEVELOPERS)
-            rows = [r for r in rows if r.get("player") not in DEVELOPERS]
-            actions = [a for a in actions if a.get("player") not in DEVELOPERS]
-        if not rows:
-            return ("❌ No engagement recorded yet. It starts with the first build "
-                    "carrying EngagementTracker.")
-        counted, too_little = sf.engagement_split(rows)
-
-        embed = nextcord.Embed(title="Engagement", colour=0x8E44AD)
-        embed.add_field(name="Players by share of time in the tools", inline=False,
-                        value=sf.engagement_chart(counted))
-        embed.add_field(name="Time per player (active only)", inline=False,
-                        value=sf.engagement_table(counted))
-        embed.add_field(name="Made in the Codex", inline=False,
-                        value=sf.engagement_actions_chart(actions))
-
-        floor = sf.duration(sf.MIN_ENGAGEMENT_SEC)
-        note = f"{len(counted)} player{'' if len(counted) == 1 else 's'} with {floor}+"
-        if too_little:
-            note += f" · {too_little} with less not shown"
-        if excluded:
-            note += " · developers excluded"
-        embed.set_footer(text=sf.footer([], note=note))
-        await interaction.followup.send(embed=embed)
 
     # --- Bosses ---
     # 2026-09-28, the first report drawn as an image (stats_charts). Each boss's
@@ -697,12 +647,11 @@ def add_stats_commands(cls):
 
     # Expose on class
     cls.stats_cmd = stats_cmd
-    cls.stats_active_players = stats_active_players
+    cls.stats_players = stats_players
     cls.stats_leaderboard = stats_leaderboard
     cls.stats_player = stats_player
     cls.stats_breakdown = stats_breakdown
     cls.stats_all = stats_all
-    cls.stats_engagement = stats_engagement
     cls.stats_bosses = stats_bosses
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would

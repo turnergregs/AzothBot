@@ -236,3 +236,11 @@ def test_hero_and_version_are_one_breakdown_command():
 def test_habits_was_retired():
     """/stats habits was folded into the image /stats breakdown (2026-09-28)."""
     assert "habits" not in _registered_command_names()
+
+
+def test_players_replaced_active_players_and_engagement():
+    """/stats players (2026-09-28) is the one engagement roster; the text
+    /stats active_players and /stats engagement retired with it."""
+    registered = _registered_command_names()
+    assert "players" in registered
+    assert not {"active_players", "engagement"} & registered

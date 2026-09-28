@@ -373,3 +373,122 @@ def test_a_single_group_has_no_all_runs_row():
     """It would repeat the one row above it."""
     strips = _strip(cards.breakdown_card([_run("version", "0.9.11", 2, 3)], "version"))
     assert [s.label for s in strips] == ["0.9.11"]
+
+
+# --- The legend rule ------------------------------------------------------------
+
+def _legends(card):
+    return [b for b in card.blocks if isinstance(b, sc.Legend)]
+
+
+def test_an_act_legend_lists_only_the_acts_drawn():
+    """Nobody reached act 5, so act 5 is not a key to anything (Turner)."""
+    card = cards.breakdown_card(_select(HERO_ROWS), "hero")
+    assert [label for label, _ in _legends(card)[0].items] == ["Act 1", "Act 2", "Act 3", "Act 4"]
+
+
+# --- /stats players --------------------------------------------------------------
+
+def _player(name, runs=0, ritual=0, cohort="new", actions=None, **secs):
+    row = {"player": name, "cohort": cohort, "runs": runs, "max_ritual": ritual,
+           "run_sec": None, "custom_run_sec": None, "codex_sec": None, "art_sec": None,
+           "actions": actions or {}}
+    row.update(secs)
+    return row
+
+
+PLAYERS = [
+    _player("Max", 12, run_sec=27700),
+    _player("Ratpunzel", 6, run_sec=6800, custom_run_sec=1400, codex_sec=2200,
+            actions={"created:card": 4, "edited:card": 2, "exported:deck": 1}),
+    _player("Jay B", 1),                         # not on a tracked build yet
+]
+
+
+def _rows(card, kind):
+    return [b for b in card.blocks if isinstance(b, kind)]
+
+
+def test_the_most_active_player_leads_and_untracked_players_follow():
+    rows = _rows(cards.players_card(PLAYERS), sc.TimeRow)
+    assert [r.label for r in rows] == ["Max", "Ratpunzel", "Jay B"]
+
+
+def test_an_untracked_player_is_listed_with_a_dash():
+    """Their runs are history; their time starts with a tracked build."""
+    jay = _rows(cards.players_card(PLAYERS), sc.TimeRow)[-1]
+    assert jay.total_text == "—" and jay.extra == ("1", "R0")
+
+
+def test_time_bars_share_one_scale():
+    """Length is total active time, so it says how much as well as how split."""
+    rows = _rows(cards.players_card(PLAYERS), sc.TimeRow)
+    assert {r.scale for r in rows} == {27700}
+
+
+def test_the_time_legend_lists_only_surfaces_someone_used():
+    labels = [label for label, _ in _legends(cards.players_card(PLAYERS))[0].items]
+    assert labels == ["Runs", "Custom runs", "Codex"]
+
+
+def test_no_tracked_time_means_no_legend_and_no_time_tiles():
+    card = cards.players_card([_player("Jay B", 1), _player("zz", 1)])
+    assert not _legends(card)
+    tiles = [label for t in _rows(card, sc.StatTiles) for label, _ in t.tiles]
+    assert tiles == ["Players", "Runs"]
+
+
+def test_made_in_the_codex_is_hidden_until_something_is_made():
+    card = cards.players_card([_player("Max", 12, run_sec=100)])
+    assert "Made in the Codex" not in [b.label for b in card.blocks if isinstance(b, sc.SectionHeader)]
+
+
+def test_made_in_the_codex_shows_only_the_kinds_that_happened_most_first():
+    assert cards.codex_tiles(PLAYERS) == [("New cards", 4), ("Card edits", 2), ("Exports", 1)]
+
+
+@pytest.mark.parametrize("key, label", [
+    ("created:hero", "New heroes"), ("edited:deck", "Deck edits"),
+    ("design_saved:deck_tile", "Designs saved"), ("drafted:card", "Shipped edits"),
+])
+def test_action_labels(key, label):
+    assert cards.action_label(key) == label
+
+
+def test_a_long_roster_is_capped_and_says_how_many_more():
+    many = [_player(f"P{i}", 1, run_sec=100 + i) for i in range(cards.MAX_ROSTER + 3)]
+    card = cards.players_card(many)
+    assert len(_rows(card, sc.TimeRow)) == cards.MAX_ROSTER
+    assert "+ 3 more players with less time" in [b.text for b in card.blocks if isinstance(b, sc.Note)]
+
+
+def test_the_footer_says_how_many_players_are_on_a_tracked_build():
+    """Ratpunzel has Codex time; Max has run time only, which every build
+    records; Jay B has neither."""
+    assert "(1 of 3 players so far)" in cards.players_footer(PLAYERS)
+
+
+def test_a_single_kind_of_time_needs_no_legend():
+    assert not _legends(cards.players_card([_player("Max", 12, run_sec=27700)]))
+
+
+def test_run_time_needs_no_tracker():
+    """Max's run time is games.elapsed_sec: a bar, no Codex tile."""
+    card = cards.players_card([_player("Max", 12, run_sec=27700)])
+    assert _rows(card, sc.TimeRow)[0].total_text == "7.7h"
+    tiles = [label for t in _rows(card, sc.StatTiles) for label, _ in t.tiles]
+    assert "Time in runs" in tiles and "Time in the Codex" not in tiles
+
+
+def test_the_players_card_renders():
+    img = Image.open(io.BytesIO(cards.players_card(PLAYERS, "New playtesters").png()))
+    assert img.width == sc.WIDTH * sc.SCALE
+
+
+def test_before_any_tracked_time_the_roster_has_no_bars():
+    """Ten empty tracks and a column of dashes is the empty legend again."""
+    card = cards.players_card([_player("Jay B", 1), _player("zz", 1)])
+    assert not any(r.bar for r in _rows(card, sc.TimeRow))
+    heads = [h[0] for b in _rows(card, sc.ColumnHeads) for h in b.heads]
+    assert "Active time" not in heads
+    assert "Who is playing" in [b.label for b in _rows(card, sc.SectionHeader)]
