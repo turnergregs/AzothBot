@@ -234,3 +234,142 @@ def test_a_view_without_cohorts_counts_everyone_and_says_so():
 
 def test_the_card_names_whose_fights_it_shows():
     assert cards.bosses_card(BOSSES, "New playtesters").subtitle.startswith("New playtesters")
+
+
+# --- /stats breakdown ----------------------------------------------------------
+
+def _run(dim, grp, act, runs, cleared=0, cohort="new", **turns):
+    row = {"dimension": dim, "grp": grp, "cohort": cohort, "furthest_act": act,
+           "runs": runs, "cleared": cleared}
+    row.update({c: 0 for c in cards.BREAKDOWN_COUNTS if c not in ("runs", "cleared")})
+    row.update(turns)
+    return row
+
+
+HERO_ROWS = [
+    _run("hero", "Lumis", 1, 4), _run("hero", "Lumis", 2, 6), _run("hero", "Lumis", 3, 6),
+    _run("hero", "Lumis", 4, 1, cleared=1, regular_turns=100, regular_activations=110,
+         boss_turns=30, boss_activations=57),
+    _run("hero", "Eith", 4, 3, cleared=3), _run("hero", "Eith", 2, 3),
+    _run("hero", "Ignis", 3, 2, cohort="developer"),
+]
+
+
+def _select(rows, key="new"):
+    merged, _ = cards.select_cohort(rows, key, ("dimension", "grp", "furthest_act"),
+                                    cards.BREAKDOWN_COUNTS)
+    return merged
+
+
+def test_groups_sum_their_acts_into_one_bar():
+    groups = {g["grp"]: g for g in cards.breakdown_groups(_select(HERO_ROWS), "hero")}
+    assert groups["Lumis"]["acts"] == {1: 4, 2: 6, 3: 6, 4: 1}
+    assert (groups["Lumis"]["runs"], groups["Lumis"]["cleared"]) == (17, 1)
+
+
+def test_a_group_nobody_in_the_cohort_played_is_dropped():
+    """Unlike an unfought boss: a hero no new player picked is not an answer."""
+    grps = [g["grp"] for g in cards.breakdown_groups(_select(HERO_ROWS), "hero")]
+    assert "Ignis" not in grps
+    grps = [g["grp"] for g in cards.breakdown_groups(_select(HERO_ROWS, "all"), "hero")]
+    assert "Ignis" in grps
+
+
+def test_heroes_come_most_played_first():
+    assert [g["grp"] for g in cards.breakdown_groups(_select(HERO_ROWS), "hero")] == ["Lumis", "Eith"]
+
+
+def test_rituals_are_in_level_order():
+    rows = [_run("ritual", "10", 1, 1), _run("ritual", "2", 1, 1), _run("ritual", "0", 1, 1)]
+    assert [g["grp"] for g in cards.breakdown_groups(rows, "ritual")] == ["0", "2", "10"]
+
+
+def test_versions_are_in_release_order_not_text_order():
+    """As text, 0.9.9 sorts after 0.9.10; as a release it comes before."""
+    rows = [_run("version", "0.9.10", 1, 1), _run("version", "0.9.9", 1, 1),
+            _run("version", "0.9.11", 1, 1)]
+    assert [g["grp"] for g in cards.breakdown_groups(rows, "version")] == ["0.9.9", "0.9.10", "0.9.11"]
+
+
+def test_a_group_clearly_behind_the_rest_is_flagged():
+    """Lumis 1/17 against Eith's 3/6."""
+    groups = cards.breakdown_groups(_select(HERO_ROWS), "hero")
+    assert cards.group_flag(groups[0], groups) == "below"
+
+
+def test_a_group_is_not_judged_against_a_tiny_rest():
+    """26 runs at ritual 0 against two at ritual 1 is not a comparison."""
+    rows = [_run("ritual", "0", 2, 24), _run("ritual", "0", 4, 2, cleared=2),
+            _run("ritual", "1", 2, 2)]
+    groups = cards.breakdown_groups(rows, "ritual")
+    assert cards.group_flag(groups[0], groups) is None
+
+
+def _strip(card):
+    return [b for b in card.blocks if isinstance(b, sc.ActStripRow)]
+
+
+def _metrics(card):
+    return [b for b in card.blocks if isinstance(b, sc.MetricRow)]
+
+
+def test_the_hero_card_shows_activations_not_skips_or_links():
+    """Skips and links work the same on every hero (Turner's review)."""
+    card = cards.breakdown_card(_select(HERO_ROWS), "hero")
+    heads = [h[0] for b in card.blocks if isinstance(b, sc.ColumnHeads) for h in b.heads]
+    assert "Per regular turn" in heads and "Per boss fight" in heads
+    assert "Skips" not in heads and "Links" not in heads
+
+
+def test_activations_are_divided_from_totals():
+    lumis = _metrics(cards.breakdown_card(_select(HERO_ROWS), "hero"))[0]
+    assert lumis.values[0][0] == pytest.approx(1.1)
+    assert lumis.values[1][0] == pytest.approx(1.9)
+
+
+def test_ritual_and_version_show_all_three_per_turn_averages_links_against_the_budget():
+    rows = [_run("ritual", "0", 2, 6, regular_turns=40, regular_skips=16,
+                 regular_activations=44, regular_links=140)]
+    row = _metrics(cards.breakdown_card(rows, "ritual"))[0]
+    assert [round(v, 1) for v, _ in row.values] == [0.4, 1.1, 3.5]
+    assert row.values[2][1] == cards.LINKS_PER_TURN
+
+
+def test_a_group_with_no_regular_turns_shows_a_dash_not_zero():
+    row = _metrics(cards.breakdown_card([_run("ritual", "1", 1, 1)], "ritual"))[0]
+    assert row.values[0][0] is None
+
+
+def test_rituals_are_labelled_and_versions_are_not_repeated_in_the_subtitle():
+    assert _strip(cards.breakdown_card([_run("ritual", "3", 1, 1)], "ritual"))[0].label == "Ritual 3"
+    assert "version ≥" not in cards.breakdown_card([_run("version", "0.9.11", 1, 1)], "version").subtitle
+    assert "version ≥" in cards.breakdown_card([_run("hero", "Lumis", 1, 1)], "hero").subtitle
+
+
+def test_few_runs_are_dimmed():
+    strips = {s.label: s for s in _strip(cards.breakdown_card(_select(HERO_ROWS), "hero"))}
+    assert not strips["Lumis"].faded and strips["Eith"].faded is False
+    assert _strip(cards.breakdown_card([_run("hero", "Essra", 4, 1)], "hero"))[0].faded
+
+
+@pytest.mark.parametrize("by", ["hero", "ritual", "version"])
+def test_every_breakdown_renders(by):
+    rows = [_run(by, "0.9.11" if by == "version" else "0" if by == "ritual" else "Lumis", a, 3,
+                 regular_turns=10, regular_links=30) for a in (1, 2, 3, 4, 5)]
+    img = Image.open(io.BytesIO(cards.breakdown_card(rows, by, "New playtesters").png()))
+    assert img.width == sc.WIDTH * sc.SCALE
+
+
+def test_an_all_runs_row_gives_the_rates_a_baseline():
+    """A ▼ on Lumis means little without the rate it is below."""
+    strips = _strip(cards.breakdown_card(_select(HERO_ROWS), "hero"))
+    total = strips[-1]
+    assert total.label == "All runs" and total.strong
+    assert (sum(total.acts.values()), total.cleared) == (23, 4)
+    assert total.acts[4] == 4 and total.marker == ""
+
+
+def test_a_single_group_has_no_all_runs_row():
+    """It would repeat the one row above it."""
+    strips = _strip(cards.breakdown_card([_run("version", "0.9.11", 2, 3)], "version"))
+    assert [s.label for s in strips] == ["0.9.11"]

@@ -687,11 +687,11 @@ def footer(rows: list, count_column: str = "game_count", note: str = None,
     Never omitted. The trustworthy dataset is a couple of runs deep, so a mean
     here is one or two games wearing a decimal point. See docs/ANALYTICS.md.
 
-    `cutoff` is NOT always true. Seven of the eight views filter on
-    `analytics_cutoff()`, but `version_info_view` deliberately does not -- its
-    whole job is comparing versions, and filtering to `>= 0.8.2` would leave it
-    with one row. Claiming a cutoff on a table visibly showing 0.7.0 rows is
-    worse than claiming nothing.
+    `cutoff` is NOT always true: turn_scoreboard_view filters on
+    `bonus_key is not null` rather than `analytics_cutoff()`, and claiming a
+    cutoff a view is not enforcing is worse than claiming none. (The version
+    breakdown used to be the other exception; since 2026-09-28 it lists only
+    versions at the cutoff or above.)
     """
     games = 0
     for row in rows:
@@ -1363,15 +1363,6 @@ def act_chart(distribution: dict) -> str:
     return block(histogram(_ladder(counts, lambda act: f"act {act}")))
 
 
-def ritual_chart(counts: dict) -> str:
-    """Games per ritual level, every level from 0 to the highest played."""
-    counts = {int(r): int(n or 0) for r, n in counts.items() if r is not None}
-    if not counts:
-        return "*no runs*"
-    counts.setdefault(0, 0)
-    return block(histogram(_ladder(counts, ritual_label)))
-
-
 def grouped_chart(cells: dict, step_label, fill: bool = False) -> str:
     """One bar per (group, step), labelled `<group> <step>`, groups stacked.
 
@@ -1421,26 +1412,6 @@ def hero_ritual_chart(rows: list, hero_column: str = "hero") -> str:
     return grouped_chart(_cells(rows, lambda r: r.get(hero_column) or "—",
                                 lambda r: int(r.get("ritual") or 0)),
                          ritual_label)
-
-
-def act_label(act) -> str:
-    return f"A{act}"
-
-
-def furthest_act_chart(rows: list, by: str) -> str:
-    """Runs by furthest act, per hero (`Lumis A3`) or per ritual (`R0 A3`).
-
-    Rows are run_act_view's `{hero_name, ritual, furthest_act, game_count}`,
-    summed over whichever column is not `by`. Every act from 1 to each group's
-    deepest gets a row, so the act a group stalls at is visible as the bar
-    where it drops off.
-    """
-    if by == "ritual":
-        group = lambda r: ritual_label(int(r.get("ritual") or 0))
-    else:
-        group = lambda r: r.get("hero_name") or "—"
-    return grouped_chart(_cells(rows, group, lambda r: int(r.get("furthest_act") or 1)),
-                         act_label, fill=True)
 
 
 def _runs_by(runs: list, key) -> dict:
@@ -1502,81 +1473,6 @@ def player_act_chart(runs: list) -> str:
     if runs is None:
         return "*unavailable — `player_run_view` is not migrated*"
     return act_chart(_runs_by(runs, lambda r: int(r.get("furthest_act") or 1)))
-
-
-# ---------------------------------------------------------------------------
-# Habits: how players play, as a spread across players
-# ---------------------------------------------------------------------------
-# /stats habits, 2026-09-28, from Caleb's feedback: "30% of players have never
-# clicked the skip button, 20% are skipping all the time". An average of 0.46
-# skips per turn is the same number for everyone skipping a little and for half
-# never skipping while half always do, so these charts count PLAYERS per bucket
-# of their own rate instead.
-
-# Fewer turns than this and a player's rate is one or two coin flips: a single
-# short game reads as "never skips" or "skips every turn" by chance. They are
-# left out of the chart and counted in the footer. Boss turns are fewer per run
-# (one per act reached), so their floor is lower.
-MIN_HABIT_TURNS = {"regular": 5, "boss": 2}
-
-# Bucket upper bounds, per turn. `never` is exactly zero and is its own bucket
-# because it is the headline ("never clicked the skip button"); everything
-# above the last bound is `2+`.
-HABIT_BUCKETS = [("never", 0), ("<0.5", 0.5), ("0.5-1", 1), ("1-2", 2)]
-HABIT_TOP = "2+"
-
-
-def habit_bucket(rate: float) -> str:
-    """The bucket a per-turn rate falls in. Bounds are exclusive above, so a
-    player at exactly 1 skip per turn is `1-2`, not `0.5-1`."""
-    if rate <= 0:
-        return "never"
-    for label, bound in HABIT_BUCKETS[1:]:
-        if rate < bound:
-            return label
-    return HABIT_TOP
-
-
-def habit_players(rows: list, turn_type: str) -> dict:
-    """`{player: {turns, skips, hero_activations, ...}}`, summed over heroes.
-
-    player_turn_habits_view carries one row per (player, hero, turn type) and
-    every column is a count, so summing across heroes is exact. The RATE is
-    taken from the summed totals, never averaged across heroes (DB_SCHEMA
-    caveat 15: never average a ratio).
-    """
-    players = {}
-    for row in rows or []:
-        if row.get("turn_type") != turn_type:
-            continue
-        totals = players.setdefault(row.get("player") or "—", {})
-        for column in ("turns", "skips", "skip_turns",
-                       "hero_activations", "activation_turns"):
-            totals[column] = totals.get(column, 0) + int(row.get(column) or 0)
-    return players
-
-
-def habit_split(players: dict, turn_type: str):
-    """`(counted, too_few)`: players with enough turns for a rate, and how many
-    were left out for having fewer. See MIN_HABIT_TURNS."""
-    floor = MIN_HABIT_TURNS.get(turn_type, 1)
-    counted = {name: p for name, p in players.items() if p.get("turns", 0) >= floor}
-    return counted, len(players) - len(counted)
-
-
-def habit_chart(players: dict, column: str) -> str:
-    """Players per bucket of `column` per turn, with each bucket's share.
-
-    Every bucket gets a row, empty ones included: "nobody skips 2+ a turn" is
-    an answer, and a missing row cannot say it.
-    """
-    if not players:
-        return "*no players with enough turns yet*"
-    counts = {label: 0 for label, _ in HABIT_BUCKETS}
-    counts[HABIT_TOP] = 0
-    for p in players.values():
-        counts[habit_bucket(p.get(column, 0) / p["turns"])] += 1
-    return block(histogram(list(counts.items()), share=True))
 
 
 def link_label(links) -> str:

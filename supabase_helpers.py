@@ -64,6 +64,8 @@ SERVICE_ROLE_ONLY_VIEWS = frozenset({
 	"player_engagement_view", "player_engagement_actions_view",
 	# 2026-09-28_boss_fight_view.sql. Reads `turns`.
 	"boss_fight_view",
+	# 2026-09-28_breakdown_view.sql. Reads `turns` and `turn_nodes`.
+	"breakdown_view",
 })
 
 # The six taxonomy tables that used to live here -- `card_attributes`,

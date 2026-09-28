@@ -65,6 +65,16 @@ NEUTRAL = "#6e6d68"      # an ordinary bar in an EMPHASIS chart, where colour
 # either colour also carries ▼ or ▲ in text.
 BELOW = "#e66767"
 ABOVE = "#3987e5"
+# The game's act colours (GlobalVars.ACT_COLORS), acts 1-5, so a chart about
+# acts matches what players see in the game. Checked as adjacent categories on
+# SURFACE: every neighbouring pair clears the colour-blindness floor with room
+# to spare. Act 3's violet sits just under 3:1 contrast, which the surface gaps
+# between segments and the run count inside each segment cover.
+ACT_COLOURS = ["#599830", "#06a6f6", "#841def", "#ff0000", "#f2b514"]
+
+# The label column every row type shares, so rows of different blocks line up.
+LABEL_W = 84
+
 REFERENCE = "#e8e6dc"    # a reference line across bars: near-white, so it
                          # reads over both the accent and the track
 
@@ -156,7 +166,7 @@ class BarRow(Block):
     empty_text: str = "no data"
     height: float = 28
 
-    LABEL_W = 84
+    LABEL_W = LABEL_W
     VALUE_W = 44
     DELTA_W = 56
     COUNT_W = 54
@@ -241,3 +251,158 @@ class Card:
         buffer = io.BytesIO()
         self.render().save(buffer, format="PNG", optimize=True)
         return buffer.getvalue()
+
+
+def dim(colour: str, keep: float = 0.4) -> str:
+    """A colour pulled toward the surface: shown, but not asserted. For marks
+    whose hue carries meaning (an act colour) where FADED would erase it."""
+    c = [int(colour[i:i + 2], 16) for i in (1, 3, 5)]
+    base = [int(SURFACE[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(b + (a - b) * keep):02x}" for a, b in zip(c, base))
+
+
+def _ink_on(colour: str) -> str:
+    """Black or white, whichever reads on `colour`: the one exception to
+    text never wearing a data colour is text set INSIDE a coloured fill."""
+    r, g, b = (int(colour[i:i + 2], 16) for i in (1, 3, 5))
+    return "#000000" if 0.299 * r + 0.587 * g + 0.114 * b > 150 else "#ffffff"
+
+
+@dataclass
+class ColumnHeads(Block):
+    """Small muted headings over the columns below: `(text, x_points, anchor)`,
+    anchor "lm" for a heading over a left edge, "rm" over a right edge."""
+    heads: list
+    height: float = 18
+
+    def draw(self, d, top):
+        cy = top + px(self.height) // 2
+        for text, x, anchor in self.heads:
+            d.text((px(x), cy), text, font=font(11), fill=MUTED, anchor=anchor)
+
+
+@dataclass
+class ActLegend(Block):
+    """The act colours, named. A fallback: each segment already says how many
+    runs it holds, and its colour says which act."""
+    height: float = 22
+
+    def draw(self, d, top):
+        cy = top + px(self.height) // 2
+        x = px(PAD + LABEL_W)
+        for act, colour in enumerate(ACT_COLOURS, start=1):
+            d.rounded_rectangle([x, cy - px(5), x + px(10), cy + px(5)], radius=px(2), fill=colour)
+            x += px(14)
+            label = f"Act {act}"
+            d.text((x, cy), label, font=font(11), fill=MUTED, anchor="lm")
+            x += d.textlength(label, font=font(11)) + px(12)
+
+
+@dataclass
+class ActStripRow(Block):
+    """A group's runs as one bar split by the furthest act each reached, in the
+    act colours with each segment's run count inside it, then the share that
+    beat act 3 and the run count.
+
+    Segments touch with a thin surface gap, never a border. `faded` dims the
+    colours rather than greying them, so a low-sample row still says which
+    acts. `marker` / `marker_fill` flag the rate, as on BarRow.
+    """
+    label: str
+    acts: dict           # {furthest act: runs}
+    cleared: int
+    faded: bool = False
+    marker: str = ""
+    marker_fill: str | None = None
+    strong: bool = False
+    height: float = 30
+
+    VALUE_W = 50
+    COUNT_W = 40
+
+    def draw(self, d, top):
+        cy = top + px(self.height) // 2
+        x0 = px(PAD + LABEL_W)
+        x1 = px(WIDTH - PAD - self.VALUE_W - self.COUNT_W - 8)
+        h = px(18)
+        runs = sum(self.acts.values())
+        d.text((px(PAD), cy), self.label, font=font(15, self.strong),
+               fill=INK_2 if self.faded else INK, anchor="lm")
+
+        filled = [(act, n) for act, n in sorted(self.acts.items()) if n]
+        gap = px(1.5)
+        x = x0
+        for i, (act, n) in enumerate(filled):
+            width = (x1 - x0) * n / runs
+            right = x + width - (gap if i < len(filled) - 1 else 0)
+            colour = ACT_COLOURS[min(max(act, 1), len(ACT_COLOURS)) - 1]
+            if self.faded:
+                colour = dim(colour)
+            d.rounded_rectangle([x, cy - h // 2, max(right, x + px(2)), cy + h // 2],
+                                radius=px(3), fill=colour)
+            count = str(n)
+            if right - x >= d.textlength(count, font=font(10, True)) + px(8):
+                d.text(((x + right) / 2, cy), count, font=font(10, True),
+                       fill=_ink_on(colour), anchor="mm")
+            x += width
+
+        right = px(WIDTH - PAD)
+        d.text((right, cy), str(runs), font=font(13), fill=MUTED, anchor="rm")
+        right -= px(self.COUNT_W)
+        rate = f"{round(100 * self.cleared / runs)}%" if runs else "—"
+        d.text((right, cy), rate, font=font(15, True),
+               fill=INK_2 if self.faded else INK, anchor="rm")
+        if self.marker:
+            w = d.textlength(rate, font=font(15, True))
+            d.text((right - w - px(4), cy), self.marker, font=font(13),
+                   fill=self.marker_fill or INK_2, anchor="rm")
+
+
+@dataclass
+class MetricRow(Block):
+    """A group's values in equal columns, each a small bar and its number.
+
+    `values` is `[(value, scale_max)]`: each column scales to its own maximum,
+    so a caller passes a real ceiling where one exists (links: the node
+    budget) and the largest group's value where none does.
+    """
+    label: str
+    values: list
+    faded: bool = False
+    height: float = 26
+
+    def draw(self, d, top):
+        cy = top + px(self.height) // 2
+        d.text((px(PAD), cy), self.label, font=font(15),
+               fill=INK_2 if self.faded else INK, anchor="lm")
+        col_w = (WIDTH - PAD * 2 - LABEL_W) / len(self.values)
+        h = px(8)
+        for i, (value, scale) in enumerate(self.values):
+            cx0 = PAD + LABEL_W + i * col_w
+            bar_x0, bar_x1 = px(cx0), px(cx0 + col_w - 44)
+            d.rounded_rectangle([bar_x0, cy - h // 2, bar_x1, cy + h // 2], radius=h // 2, fill=TRACK)
+            if value is None:
+                d.text((px(cx0 + col_w - 6), cy), "—", font=font(14), fill=MUTED, anchor="rm")
+                continue
+            if value > 0 and scale:
+                x = bar_x0 + (bar_x1 - bar_x0) * min(value / scale, 1)
+                d.rounded_rectangle([bar_x0, cy - h // 2, max(x, bar_x0 + h), cy + h // 2],
+                                    radius=h // 2, fill=FADED if self.faded else NEUTRAL)
+            d.text((px(cx0 + col_w - 6), cy), f"{value:.1f}", font=font(14, True),
+                   fill=INK_2 if self.faded else INK, anchor="rm")
+
+
+def column_x(index: int, columns: int) -> float:
+    """The left edge, in points, of MetricRow column `index` of `columns`, for
+    a ColumnHeads heading over it."""
+    return PAD + LABEL_W + index * (WIDTH - PAD * 2 - LABEL_W) / columns
+
+
+@dataclass
+class Rule(Block):
+    """A hairline across the card, above a totals row."""
+    height: float = 8
+
+    def draw(self, d, top):
+        y = top + px(self.height) // 2
+        d.line([(px(PAD), y), (px(WIDTH - PAD), y)], fill=TRACK, width=px(0.5))

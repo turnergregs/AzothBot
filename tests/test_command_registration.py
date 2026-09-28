@@ -233,21 +233,6 @@ def test_hero_and_version_are_one_breakdown_command():
     assert not {"hero", "version"} & registered
 
 
-def test_the_habits_command_exists():
-    """/stats habits (2026-09-28): skips and hero activations as a spread
-    across players, from the first playtest week's feedback."""
-    assert "habits" in _registered_command_names()
-
-
-def test_stats_all_runs_every_report():
-    """/stats all exists to check every report after a change, so a report it
-    does not run is one that change goes unchecked in. Groups (`stats_cmd`,
-    `stats_draft`) are not reports, and `stats_all` is not one either."""
-    import azoth_commands.stats as stats
-    reports = {attr for attr in dir(AzothCommands)
-               if attr.startswith("stats_")
-               and type(getattr(AzothCommands, attr)).__name__ in _COMMAND_TYPES}
-    reports -= {"stats_cmd", "stats_draft", "stats_all"}
-    listed = {attr for _, attr, _ in stats.ALL_REPORTS}
-    assert reports - listed == set(), f"/stats all skips {sorted(reports - listed)}"
-    assert listed - reports == set(), f"/stats all names unknown {sorted(listed - reports)}"
+def test_habits_was_retired():
+    """/stats habits was folded into the image /stats breakdown (2026-09-28)."""
+    assert "habits" not in _registered_command_names()

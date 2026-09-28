@@ -31,9 +31,9 @@ COHORT_LABELS = {
 }
 
 
-def select_cohort(rows: list, key: str, merge_on: str, counts: tuple):
-    """`(merged_rows, filtered)`: one row per `merge_on`, with the `counts`
-    columns summed over the cohorts `key` names.
+def select_cohort(rows: list, key: str, merge_on, counts: tuple):
+    """`(merged_rows, filtered)`: one row per `merge_on` (a column, or a tuple
+    of columns), with the `counts` columns summed over the cohorts `key` names.
 
     Every entity that appears in ANY row is kept, zeroed if none of its rows
     are in the cohort: a boss fought only by developers is still a boss the new
@@ -45,13 +45,15 @@ def select_cohort(rows: list, key: str, merge_on: str, counts: tuple):
     """
     filtered = not rows or "cohort" in rows[0]
     wanted = COHORTS[key]
+    columns = (merge_on,) if isinstance(merge_on, str) else tuple(merge_on)
     merged: dict = {}
     for row in rows:
-        entry = merged.get(row.get(merge_on))
+        ident = tuple(row.get(c) for c in columns)
+        entry = merged.get(ident)
         if entry is None:
             entry = {k: v for k, v in row.items() if k != "cohort" and k not in counts}
             entry.update({c: 0 for c in counts})
-            merged[row.get(merge_on)] = entry
+            merged[ident] = entry
         if not filtered or row.get("cohort") in wanted:
             for c in counts:
                 entry[c] += int(row.get(c) or 0)
@@ -98,6 +100,18 @@ def wilson_interval(wins: int, n: int, z: float = FLAG_Z):
     return max(0.0, centre - half), min(1.0, centre + half)
 
 
+def rate_flag(hits: int, n: int, baseline: float):
+    """`"below"`, `"above"` or None: does the whole Wilson range for hits / n
+    sit below or above `baseline`? The one test behind every red ▼ / blue ▲,
+    so bosses and breakdown groups flag by the same rule."""
+    low, high = wilson_interval(hits, n)
+    if high < baseline:
+        return "below"
+    if low > baseline:
+        return "above"
+    return None
+
+
 def boss_flag(row: dict, act_rows: list):
     """`"below"`, `"above"` or None: is this boss clearly harder or easier than
     the REST of its act?
@@ -120,13 +134,7 @@ def boss_flag(row: dict, act_rows: list):
     rest_wins, rest_finished = act_win_rate(rest)
     if rest_finished == 0:
         return None
-    baseline = rest_wins / rest_finished
-    low, high = wilson_interval(int(row.get("wins") or 0), finished)
-    if high < baseline:
-        return "below"
-    if low > baseline:
-        return "above"
-    return None
+    return rate_flag(int(row.get("wins") or 0), finished, rest_wins / rest_finished)
 
 
 def act_win_rate(rows: list):
@@ -230,3 +238,153 @@ def bosses_footer(rows: list) -> str:
     if unfinished:
         footer += f" · {unfinished} unfinished not counted"
     return footer
+
+
+# ---------------------------------------------------------------------------
+# /stats breakdown
+# ---------------------------------------------------------------------------
+# Runs grouped by hero, ritual or version (breakdown_view), redrawn as an image
+# 2026-09-28. Every card leads with how far runs got, in the game's act
+# colours. What follows depends on the question:
+#
+#   hero     hero activations, per regular turn and per boss fight: how usable
+#            and how strong each hero's ability is. Skips and links work the
+#            same on every hero, so they are not shown (Turner's review).
+#   ritual   the average per regular turn of skips, activations and links:
+#            players play differently at each rung.
+#   version  the same, across releases, to see what a fix or a rebalance did.
+#
+# Grouping by skips or activations was prototyped and cut: reading "runs that
+# never activated" beside their average skips per turn confused more than it
+# showed. A better view of those habits is still to be found.
+
+MIN_RUNS = 5
+
+BREAKDOWN_COUNTS = ("runs", "cleared", "regular_turns", "regular_skips", "regular_links",
+                    "regular_activations", "boss_turns", "boss_activations")
+
+BREAKDOWN_TITLES = {"hero": "Runs by hero", "ritual": "Runs by ritual",
+                    "version": "Runs by version"}
+
+# A regular turn's node budget (links_per_turn), so a full links bar means
+# every node was a link.
+LINKS_PER_TURN = 5
+
+
+def _version_key(version: str):
+    parts = []
+    for part in str(version).split("."):
+        parts.append(int(part) if part.isdigit() else -1)
+    return parts
+
+
+def breakdown_groups(rows: list, by: str) -> list:
+    """One dict per group of dimension `by`, rows already cohort-selected:
+    `{grp, acts: {act: runs}, runs, cleared, <turn totals>}`, in display order.
+
+    Groups with no runs in the chosen cohorts are dropped: unlike bosses, a
+    hero nobody in this cohort played is not part of the answer.
+    """
+    groups: dict = {}
+    for row in rows:
+        if row.get("dimension") != by:
+            continue
+        g = groups.setdefault(row.get("grp"), {"grp": row.get("grp"), "acts": {},
+                                               **{c: 0 for c in BREAKDOWN_COUNTS}})
+        runs = int(row.get("runs") or 0)
+        act = int(row.get("furthest_act") or 1)
+        g["acts"][act] = g["acts"].get(act, 0) + runs
+        for c in BREAKDOWN_COUNTS:
+            g[c] += int(row.get(c) or 0)
+    live = [g for g in groups.values() if g["runs"]]
+    if by == "hero":
+        return sorted(live, key=lambda g: (-g["runs"], str(g["grp"])))
+    if by == "ritual":
+        return sorted(live, key=lambda g: int(g["grp"]) if str(g["grp"]).isdigit() else 99)
+    return sorted(live, key=lambda g: _version_key(g["grp"]))
+
+
+def group_flag(group: dict, groups: list):
+    """Is this group's beat-act-3 rate clearly below or above the REST of the
+    runs? rate_flag's rule, with MIN_RUNS on BOTH sides: two runs at ritual 1
+    are too few to judge ritual 0 against."""
+    rest = [g for g in groups if g is not group]
+    rest_runs = sum(g["runs"] for g in rest)
+    if group["runs"] < MIN_RUNS or rest_runs < MIN_RUNS:
+        return None
+    return rate_flag(group["cleared"], group["runs"],
+                     sum(g["cleared"] for g in rest) / rest_runs)
+
+
+def _per(total: int, turns: int):
+    """A per-turn average from totals, or None when there were no turns."""
+    return total / turns if turns else None
+
+
+def _label(group: dict, by: str) -> str:
+    return f"Ritual {group['grp']}" if by == "ritual" else str(group["grp"])
+
+
+def breakdown_card(rows: list, by: str, population: str = "") -> sc.Card:
+    groups = breakdown_groups(rows, by)
+    runs = sum(g["runs"] for g in groups)
+    parts = [population] if population else []
+    parts.append("solo runs")
+    if by != "version":            # the rows ARE the versions
+        parts.append(f"version ≥ {CUTOFF_VERSION}")
+    parts.append(f"{runs} run{'' if runs == 1 else 's'}")
+    card = sc.Card(BREAKDOWN_TITLES[by], " · ".join(parts))
+
+    right = sc.WIDTH - sc.PAD
+    card.add(sc.SectionHeader("How far runs got"))
+    card.add(sc.ColumnHeads([("Furthest act", sc.PAD + sc.LABEL_W, "lm"),
+                             ("Beat act 3", right - sc.ActStripRow.COUNT_W, "rm"),
+                             ("Runs", right, "rm")]))
+    for g in groups:
+        flag = group_flag(g, groups)
+        card.add(sc.ActStripRow(_label(g, by), g["acts"], g["cleared"],
+                                faded=g["runs"] < MIN_RUNS,
+                                marker={"below": "▼", "above": "▲"}.get(flag, ""),
+                                marker_fill={"below": sc.BELOW, "above": sc.ABOVE}.get(flag)))
+    # The baseline every row and every flag is read against: a ▼ on Lumis
+    # means little without the rate it is below (Turner's review). A totals
+    # row rather than a header note, so the act spread has a baseline too.
+    if len(groups) > 1:
+        totals: dict = {}
+        for g in groups:
+            for act, n in g["acts"].items():
+                totals[act] = totals.get(act, 0) + n
+        card.add(sc.Rule())
+        card.add(sc.ActStripRow("All runs", totals, sum(g["cleared"] for g in groups),
+                                strong=True))
+    card.add(sc.ActLegend())
+    card.add(sc.Spacer(6))
+
+    if by == "hero":
+        regular = [_per(g["regular_activations"], g["regular_turns"]) for g in groups]
+        boss = [_per(g["boss_activations"], g["boss_turns"]) for g in groups]
+        card.add(sc.SectionHeader("Hero activations"))
+        card.add(sc.ColumnHeads([("Per regular turn", sc.column_x(0, 2), "lm"),
+                                 ("Per boss fight", sc.column_x(1, 2), "lm")]))
+        scales = [max([v for v in regular if v is not None], default=0),
+                  max([v for v in boss if v is not None], default=0)]
+        for g, reg, bos in zip(groups, regular, boss):
+            card.add(sc.MetricRow(_label(g, by), [(reg, scales[0]), (bos, scales[1])],
+                                  faded=g["runs"] < MIN_RUNS))
+        return card
+
+    columns = [("Skips", "regular_skips"), ("Hero activations", "regular_activations"),
+               ("Links", "regular_links")]
+    values = [[_per(g[col], g["regular_turns"]) for _, col in columns] for g in groups]
+    scales = [max([v[i] for v in values if v[i] is not None], default=0) for i in range(2)]
+    scales.append(LINKS_PER_TURN)
+    card.add(sc.SectionHeader("Average per regular turn"))
+    card.add(sc.ColumnHeads([(name, sc.column_x(i, 3), "lm") for i, (name, _) in enumerate(columns)]))
+    for g, vals in zip(groups, values):
+        card.add(sc.MetricRow(_label(g, by), list(zip(vals, scales)), faded=g["runs"] < MIN_RUNS))
+    return card
+
+
+def breakdown_footer(rows: list, by: str) -> str:
+    runs = sum(g["runs"] for g in breakdown_groups(rows, by))
+    return f"version >= {CUTOFF_VERSION} · {runs} solo runs · grouped by {by}"

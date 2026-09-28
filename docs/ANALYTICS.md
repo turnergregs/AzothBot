@@ -53,12 +53,9 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats leaderboard` | `leaderboard_view` | Top combos, optionally by player / hero / version |
 | `/stats player` | `player_info_view` + `player_act_view` + `player_run_view` + `player_link_view` | One player's aggregates, plus a per-hero table (runs, highest ritual, act 3 clears) and three bar charts: games by hero and ritual, runs by furthest act, regular turns by links played. See [Rituals in /stats](#rituals-in-stats-2026-09-28) |
 | `/stats active_players` | `player_activity_view` | Play counts, highest ritual played, hours. The footer counts the players shown |
-| `/stats breakdown by:hero` | `hero_info_view` + `hero_ritual_view` + `run_act_view` | Per-hero aggregates, with games-by-ritual and furthest-act charts per hero |
-| `/stats breakdown by:ritual` | `ritual_info_view` + `run_act_view` | Per-ritual aggregates, with games-per-ritual and furthest-act charts |
+| `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
 | `/stats engagement` | `player_engagement_view` + `player_engagement_actions_view` | Players bucketed by the share of their active time spent in the Codex tools, a per-player time table, and what was made in the Codex. Developers excluded by default. See [Engagement](#engagement-2026-09-28) |
-| `/stats habits` | `player_turn_habits_view` | Players bucketed by their own skips and hero activations per turn. See [Habits](#habits-2026-09-28) |
-| `/stats breakdown by:version` | `version_info_view` | Per-version aggregates. The one reply with no cutoff |
 | `/stats draft composition` | `draft_deck_view` | Draft pool composition, as bar charts. **The view kept its old name** through two command renames. See [The draft pool](#the-draft-pool) |
 | `/stats draft rates` | `draft_rates_view` | Pick rate, per item |
 | `/stats draft breakdown` | `draft_dimension_rates_view` | Pick rate by type, element and valence (2026-09-03) |
@@ -155,33 +152,37 @@ excluded by default** (`stats.DEVELOPERS`, matched on `players.name`):
 `include_devs:True` puts them back, which is the quickest way to check a new
 build's tracking before any playtester has opened the Codex.
 
-### Habits (2026-09-28)
+### Breakdown (2026-09-28)
 
-From the first week of new playtesters. Caleb asked for "a histogram over skips
-per turn (and hero activations per turn) by player, so we can see like 30% of
-players have never clicked the skip button", and added that "histograms are
-probably more useful than averages". An average of 0.46 skips per turn is the
-same number whether everyone skips a little or half never skip and half always
-do; those call for different fixes.
+`/stats breakdown` groups runs by hero, ritual or version (`by:`) and is drawn
+as an image from `breakdown_view`: one row per (dimension, group, cohort,
+furthest act) carrying counts only, so the row count stays bounded however many
+runs pile up and every rate is divided from totals in the bot.
 
-`/stats habits` counts **players**, bucketed by their own rate (`never`, `<0.5`,
-`0.5-1`, `1-2`, `2+` per turn), with each bucket's share. The rules:
+Every card leads with **how far runs got**: a bar per group split by the
+furthest act each run reached, in the game's act colours (`ACT_COLOURS`,
+checked colour-blind-safe as neighbours), with each segment's run count inside
+it and a legend below. Then the share that **beat act 3** and the run count.
+Groups under 5 runs are dimmed (colours pulled toward the surface, so the acts
+still read). A group is flagged red ▼ / blue ▲ when its whole 95% Wilson range
+sits below / above the rest of the runs, with 5+ runs on **both** sides
+(`stats_cards.group_flag`, the same `rate_flag` bosses use): 26 runs at ritual 0
+are not judged against 2 at ritual 1. With two groups the flags come in pairs.
 
-- **A player's rate is their totals divided**, summed across heroes when no hero
-  is picked. Never a mean of per-hero rates (DB_SCHEMA caveat 15).
-- **Players with too few turns are left out and counted in the footer**: fewer
-  than 5 regular turns or 2 boss turns (`stats_format.MIN_HABIT_TURNS`). One short
-  game reads as "never skips" or "always skips" by chance.
-- **Regular and boss turns are never pooled.** `turns:` picks one.
-- **Abandoned runs count.** Only closed turns are ever flushed, so an abandoned
-  run's turns are complete. The link averages in `player_info_view` use finished
-  runs only, so the two can differ slightly.
-- **Buckets live in the bot** (`HABIT_BUCKETS`). The view returns counts, so
-  moving an edge needs no migration.
+What follows depends on the question (Turner's review):
 
-The same change turned three averages into charts: regular turns by links
-played (player card and daily report), and furthest act per hero or ritual
-(`/stats breakdown`). The averages are kept beside them.
+- **hero:** hero activations per regular turn and per boss fight: how usable
+  and strong each ability is. Skips and links work the same on every hero and
+  are left out.
+- **ritual, version:** skips, hero activations and links, averaged per regular
+  turn. Links scale to the node budget (5); the others to the largest group.
+  Version only lists versions at the cutoff or above: the point is the releases
+  this wave played.
+
+Grouping by skips or by activations was prototyped and cut: a row of "runs that
+never activated" beside those runs' average skips read as a percentage of
+players. It retired `/stats habits` (players bucketed by their own rates) with
+it; a better view of those habits is still to be designed.
 
 ### The player card (2026-08-27)
 
