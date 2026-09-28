@@ -53,6 +53,11 @@ ANON_NO_POLICY = frozenset({
 SERVICE_ROLE_ONLY_VIEWS = frozenset({
 	"turn_clearing_view", "player_act_view", "player_info_view",
 	"turn_scoreboard_view",
+	# 2026-09-28_ritual_stats.sql. Reads `turns` through run_cleared().
+	"player_run_view",
+	# 2026-09-28_turn_habits.sql. Read `turns` / `turn_nodes`, and run_act_view
+	# reads player_run_view.
+	"player_turn_habits_view", "player_link_view", "run_act_view",
 })
 
 # The six taxonomy tables that used to live here -- `card_attributes`,

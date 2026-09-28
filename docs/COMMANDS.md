@@ -428,8 +428,9 @@ what you would want to force. Full policy:
 | `/stats active_players` | — | `limit?` (default 25) |
 | `/stats leaderboard` | — | `limit?` (default 10), `player?`*, `hero?`*, `version?`* |
 | `/stats player` | — | `player`* — a full player card |
-| `/stats hero` | — | — |
-| `/stats version` | — | — |
+| `/stats breakdown` | — | `by`* (hero / ritual / version). Replaced `/stats hero` and `/stats version` 2026-09-28 |
+| `/stats habits` | — | `turns?` (regular / boss, default regular), `hero?`* |
+| `/stats all` | 🔒 | `player?`* (default: most games), `daily?` (default true). Runs every report above with its defaults, then a preview of yesterday's daily report, then a summary naming every report that replied with text (an error, "not migrated" or "no data") instead of an embed. For checking the reports after a change. The daily preview never touches `daily_update_state.json`, so it cannot claim or skip a scheduled send. `stats.ALL_REPORTS` is the list; `test_command_registration` fails if a new report is missing from it |
 | `/stats scoreboard` | — | — |
 | `/stats draft composition` | — | — |
 | `/stats draft breakdown` | — | — |
@@ -450,7 +451,7 @@ Three things the formatting fixes rather than decorates:
   average combo of about five, which is the exact misreading
   [ANALYTICS.md](ANALYTICS.md) warns about.
 - **Every reply carries a footer** naming the cutoff and how many games are
-  behind the number. `/stats version` says **"all versions"** instead —
+  behind the number. `/stats breakdown by:version` says **"all versions"** instead —
   `version_info_view` is the one view with no cutoff, because comparing versions
   is its whole job, and claiming the cutoff over a table showing 0.7.0 rows
   would be a lie.
@@ -469,7 +470,7 @@ row sums to 100%: an axis can clear its threshold constantly and still never pay
 because another crowds it out, which is invisible in the hit rates alone.
 
 It reads `turn_scoreboard_view` and is the **second** command after
-`/stats version` whose footer does not claim the cutoff. The view filters
+`/stats breakdown by:version` whose footer does not claim the cutoff. The view filters
 `bonus_key is not null` rather than a version — the columns postdate `0.9.1`
 and are NULL on every earlier run, so they date themselves. An unmigrated view
 is named in the reply rather than shown as "no data": "not migrated" and "no

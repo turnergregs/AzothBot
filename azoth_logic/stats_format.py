@@ -50,6 +50,8 @@ HEADINGS = {
     "last_played_at": "Last played",
     "hero_name": "Hero",
     "deck_size": "Deck",
+    "max_ritual": "Ritual",
+    "player_count": "Players",
     # draft_rates_view. Short on purpose: the default headings ("Times
     # offered", "Times picked") are wider than the numbers under them, and this
     # table has five columns to fit.
@@ -781,9 +783,14 @@ def ansi_block(text: str) -> str:
     return f"```ansi\n{text}\n```" if text else "*no rows*"
 
 
-def _histogram(buckets: list, width: int = MOBILE_TABLE_WIDTH,
-               colours: dict = None) -> str:
+def histogram(buckets: list, width: int = MOBILE_TABLE_WIDTH,
+               colours: dict = None, share: bool = False) -> str:
     """`(label, count)` pairs as one bar per row, scaled to the largest.
+
+    The ONE bar chart. The draft pool, the daily report's act chart, and the
+    ritual and act charts on /stats player and /stats breakdown all draw
+    through it, so every chart the bot posts reads the same way. The daily
+    report kept a copy of its own until 2026-09-28.
 
     **A non-zero count always gets at least one cell.** That is the whole point.
     Scaled against a peak of 26 the single 7v card rounds to 0.7 of a cell, and
@@ -795,20 +802,28 @@ def _histogram(buckets: list, width: int = MOBILE_TABLE_WIDTH,
     wraps in a monospace fence loses its alignment, and an unaligned bar chart
     is not a chart. The escape codes are outside the padded text, so colouring
     a row cannot shift its columns.
+
+    `share` adds each row's percentage of the total after its count, for charts
+    read as "what fraction of players..." -- the reading /stats habits exists
+    for, which should not need arithmetic.
     """
     rows = [(str(label), int(count or 0)) for label, count in buckets]
     if not rows:
         return ""
 
+    total = sum(count for _, count in rows)
     label_width = max(len(label) for label, _ in rows)
     count_width = max(len(str(count)) for _, count in rows)
-    cells = max(1, width - label_width - count_width - 2)
+    share_width = 5 if share else 0          # " 100%"
+    cells = max(1, width - label_width - count_width - share_width - 2)
     peak = max(count for _, count in rows)
 
     lines = []
     for label, count in rows:
         filled = max(1, round(cells * count / peak)) if count > 0 and peak else 0
-        line = f"{label.ljust(label_width)} {str(count).rjust(count_width)} {BAR * filled}"
+        pct = f" {round(100 * count / total) if total else 0:>3}%" if share else ""
+        line = (f"{label.ljust(label_width)} {str(count).rjust(count_width)}{pct} "
+                f"{BAR * filled}").rstrip()
         colour = (colours or {}).get(label)
         lines.append(f"{ESC}[0;{colour}m{line}{ESC}[0m" if colour else line)
     return "\n".join(lines)
@@ -929,7 +944,7 @@ def draft_pool_elements(row: dict) -> str:
     if not buckets:
         return "*no cards in the draft pool*"
 
-    chart = ansi_block(_histogram(buckets, colours=ANSI_ELEMENT))
+    chart = ansi_block(histogram(buckets, colours=ANSI_ELEMENT))
     return chart if complete else chart + "\n" + MIGRATION_NOTE
 
 
@@ -946,7 +961,7 @@ def draft_pool_valence(row: dict) -> str:
     # The `—` row carries no caption. It sat at the bottom of the chart and
     # needed one to explain why; at the top, ahead of 1v, it reads as the
     # off-scale bucket it is.
-    parts = [block(_histogram(buckets))]
+    parts = [block(histogram(buckets))]
     if not complete:
         parts.append(MIGRATION_NOTE)
     return "\n".join(parts)
@@ -1302,3 +1317,287 @@ def draft_pool_rites(row: dict) -> str:
     else:
         note += "*"
     return f"{line}\n{note}"
+
+
+# ---------------------------------------------------------------------------
+# Rituals and acts
+# ---------------------------------------------------------------------------
+# 2026-09-28, when new playtesters arrived and "which heroes and rituals are
+# they on" became the question asked most. Charts rather than tables wherever
+# the reply has ONE number per row: a bar shows at a glance what a column of
+# counts makes you compare digit by digit.
+
+def ritual_label(ritual) -> str:
+    """`R2`. Short because a chart label is paid for out of the bar's width."""
+    return f"R{ritual}"
+
+
+def _ladder(counts: dict, label) -> list:
+    """`(label, count)` for every step from the lowest seen to the highest,
+    including the empty ones.
+
+    A gap in a ladder is the shape worth seeing: drawing only the steps that
+    occurred would put acts 2 and 4 in adjacent rows and hide that act 3
+    stopped everyone. The range comes from the data, so an act or a ritual
+    rung added later needs no code change.
+    """
+    keys = [int(k) for k in counts if k is not None]
+    if not keys:
+        return []
+    return [(label(step), counts.get(step, 0))
+            for step in range(min(keys), max(keys) + 1)]
+
+
+def act_chart(distribution: dict) -> str:
+    """Runs by act, one row per act from 1 up to the deepest reached.
+
+    Starts at act 1 even when nobody's run ended there, because every run
+    passes through it and a chart starting at 2 reads as if act 1 were not
+    part of the ladder.
+    """
+    counts = {int(act): int(count or 0) for act, count in distribution.items()
+              if act is not None}
+    if not counts:
+        return "*no runs*"
+    counts.setdefault(1, 0)
+    return block(histogram(_ladder(counts, lambda act: f"act {act}")))
+
+
+def ritual_chart(counts: dict) -> str:
+    """Games per ritual level, every level from 0 to the highest played."""
+    counts = {int(r): int(n or 0) for r, n in counts.items() if r is not None}
+    if not counts:
+        return "*no runs*"
+    counts.setdefault(0, 0)
+    return block(histogram(_ladder(counts, ritual_label)))
+
+
+def grouped_chart(cells: dict, step_label, fill: bool = False) -> str:
+    """One bar per (group, step), labelled `<group> <step>`, groups stacked.
+
+    `cells` maps `(group, step) -> count`. Groups are ordered by their total,
+    largest first, and steps within a group bottom-up, so each group reads down
+    the chart as a ladder. Every group label is padded to the longest so the
+    step column lines up, which is what makes two groups comparable at a glance.
+
+    `fill` draws every step from 1 (or the lowest seen) to the group's highest,
+    empty ones included -- right for acts, where a gap is a place runs stopped.
+    Without it only the steps that occurred get a row -- right for a hero's
+    rituals, which are climbed one rung at a time, so an empty rung below the
+    highest is not something anyone skipped.
+    """
+    totals = {}
+    for (group, _), count in cells.items():
+        totals[group] = totals.get(group, 0) + count
+    if not totals:
+        return "*no runs*"
+
+    groups = sorted(totals, key=lambda g: (-totals[g], str(g)))
+    width = max(len(str(g)) for g in groups)
+    buckets = []
+    for group in groups:
+        steps = sorted(step for g, step in cells if g == group)
+        if fill:
+            steps = range(min(1, steps[0]), steps[-1] + 1)
+        buckets += [(f"{str(group).ljust(width)} {step_label(step)}",
+                     cells.get((group, step), 0)) for step in steps]
+    return block(histogram(buckets))
+
+
+def _cells(rows: list, group, step, count: str = "game_count") -> dict:
+    cells = {}
+    for row in rows or []:
+        key = (group(row), step(row))
+        cells[key] = cells.get(key, 0) + int(row.get(count) or 0)
+    return cells
+
+
+def hero_ritual_chart(rows: list, hero_column: str = "hero") -> str:
+    """Games per (hero, ritual), one bar each, labelled `Lumis R0`.
+
+    Rows are `{hero, ritual, game_count}`. Only the rituals actually played get
+    a row; see grouped_chart.
+    """
+    return grouped_chart(_cells(rows, lambda r: r.get(hero_column) or "—",
+                                lambda r: int(r.get("ritual") or 0)),
+                         ritual_label)
+
+
+def act_label(act) -> str:
+    return f"A{act}"
+
+
+def furthest_act_chart(rows: list, by: str) -> str:
+    """Runs by furthest act, per hero (`Lumis A3`) or per ritual (`R0 A3`).
+
+    Rows are run_act_view's `{hero_name, ritual, furthest_act, game_count}`,
+    summed over whichever column is not `by`. Every act from 1 to each group's
+    deepest gets a row, so the act a group stalls at is visible as the bar
+    where it drops off.
+    """
+    if by == "ritual":
+        group = lambda r: ritual_label(int(r.get("ritual") or 0))
+    else:
+        group = lambda r: r.get("hero_name") or "—"
+    return grouped_chart(_cells(rows, group, lambda r: int(r.get("furthest_act") or 1)),
+                         act_label, fill=True)
+
+
+def _runs_by(runs: list, key) -> dict:
+    counts = {}
+    for run in runs or []:
+        k = key(run)
+        counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+def player_heroes(runs: list) -> str:
+    """A player's heroes: runs, highest ritual played, and act 3 clears.
+
+    Per hero because ritual ladders are per hero (the game repo's
+    docs/RITUALS.md § Unlocking). One "highest ritual" across every hero, which
+    is what this card showed until 2026-09-28, reads Bram at R1 on Lumis and R0
+    on everything else as simply "1".
+
+    `Clr` counts runs that beat the act 3 boss (`player_run_view.cleared`, from
+    run_cleared) -- the win that unlocks the next ritual, however the run ended
+    afterwards. Not every clear unlocks one: only a win at the hero's highest
+    unlocked level does, and unlock progress lives on the player's machine.
+    """
+    if runs is None:
+        return "*unavailable — `player_run_view` is not migrated*"
+    if not runs:
+        return "*no runs*"
+
+    heroes = {}
+    for run in runs:
+        hero = heroes.setdefault(run.get("hero") or "—",
+                                 {"runs": 0, "ritual": 0, "cleared": 0})
+        hero["runs"] += 1
+        hero["ritual"] = max(hero["ritual"], int(run.get("ritual") or 0))
+        hero["cleared"] += 1 if run.get("cleared") else 0
+
+    order = sorted(heroes, key=lambda h: (-heroes[h]["runs"], h))
+    body = [[name, str(heroes[name]["runs"]), ritual_label(heroes[name]["ritual"]),
+             str(heroes[name]["cleared"])] for name in order]
+    return _grid(["Hero", "Runs", "Top", "Clr"], body)
+
+
+def player_ritual_chart(runs: list) -> str:
+    """A player's games per (hero, ritual). See hero_ritual_chart."""
+    if runs is None:
+        return "*unavailable — `player_run_view` is not migrated*"
+    counts = _runs_by(runs, lambda r: (r.get("hero") or "—", int(r.get("ritual") or 0)))
+    return hero_ritual_chart([{"hero": h, "ritual": r, "game_count": n}
+                              for (h, r), n in counts.items()])
+
+
+def player_act_chart(runs: list) -> str:
+    """A player's runs by the furthest act each reached.
+
+    `furthest_act`, not `act_reached`: the latter is written only when a run
+    ends, so an abandoned run carries NULL however far it got. The view takes
+    the turn rows' highest act instead (2026-09-28_ritual_stats.sql).
+    """
+    if runs is None:
+        return "*unavailable — `player_run_view` is not migrated*"
+    return act_chart(_runs_by(runs, lambda r: int(r.get("furthest_act") or 1)))
+
+
+# ---------------------------------------------------------------------------
+# Habits: how players play, as a spread across players
+# ---------------------------------------------------------------------------
+# /stats habits, 2026-09-28, from Caleb's feedback: "30% of players have never
+# clicked the skip button, 20% are skipping all the time". An average of 0.46
+# skips per turn is the same number for everyone skipping a little and for half
+# never skipping while half always do, so these charts count PLAYERS per bucket
+# of their own rate instead.
+
+# Fewer turns than this and a player's rate is one or two coin flips: a single
+# short game reads as "never skips" or "skips every turn" by chance. They are
+# left out of the chart and counted in the footer. Boss turns are fewer per run
+# (one per act reached), so their floor is lower.
+MIN_HABIT_TURNS = {"regular": 5, "boss": 2}
+
+# Bucket upper bounds, per turn. `never` is exactly zero and is its own bucket
+# because it is the headline ("never clicked the skip button"); everything
+# above the last bound is `2+`.
+HABIT_BUCKETS = [("never", 0), ("<0.5", 0.5), ("0.5-1", 1), ("1-2", 2)]
+HABIT_TOP = "2+"
+
+
+def habit_bucket(rate: float) -> str:
+    """The bucket a per-turn rate falls in. Bounds are exclusive above, so a
+    player at exactly 1 skip per turn is `1-2`, not `0.5-1`."""
+    if rate <= 0:
+        return "never"
+    for label, bound in HABIT_BUCKETS[1:]:
+        if rate < bound:
+            return label
+    return HABIT_TOP
+
+
+def habit_players(rows: list, turn_type: str) -> dict:
+    """`{player: {turns, skips, hero_activations, ...}}`, summed over heroes.
+
+    player_turn_habits_view carries one row per (player, hero, turn type) and
+    every column is a count, so summing across heroes is exact. The RATE is
+    taken from the summed totals, never averaged across heroes (DB_SCHEMA
+    caveat 15: never average a ratio).
+    """
+    players = {}
+    for row in rows or []:
+        if row.get("turn_type") != turn_type:
+            continue
+        totals = players.setdefault(row.get("player") or "—", {})
+        for column in ("turns", "skips", "skip_turns",
+                       "hero_activations", "activation_turns"):
+            totals[column] = totals.get(column, 0) + int(row.get(column) or 0)
+    return players
+
+
+def habit_split(players: dict, turn_type: str):
+    """`(counted, too_few)`: players with enough turns for a rate, and how many
+    were left out for having fewer. See MIN_HABIT_TURNS."""
+    floor = MIN_HABIT_TURNS.get(turn_type, 1)
+    counted = {name: p for name, p in players.items() if p.get("turns", 0) >= floor}
+    return counted, len(players) - len(counted)
+
+
+def habit_chart(players: dict, column: str) -> str:
+    """Players per bucket of `column` per turn, with each bucket's share.
+
+    Every bucket gets a row, empty ones included: "nobody skips 2+ a turn" is
+    an answer, and a missing row cannot say it.
+    """
+    if not players:
+        return "*no players with enough turns yet*"
+    counts = {label: 0 for label, _ in HABIT_BUCKETS}
+    counts[HABIT_TOP] = 0
+    for p in players.values():
+        counts[habit_bucket(p.get(column, 0) / p["turns"])] += 1
+    return block(histogram(list(counts.items()), share=True))
+
+
+def link_label(links) -> str:
+    return f"{links} link{'' if int(links) == 1 else 's'}"
+
+
+def link_chart(distribution: dict) -> str:
+    """Regular turns by links played, every count from 0 to the most seen.
+
+    Zero is always a row. A turn that played no links is the one most worth
+    seeing, and a chart starting at 1 would imply there were none.
+    """
+    counts = {int(k): int(v or 0) for k, v in distribution.items() if k is not None}
+    if not counts:
+        return "*no regular turns yet*"
+    counts.setdefault(0, 0)
+    return block(histogram(_ladder(counts, link_label)))
+
+
+def player_link_chart(rows) -> str:
+    """A player's regular turns by links played, from player_link_view."""
+    if rows is None:
+        return "*unavailable — `player_link_view` is not migrated*"
+    return link_chart({r.get("links"): r.get("turns") for r in rows})

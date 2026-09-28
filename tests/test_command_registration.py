@@ -222,3 +222,32 @@ def test_no_undefined_names_in_the_command_layer():
     undefined = [ln for ln in undefined if "azoth_logic/fate_renderer.py" not in ln]
 
     assert not undefined, "undefined names reachable at runtime:\n" + "\n".join(undefined)
+
+
+def test_hero_and_version_are_one_breakdown_command():
+    """/stats hero and /stats version were merged into /stats breakdown on
+    2026-09-28 (by: hero | ritual | version). Re-adding either would put two
+    commands back in the menu for one reply."""
+    registered = _registered_command_names()
+    assert "breakdown" in registered
+    assert not {"hero", "version"} & registered
+
+
+def test_the_habits_command_exists():
+    """/stats habits (2026-09-28): skips and hero activations as a spread
+    across players, from the first playtest week's feedback."""
+    assert "habits" in _registered_command_names()
+
+
+def test_stats_all_runs_every_report():
+    """/stats all exists to check every report after a change, so a report it
+    does not run is one that change goes unchecked in. Groups (`stats_cmd`,
+    `stats_draft`) are not reports, and `stats_all` is not one either."""
+    import azoth_commands.stats as stats
+    reports = {attr for attr in dir(AzothCommands)
+               if attr.startswith("stats_")
+               and type(getattr(AzothCommands, attr)).__name__ in _COMMAND_TYPES}
+    reports -= {"stats_cmd", "stats_draft", "stats_all"}
+    listed = {attr for _, attr, _ in stats.ALL_REPORTS}
+    assert reports - listed == set(), f"/stats all skips {sorted(reports - listed)}"
+    assert listed - reports == set(), f"/stats all names unknown {sorted(listed - reports)}"

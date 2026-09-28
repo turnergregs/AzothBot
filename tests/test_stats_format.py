@@ -1091,3 +1091,220 @@ def test_an_empty_view_says_so_per_field():
     assert sf.draft_rate_by_embellishment([]) == "*no embellishment data yet*"
     assert sf.draft_rate_by_enhancement([]) == "*no enhanced cards drafted yet*"
     assert sf.draft_rate_by_attribute([]) == "*no attributed cards drafted yet*"
+
+
+# ---------------------------------------------------------------------------
+# Act and ritual charts (2026-09-28)
+# ---------------------------------------------------------------------------
+# act_chart moved here from daily_update._act_chart, which drew its own bars;
+# the first two tests came with it.
+
+def test_an_act_nobody_reached_still_gets_a_row():
+    """A gap in the ladder is the shape worth seeing. Listing only the acts that
+    occurred would draw 1, 2, 4 as three adjacent bars and hide that act 3
+    stopped everyone."""
+    chart = sf.act_chart({1: 3, 2: 1, 4: 3})
+    assert "act 3" in chart and chart.count("act ") == 4
+
+
+def test_a_non_zero_act_never_draws_an_empty_bar():
+    """One run out of a hundred rounds to zero blocks, which reads as nobody got
+    there -- the opposite of what the row says."""
+    chart = sf.act_chart({1: 100, 5: 1})
+    act_5 = [ln for ln in chart.splitlines() if ln.startswith("act 5")][0]
+    assert "█" in act_5, act_5
+
+
+def test_the_act_chart_starts_at_act_one():
+    """Every run passes through act 1; a chart starting at 3 hides that."""
+    chart = sf.act_chart({3: 2, 4: 1})
+    assert chart.splitlines()[1].startswith("act 1")
+
+
+def test_the_ritual_chart_shows_every_rung_from_zero():
+    chart = sf.ritual_chart({2: 1, 4: 3})
+    labels = [ln.split()[0] for ln in chart.splitlines()[1:-1]]
+    assert labels == ["R0", "R1", "R2", "R3", "R4"]
+
+
+def test_the_hero_ritual_chart_lines_up_the_ritual_column():
+    """Padding every hero to the longest name is what lets two heroes' ladders
+    be read against each other."""
+    chart = sf.hero_ritual_chart([
+        {"hero": "Lumis", "ritual": 0, "game_count": 11},
+        {"hero": "Eith", "ritual": 0, "game_count": 1},
+        {"hero": "Lumis", "ritual": 1, "game_count": 2},
+    ])
+    rows = chart.splitlines()[1:-1]
+    assert [r.index("R") for r in rows] == [6, 6, 6]
+    # Most-played hero first, its rituals bottom-up.
+    assert rows[0].startswith("Lumis R0") and rows[1].startswith("Lumis R1")
+    assert rows[2].startswith("Eith  R0")
+
+
+def test_the_hero_ritual_chart_reads_a_view_column_name():
+    chart = sf.hero_ritual_chart([{"hero_name": "Eith", "ritual": 3, "game_count": 1}],
+                                 hero_column="hero_name")
+    assert "Eith R3" in chart
+
+
+RUNS = [
+    {"hero": "Lumis", "ritual": 0, "furthest_act": 3, "cleared": False},
+    {"hero": "Lumis", "ritual": 1, "furthest_act": 4, "cleared": True},
+    {"hero": "Lumis", "ritual": 1, "furthest_act": 2, "cleared": False},
+    {"hero": "Eith", "ritual": 0, "furthest_act": 4, "cleared": True},
+]
+
+
+def test_player_heroes_are_per_hero_not_one_number():
+    """Ritual ladders are per hero. One max across heroes is what the card
+    showed until 2026-09-28, and it read R1 on Lumis as R1 everywhere."""
+    table = sf.player_heroes(RUNS)
+    lumis = [ln for ln in table.splitlines() if ln.startswith("Lumis")][0].split()
+    eith = [ln for ln in table.splitlines() if ln.startswith("Eith")][0].split()
+    assert lumis == ["Lumis", "3", "R1", "1"]
+    assert eith == ["Eith", "1", "R0", "1"]
+
+
+def test_player_heroes_are_ordered_by_runs():
+    table = sf.player_heroes(RUNS)
+    body = table.splitlines()[3:]
+    assert body[0].startswith("Lumis") and body[1].startswith("Eith")
+
+
+def test_player_act_chart_counts_furthest_act():
+    chart = sf.player_act_chart(RUNS)
+    rows = {ln.split()[0] + ln.split()[1]: int(ln.split()[2])
+            for ln in chart.splitlines()[1:-1]}
+    assert rows == {"act1": 0, "act2": 1, "act3": 1, "act4": 2}
+
+
+def test_player_act_chart_floors_a_run_with_no_act_at_one():
+    """An abandoned run with no turn rows has no act at all; it still happened."""
+    chart = sf.player_act_chart([{"hero": "Ignis", "ritual": 0, "furthest_act": None}])
+    assert "act 1 1" in chart
+
+
+@pytest.mark.parametrize("render", [sf.player_heroes, sf.player_ritual_chart,
+                                    sf.player_act_chart])
+def test_an_unmigrated_run_view_is_named(render):
+    """None means the view is missing; [] means no runs. Different problems."""
+    assert "player_run_view" in render(None)
+
+
+@pytest.mark.parametrize("render", [
+    lambda: sf.player_heroes(RUNS),
+    lambda: sf.player_ritual_chart(RUNS),
+    lambda: sf.player_act_chart(RUNS),
+    lambda: sf.ritual_chart({0: 30, 1: 4, 3: 1}),
+])
+def test_the_ritual_charts_fit_a_phone(render):
+    for line in render().splitlines():
+        if not line.startswith("```"):
+            assert len(line) <= sf.MOBILE_TABLE_WIDTH, line
+
+
+# ---------------------------------------------------------------------------
+# Habits and links (2026-09-28)
+# ---------------------------------------------------------------------------
+
+HABIT_ROWS = [
+    {"player": "A", "hero": "Lumis", "turn_type": "regular", "turns": 10,
+     "skips": 0, "hero_activations": 12},
+    {"player": "B", "hero": "Lumis", "turn_type": "regular", "turns": 8,
+     "skips": 3, "hero_activations": 2},
+    {"player": "B", "hero": "Eith", "turn_type": "regular", "turns": 4,
+     "skips": 10, "hero_activations": 0},
+    {"player": "B", "hero": "Lumis", "turn_type": "boss", "turns": 3,
+     "skips": 9, "hero_activations": 3},
+    {"player": "C", "hero": "Lumis", "turn_type": "regular", "turns": 2,
+     "skips": 2, "hero_activations": 0},
+]
+
+
+def _bars(chart: str) -> dict:
+    return {ln.split()[0]: int(ln.split()[1]) for ln in chart.splitlines()[1:-1]}
+
+
+@pytest.mark.parametrize("rate, bucket", [
+    (0, "never"), (0.1, "<0.5"), (0.5, "0.5-1"), (1, "1-2"), (1.99, "1-2"), (2, "2+"),
+])
+def test_habit_buckets_are_exclusive_above(rate, bucket):
+    assert sf.habit_bucket(rate) == bucket
+
+
+def test_a_players_rate_is_from_summed_totals_not_a_mean_across_heroes():
+    """B skipped 3 in 8 Lumis turns and 10 in 4 Eith turns: 13/12 = 1.08, a
+    `1-2` player. Averaging the two heroes' rates (0.375, 2.5) would give 1.44;
+    both land in 1-2 here, so assert the total directly (caveat 15)."""
+    players = sf.habit_players(HABIT_ROWS, "regular")
+    assert players["B"]["turns"] == 12 and players["B"]["skips"] == 13
+
+
+def test_boss_and_regular_habits_are_kept_apart():
+    assert sf.habit_players(HABIT_ROWS, "boss")["B"]["turns"] == 3
+    assert sf.habit_players(HABIT_ROWS, "regular")["B"]["turns"] == 12
+
+
+def test_players_with_too_few_turns_are_counted_not_charted():
+    """C has two turns; "never skips" or "always skips" would be a coin flip."""
+    counted, too_few = sf.habit_split(sf.habit_players(HABIT_ROWS, "regular"), "regular")
+    assert set(counted) == {"A", "B"} and too_few == 1
+
+
+def test_the_habit_chart_counts_players_and_keeps_empty_buckets():
+    counted, _ = sf.habit_split(sf.habit_players(HABIT_ROWS, "regular"), "regular")
+    bars = _bars(sf.habit_chart(counted, "skips"))
+    assert bars == {"never": 1, "<0.5": 0, "0.5-1": 0, "1-2": 1, "2+": 0}
+
+
+def test_the_habit_chart_states_each_share():
+    """The chart is read as "what fraction of players", so it says it."""
+    counted, _ = sf.habit_split(sf.habit_players(HABIT_ROWS, "regular"), "regular")
+    never = [ln for ln in sf.habit_chart(counted, "skips").splitlines()
+             if ln.startswith("never")][0]
+    assert "50%" in never
+
+
+def test_the_link_chart_always_has_a_zero_row():
+    chart = sf.link_chart({2: 4, 3: 9})
+    assert chart.splitlines()[1].startswith("0 links")
+
+
+def test_one_link_is_singular():
+    assert "1 link " in sf.link_chart({1: 2, 2: 1})
+
+
+def test_an_unmigrated_link_view_is_named():
+    assert "player_link_view" in sf.player_link_chart(None)
+
+
+ACT_ROWS = [
+    {"hero_name": "Lumis", "ritual": 0, "furthest_act": 3, "game_count": 5},
+    {"hero_name": "Lumis", "ritual": 1, "furthest_act": 1, "game_count": 2},
+    {"hero_name": "Eith", "ritual": 0, "furthest_act": 4, "game_count": 1},
+]
+
+
+def test_furthest_act_by_hero_sums_over_ritual_and_fills_every_act():
+    rows = [ln for ln in sf.furthest_act_chart(ACT_ROWS, "hero").splitlines()[1:-1]]
+    assert [r.split()[:3] for r in rows[:3]] == [["Lumis", "A1", "2"],
+                                                 ["Lumis", "A2", "0"],
+                                                 ["Lumis", "A3", "5"]]
+    assert len([r for r in rows if r.startswith("Eith")]) == 4
+
+
+def test_furthest_act_by_ritual_sums_over_hero():
+    chart = sf.furthest_act_chart(ACT_ROWS, "ritual")
+    assert "R0 A3 5" in chart and "R0 A4 1" in chart and "R1 A1 2" in chart
+
+
+@pytest.mark.parametrize("render", [
+    lambda: sf.habit_chart(sf.habit_players(HABIT_ROWS, "regular"), "skips"),
+    lambda: sf.link_chart({0: 3, 1: 1, 2: 10, 3: 120, 4: 8, 5: 40}),
+    lambda: sf.furthest_act_chart(ACT_ROWS, "hero"),
+])
+def test_the_habit_and_act_charts_fit_a_phone(render):
+    for line in render().splitlines():
+        if not line.startswith("```"):
+            assert len(line) <= sf.MOBILE_TABLE_WIDTH, line

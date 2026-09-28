@@ -51,14 +51,58 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | Command | View | Purpose |
 |---|---|---|
 | `/stats leaderboard` | `leaderboard_view` | Top combos, optionally by player / hero / version |
-| `/stats player` | `player_info_view` | One player's aggregates |
-| `/stats active_players` | `player_activity_view` | Play counts and hours |
-| `/stats hero` | `hero_info_view` | Per-hero aggregates |
-| `/stats version` | `version_info_view` | Per-version aggregates |
+| `/stats player` | `player_info_view` + `player_act_view` + `player_run_view` + `player_link_view` | One player's aggregates, plus a per-hero table (runs, highest ritual, act 3 clears) and three bar charts: games by hero and ritual, runs by furthest act, regular turns by links played. See [Rituals in /stats](#rituals-in-stats-2026-09-28) |
+| `/stats active_players` | `player_activity_view` | Play counts, highest ritual played, hours. The footer counts the players shown |
+| `/stats breakdown by:hero` | `hero_info_view` + `hero_ritual_view` + `run_act_view` | Per-hero aggregates, with games-by-ritual and furthest-act charts per hero |
+| `/stats breakdown by:ritual` | `ritual_info_view` + `run_act_view` | Per-ritual aggregates, with games-per-ritual and furthest-act charts |
+| `/stats habits` | `player_turn_habits_view` | Players bucketed by their own skips and hero activations per turn. See [Habits](#habits-2026-09-28) |
+| `/stats breakdown by:version` | `version_info_view` | Per-version aggregates. The one reply with no cutoff |
 | `/stats draft composition` | `draft_deck_view` | Draft pool composition, as bar charts. **The view kept its old name** through two command renames. See [The draft pool](#the-draft-pool) |
 | `/stats draft rates` | `draft_rates_view` | Pick rate, per item |
 | `/stats draft breakdown` | `draft_dimension_rates_view` | Pick rate by type, element and valence (2026-09-03) |
 | `/stats draft embellishments` | `draft_embellishment_rates_view` | Pick rate by draft embellishment (2026-09-04). See [Embellished cards](#embellished-cards) |
+
+### Rituals in /stats (2026-09-28)
+
+New playtesters arrived with 0.9.10 and "which heroes and rituals are they on"
+became the question asked most. `db/migrations/2026-09-28_ritual_stats.sql` in
+the game repo adds what answers it:
+
+| Change | Reason |
+|---|---|
+| `player_activity_view.max_ritual` | The highest ritual each player has *played*, on any hero. Unlock progress is stored on the player's machine and never reaches the database |
+| `player_run_view` (one row per run) | Serves the player card's hero table and both charts. `furthest_act` is the larger of `act_reached` and the run's highest turn-row act, because `act_reached` is only written when a run ends and is NULL on every abandoned run. `cleared` is `run_cleared()`. Reads `turns`, so service_role only |
+| "Highest Ritual" on the player card → a per-hero table | Ritual ladders are per hero. One max across heroes read R1 on Lumis as R1 everywhere |
+| `/stats hero` + `/stats version` → `/stats breakdown by:` | Same columns, different GROUP BY. A third grouping (ritual) would have been a third copy |
+| One bar chart, `stats_format.histogram()` | The daily report drew its act chart with its own copy until this change. Charts are used where a reply has one number per row; tables stay where it has several |
+
+### Habits (2026-09-28)
+
+From the first week of new playtesters. Caleb asked for "a histogram over skips
+per turn (and hero activations per turn) by player, so we can see like 30% of
+players have never clicked the skip button", and added that "histograms are
+probably more useful than averages". An average of 0.46 skips per turn is the
+same number whether everyone skips a little or half never skip and half always
+do; those call for different fixes.
+
+`/stats habits` counts **players**, bucketed by their own rate (`never`, `<0.5`,
+`0.5-1`, `1-2`, `2+` per turn), with each bucket's share. The rules:
+
+- **A player's rate is their totals divided**, summed across heroes when no hero
+  is picked. Never a mean of per-hero rates (DB_SCHEMA caveat 15).
+- **Players with too few turns are left out and counted in the footer**: fewer
+  than 5 regular turns or 2 boss turns (`stats_format.MIN_HABIT_TURNS`). One short
+  game reads as "never skips" or "always skips" by chance.
+- **Regular and boss turns are never pooled.** `turns:` picks one.
+- **Abandoned runs count.** Only closed turns are ever flushed, so an abandoned
+  run's turns are complete. The link averages in `player_info_view` use finished
+  runs only, so the two can differ slightly.
+- **Buckets live in the bot** (`HABIT_BUCKETS`). The view returns counts, so
+  moving an edge needs no migration.
+
+The same change turned three averages into charts: regular turns by links
+played (player card and daily report), and furthest act per hero or ritual
+(`/stats breakdown`). The averages are kept beside them.
 
 ### The player card (2026-08-27)
 

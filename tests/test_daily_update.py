@@ -149,6 +149,13 @@ def test_zero_node_turns_stay_in_the_denominator(monkeypatch):
     assert r["avg_links_regular"] != pytest.approx((2 + 5) / 2), "must not drop t2"
 
 
+def test_the_links_chart_keeps_zero_link_turns(monkeypatch):
+    """The spread behind the average: t2's zero links is a bar, not a gap."""
+    _install_turn_grain(monkeypatch, TURNS, NODES, LEVELUPS)
+    r = du._fetch_turn_grain_stats(["g1"])
+    assert r["links_distribution"] == {2: 1, 0: 1, 5: 1}
+
+
 def test_skips_are_not_links(monkeypatch):
     """A node is a link OR a skip; both consume a timeline slot."""
     _install_turn_grain(monkeypatch, TURNS, NODES, LEVELUPS)
@@ -838,19 +845,3 @@ def test_a_name_shared_by_a_card_and_a_rite_is_not_pooled(monkeypatch):
 
     assert dict(stats["most_picked_cards"])["Echo"]["picked"] == 2
     assert dict(stats["most_picked_rites"])["Echo"]["picked"] == 0
-
-
-def test_an_act_nobody_reached_still_gets_a_row():
-    """A gap in the ladder is the shape worth seeing. Listing only the acts that
-    occurred would draw 1, 2, 4 as three adjacent bars and hide that act 3
-    stopped everyone."""
-    chart = du._act_chart({1: 3, 2: 1, 4: 3})
-    assert "act 3" in chart and chart.count("act ") == 4
-
-
-def test_a_non_zero_act_never_draws_an_empty_bar():
-    """One run out of a hundred rounds to zero blocks, which reads as nobody got
-    there -- the opposite of what the row says."""
-    chart = du._act_chart({1: 100, 5: 1})
-    act_5 = [ln for ln in chart.splitlines() if ln.startswith("act 5")][0]
-    assert "█" in act_5, act_5

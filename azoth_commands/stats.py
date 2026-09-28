@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import nextcord
@@ -17,10 +18,16 @@ from azoth_logic import stats_format as sf
 # trim in stats_format.table would throw away the combo -- the column anyone
 # actually came for. Anything trimmed beyond this is named in the footer.
 COLUMNS = {
-    "active_players": ["player", "game_count", "hours_played", "highest_combo"],
+    # Ritual sits beside Games, not at the end: the width trim takes columns off
+    # the right, and "which ritual are they on" is why it was added.
+    "active_players": ["player", "game_count", "max_ritual", "hours_played",
+                       "highest_combo"],
     "leaderboard": ["player", "combo", "hero", "turns", "act", "level"],
     "hero": ["hero_name", "game_count", "avg_act", "avg_level", "avg_combo_log10", "max_combo"],
     "version": ["version", "game_count", "avg_act", "avg_level", "avg_combo_log10", "max_combo"],
+    # Players, not level: how many people are at each rung is half of what
+    # grouping by ritual is for.
+    "ritual": ["ritual", "game_count", "player_count", "avg_act", "avg_combo_log10", "max_combo"],
     # Was ABSENT until 2026-09-03, which is exactly the failure the note above
     # describes. draft_rates_view returns item_type, item_id, item_name,
     # element, valence and only then the five rate columns, so the width trim
@@ -33,6 +40,68 @@ COLUMNS = {
 }
 
 
+# Every report /stats all runs, in order, with the options it runs them with.
+# `None` is passed explicitly for optional filters: a callback invoked directly
+# receives its SlashOption DEFAULT OBJECT for anything left out, not the
+# default value. test_command_registration checks that every /stats report is
+# listed here, so a new one cannot be missed.
+ALL_REPORTS = [
+    ("active players", "stats_active_players", {"limit": 25}),
+    ("leaderboard", "stats_leaderboard", {"limit": 10, "player": None, "hero": None,
+                                          "version": None}),
+    ("player", "stats_player", {}),     # player filled in at run time
+    ("breakdown by:hero", "stats_breakdown", {"by": "hero"}),
+    ("breakdown by:ritual", "stats_breakdown", {"by": "ritual"}),
+    ("breakdown by:version", "stats_breakdown", {"by": "version"}),
+    ("habits (regular)", "stats_habits", {"turns": "regular", "hero": None}),
+    ("habits (boss)", "stats_habits", {"turns": "boss", "hero": None}),
+    ("scoreboard", "stats_scoreboard", {}),
+    ("draft composition", "stats_draft_composition", {}),
+    ("draft breakdown", "stats_draft_breakdown", {}),
+    ("draft embellishments", "stats_draft_embellishments", {}),
+    ("draft rates", "stats_draft_rates", {"limit": 15, "order": "most", "item_type": None}),
+]
+
+
+class _Deferred:
+    """`interaction.response` for a report run inside /stats all.
+
+    Every report's safe_interaction defers first, and an interaction can only
+    be deferred once -- /stats all already has. The second defer is the only
+    call that needs absorbing."""
+    async def defer(self, *args, **kwargs):
+        pass
+
+
+class _Followup:
+    """`interaction.followup`, noting which reports replied with text.
+
+    A report answers with an embed when it works. Text is an error, a "not
+    migrated", or "no data" -- exactly what a preview run is looking for, so
+    they are collected for the summary at the end."""
+    def __init__(self, followup):
+        self._followup = followup
+        self.label = None
+        self.text_replies = []
+
+    async def send(self, content=None, **kwargs):
+        if content and not kwargs.get("embed"):
+            self.text_replies.append(self.label)
+            content = f"**{self.label}:** {content}"
+        return await self._followup.send(content, **kwargs)
+
+
+class _Preview:
+    """An interaction that hands every report the real channel, once deferred."""
+    def __init__(self, interaction):
+        self._interaction = interaction
+        self.response = _Deferred()
+        self.followup = _Followup(interaction.followup)
+
+    def __getattr__(self, name):
+        return getattr(self._interaction, name)
+
+
 async def _send_table(interaction, title, rows, columns=None, *, rank=False,
                       note=None, cutoff=True, colour=0x5865F2):
     """A view rendered as one embed: aligned table, and what it rests on."""
@@ -40,6 +109,20 @@ async def _send_table(interaction, title, rows, columns=None, *, rank=False,
     embed = nextcord.Embed(title=title, description=sf.block(text), colour=colour)
     embed.set_footer(text=sf.footer(rows, note=note, dropped=dropped, cutoff=cutoff))
     await interaction.followup.send(embed=embed)
+
+
+def _furthest_act_field(by: str) -> str:
+    """The breakdown's furthest-act chart, or why it is missing.
+
+    An extra beside the table, so an unmigrated view costs this field and not
+    the reply -- and says so, because "not migrated" and "no runs" are
+    different problems.
+    """
+    try:
+        return sf.furthest_act_chart(fetch_all("run_act_view"), by)
+    except SupabaseError:
+        return ("*unavailable — `run_act_view` is not migrated "
+                "(`2026-09-28_turn_habits.sql`)*")
 
 
 def add_stats_commands(cls):
@@ -62,8 +145,19 @@ def add_stats_commands(cls):
         if not records:
             return "❌ No active players found."
 
-        await _send_table(interaction, "Active players", records,
-                          COLUMNS["active_players"], note="by games played")
+        # The row count, not "by games played": the order is plain from the
+        # Games column, and how many people are playing is not. With a limit
+        # it is the players SHOWN, which is what the reader is looking at.
+        #
+        # `max_ritual` arrives with 2026-09-28_ritual_stats.sql. Before that the
+        # column would render as a row of dashes, so it is left out and the
+        # footer says why rather than implying nobody has played a ritual.
+        columns = COLUMNS["active_players"]
+        note = f"{len(records)} player{'' if len(records) == 1 else 's'}"
+        if "max_ritual" not in records[0]:
+            columns = [c for c in columns if c != "max_ritual"]
+            note += " · ritual: run 2026-09-28_ritual_stats.sql"
+        await _send_table(interaction, "Active players", records, columns, note=note)
 
     # --- Leaderboard ---
     @stats_cmd.subcommand(name="leaderboard", description="Show top combos")
@@ -128,6 +222,20 @@ def add_stats_commands(cls):
         except SupabaseError:
             acts = None
 
+        # One row per RUN (2026-09-28_ritual_stats.sql), caught the same way:
+        # the hero table and both charts are drawn from it, and None renders as
+        # "not migrated" in each rather than as a player with no runs.
+        try:
+            runs = fetch_all("player_run_view", filters={"player": player},
+                             sort=["started_at"])
+        except SupabaseError:
+            runs = None
+
+        try:
+            link_rows = fetch_all("player_link_view", filters={"player": player})
+        except SupabaseError:
+            link_rows = None
+
         # One row, and hand-grouped rather than a field per column: the view
         # carries 22 columns and a flat dump of them is the JSON blob again with
         # nicer punctuation.
@@ -137,10 +245,22 @@ def add_stats_commands(cls):
         embed.add_field(name="Runs", inline=True, value=sf.record(row))
         embed.add_field(name="Best combo", inline=True,
                         value=sf.value("best_combo", row.get("best_combo")))
-        embed.add_field(name="Highest Ritual", inline=True,
-                        value=sf.value("max_ritual", row.get("max_ritual")))
+
+        # Per hero, replacing a single "Highest Ritual": ritual ladders are per
+        # hero, and one number across heroes did not say which it was on.
+        embed.add_field(name="Heroes (Top = highest ritual, Clr = beat act 3)",
+                        inline=False, value=sf.player_heroes(runs))
+        embed.add_field(name="Games by ritual", inline=False,
+                        value=sf.player_ritual_chart(runs))
+        embed.add_field(name="Furthest act", inline=False,
+                        value=sf.player_act_chart(runs))
 
         embed.add_field(name="Max Reached", inline=False, value=sf.reached(row))
+        # The spread first, then the per-act averages it summarises: whether a
+        # player clears in two links or always runs out of nodes is invisible
+        # in "3.5".
+        embed.add_field(name="Regular turns by links played", inline=False,
+                        value=sf.player_link_chart(link_rows))
         embed.add_field(name="Links per turn", inline=False,
                         value=sf.links_table(acts, row))
         embed.add_field(name="Patterns cleared", inline=False,
@@ -153,35 +273,176 @@ def add_stats_commands(cls):
         embed.set_footer(text=sf.footer(records, note=sf.last_played(row)))
         await interaction.followup.send(embed=embed)
 
-    # --- Hero Info ---
-    @stats_cmd.subcommand(name="hero", description="Hero statistics")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch hero stats.")
-    async def stats_hero(
+    # --- Breakdown ---
+    # /stats hero and /stats version until 2026-09-28. They were one reply with
+    # two GROUP BYs -- identical columns, different first column -- and a third
+    # grouping, by ritual, would have been a third copy. One command, one
+    # choice.
+    #
+    # Only `version` drops the cutoff: comparing versions is its whole job, and
+    # version_info_view is the one view that does not filter on it.
+    @stats_cmd.subcommand(name="breakdown", description="Games grouped by hero, ritual or version")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch breakdown.")
+    async def stats_breakdown(
         self,
         interaction: Interaction,
+        by: str = SlashOption(
+            description="What to group the games by",
+            required=True,
+            choices={"Hero": "hero", "Ritual": "ritual", "Version": "version"},
+        ),
     ):
+        if by == "version":
+            records = fetch_all("version_info_view")
+            if not records:
+                return "❌ No version stats available."
+            await _send_table(interaction, "Versions", records, COLUMNS["version"],
+                              cutoff=False, colour=0x9B59B6)
+            return
+
+        if by == "ritual":
+            try:
+                records = fetch_all("ritual_info_view")
+            except SupabaseError:
+                return ("❌ `ritual_info_view` is not migrated — run "
+                        "`db/migrations/2026-09-28_ritual_stats.sql`.")
+            if not records:
+                return "❌ No ritual stats available."
+
+            text, dropped = sf.table(records, COLUMNS["ritual"])
+            embed = nextcord.Embed(title="Rituals", colour=0xC0392B)
+            embed.add_field(name="Games by ritual", inline=False, value=sf.ritual_chart(
+                {r.get("ritual"): r.get("game_count") for r in records}))
+            embed.add_field(name="Furthest act", inline=False,
+                            value=_furthest_act_field("ritual"))
+            embed.add_field(name="By ritual", inline=False, value=sf.block(text))
+            embed.set_footer(text=sf.footer(records, dropped=dropped))
+            await interaction.followup.send(embed=embed)
+            return
+
         records = fetch_all("hero_info_view")
         if not records:
             return "❌ No hero stats available."
 
-        await _send_table(interaction, "Heroes", records, COLUMNS["hero"],
-                          colour=0xE67E22)
+        # The chart is an extra; an unmigrated view costs it and nothing else,
+        # and says so.
+        try:
+            spread = sf.hero_ritual_chart(fetch_all("hero_ritual_view"),
+                                          hero_column="hero_name")
+        except SupabaseError:
+            spread = ("*unavailable — `hero_ritual_view` is not migrated "
+                      "(`2026-09-28_ritual_stats.sql`)*")
 
-    # --- Version Info ---
-    @stats_cmd.subcommand(name="version", description="Version statistics")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch version stats.")
-    async def stats_version(
+        text, dropped = sf.table(records, COLUMNS["hero"])
+        embed = nextcord.Embed(title="Heroes", colour=0xE67E22)
+        embed.add_field(name="Games by ritual", inline=False, value=spread)
+        embed.add_field(name="Furthest act", inline=False,
+                        value=_furthest_act_field("hero"))
+        embed.add_field(name="By hero", inline=False, value=sf.block(text))
+        embed.set_footer(text=sf.footer(records, dropped=dropped))
+        await interaction.followup.send(embed=embed)
+
+    # --- Habits ---
+    # 2026-09-28. How players play, as a spread ACROSS PLAYERS rather than an
+    # average over turns: "30% of players never skip" is a different fact from
+    # "0.46 skips per turn", and the one the average hides. Each player's rate is
+    # their own total over their own turns; players with too few turns for that
+    # to mean anything are counted in the footer, not the chart.
+    @stats_cmd.subcommand(name="habits", description="How often players skip and activate their hero")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch habits.")
+    async def stats_habits(
         self,
-        interaction: Interaction
+        interaction: Interaction,
+        turns: str = SlashOption(
+            description="Regular turns or boss fights",
+            required=False,
+            default="regular",
+            choices={"Regular turns": "regular", "Boss fights": "boss"},
+        ),
+        hero: str = SlashOption(description="Only runs with this hero", required=False,
+                                autocomplete=True),
     ):
-        records = fetch_all("version_info_view")
-        if not records:
-            return "❌ No version stats available."
+        try:
+            rows = fetch_all("player_turn_habits_view",
+                             filters={"hero": hero} if hero else None)
+        except SupabaseError:
+            return ("❌ `player_turn_habits_view` is not migrated — run "
+                    "`db/migrations/2026-09-28_turn_habits.sql`.")
 
-        # The ONE view with no cutoff -- comparing versions is the point, and
-        # filtering to >= 0.8.2 would leave it a single row.
-        await _send_table(interaction, "Versions", records, COLUMNS["version"],
-                          cutoff=False, colour=0x9B59B6)
+        players = sf.habit_players(rows, turns)
+        if not players:
+            return "❌ No turns recorded" + (f" for {hero}." if hero else ".")
+        counted, too_few = sf.habit_split(players, turns)
+
+        label = "regular turn" if turns == "regular" else "boss fight"
+        title = "Habits" + (f" · {hero}" if hero else "")
+        embed = nextcord.Embed(title=title, colour=0x3498DB)
+        embed.add_field(name=f"Players by skips per {label}", inline=False,
+                        value=sf.habit_chart(counted, "skips"))
+        embed.add_field(name=f"Players by hero activations per {label}", inline=False,
+                        value=sf.habit_chart(counted, "hero_activations"))
+
+        floor = sf.MIN_HABIT_TURNS[turns]
+        note = f"{len(counted)} player{'' if len(counted) == 1 else 's'} with {floor}+ {label}s"
+        if too_few:
+            note += f" · {too_few} with fewer not shown"
+        embed.set_footer(text=sf.footer([], note=note))
+        await interaction.followup.send(embed=embed)
+
+    # --- Everything ---
+    # For checking the reports after a view or formatting change: every one,
+    # with its default options, in the channel. Authorized only because it
+    # posts ~16 messages at once. The daily report comes last as a PREVIEW --
+    # built the same way, but it never touches daily_update_state.json, so it
+    # cannot claim or skip a scheduled send.
+    @stats_cmd.subcommand(name="all", description="Run every stats report (for checking changes)")
+    @safe_interaction(timeout=180, error_message="❌ /stats all stopped.", require_authorized=True)
+    async def stats_all(
+        self,
+        interaction: Interaction,
+        player: str = SlashOption(description="Player for the player card (default: most games)",
+                                  required=False, autocomplete=True),
+        daily: bool = SlashOption(description="Include a preview of yesterday's daily report",
+                                  required=False, default=True),
+    ):
+        if not player:
+            top = fetch_all("player_activity_view", ["player"], sort=["-game_count"], limit=1)
+            player = top[0]["player"] if top else None
+
+        preview = _Preview(interaction)
+        for label, attr, kwargs in ALL_REPORTS:
+            if attr == "stats_player":
+                if not player:
+                    continue
+                kwargs = {"player": player}
+                label = f"player ({player})"
+            preview.followup.label = label
+            # The report's own safe_interaction catches and posts its errors,
+            # so one failing report never stops the rest.
+            await getattr(cls, attr).callback(self, preview, **kwargs)
+
+        count = len(ALL_REPORTS)
+        if daily:
+            # Off the event loop: _fetch_daily_stats is a dozen blocking HTTP
+            # calls. Safe here, unlike in the scheduler, because nothing is
+            # claimed -- see the comment above _fetch_daily_stats's call site.
+            from azoth_commands import daily_update as du
+            preview.followup.label = "daily report"
+            try:
+                embeds = await asyncio.to_thread(
+                    lambda: du._build_update_embeds(du._fetch_daily_stats()))
+                for embed in embeds:
+                    embed.title = f"{embed.title} (preview)"
+                    await interaction.followup.send(embed=embed)
+            except Exception as e:
+                await preview.followup.send(f"❌ failed\n```{e}```")
+            count += 1
+
+        failed = preview.followup.text_replies
+        summary = f"✅ {count} reports run."
+        if failed:
+            summary += f" {len(failed)} replied with text instead of an embed: " + ", ".join(failed)
+        await interaction.followup.send(summary)
 
     # --- Turn Scoreboard ---
     @stats_cmd.subcommand(name="scoreboard", description="End-of-turn bonus thresholds, by act")
@@ -392,12 +653,14 @@ def add_stats_commands(cls):
 
     @stats_leaderboard.on_autocomplete("player")
     @stats_player.on_autocomplete("player")
+    @stats_all.on_autocomplete("player")
     async def autocomplete_active_player(self, interaction: Interaction, input: str):
         suggestions = autocomplete_from_table(table_name="active_players_view", input=input)
         await interaction.response.send_autocomplete(suggestions[:25])
 
 
     @stats_leaderboard.on_autocomplete("hero")
+    @stats_habits.on_autocomplete("hero")
     async def autocomplete_hero(self, interaction: Interaction, input: str):
         suggestions = autocomplete_from_table(table_name="heroes", input=input, filters={"archived_at": None})
         await interaction.response.send_autocomplete(suggestions[:25])
@@ -430,8 +693,9 @@ def add_stats_commands(cls):
     cls.stats_active_players = stats_active_players
     cls.stats_leaderboard = stats_leaderboard
     cls.stats_player = stats_player
-    cls.stats_hero = stats_hero
-    cls.stats_version = stats_version
+    cls.stats_breakdown = stats_breakdown
+    cls.stats_habits = stats_habits
+    cls.stats_all = stats_all
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would
     # leave the three bodies unreachable in exactly the way

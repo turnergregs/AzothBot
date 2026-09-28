@@ -142,7 +142,13 @@ verbatim with their defects annotated but not fixed.
 |---|---|---|
 | `leaderboard_view` | ~1,830 | `player`, `combo`, `hero`, `deck_size`, `turns`, `act`, `level`, `version` |
 | `player_info_view` | ~108 | `player`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo`, `most_drafted`, `most_picked_hero` |
-| `player_activity_view` | ~105 | `player`, `game_count`, `hours_played`, `highest_combo` |
+| `player_activity_view` | ~13 | `player`, `game_count`, `hours_played`, `highest_combo`, `max_ritual` (2026-09-28) |
+| `player_run_view` | — | One row per solo run at the cutoff: `player`, `hero`, `ritual`, `furthest_act` (survives abandonment), `cleared` (`run_cleared()`), `result`, `started_at`. **service_role only.** Added 2026-09-28 |
+| `hero_ritual_view` | — | `hero_name`, `ritual`, `game_count`, `player_count`. Added 2026-09-28 |
+| `ritual_info_view` | — | `ritual`, `game_count`, `player_count`, `avg/max` × `turns`/`act`/`level`/`combo`. Added 2026-09-28 |
+| `player_turn_habits_view` | — | Per (`player`, `hero`, `turn_type` regular/boss): `runs`, `turns`, `skips`, `skip_turns`, `hero_activations`, `activation_turns`. Counts only, so rows sum exactly. **service_role only.** Added 2026-09-28 |
+| `player_link_view` | — | Regular turns per (`player`, `links`), zero-link turns included. **service_role only.** Added 2026-09-28 |
+| `run_act_view` | — | Runs per (`hero_name`, `ritual`, `furthest_act`), from `player_run_view`. **service_role only.** Added 2026-09-28 |
 | `active_players_view` | ~184 | `name` (autocomplete source) |
 | `hero_info_view` | 1 | `hero_name`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |
 | `version_info_view` | 5 | `version`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |

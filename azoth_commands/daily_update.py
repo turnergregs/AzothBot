@@ -9,6 +9,7 @@ from nextcord import Interaction, SlashOption
 from nextcord.ext import tasks
 from azoth_commands.helpers import safe_interaction, AUTHORIZED_USER_IDS
 from azoth_logic import rite_schema
+from azoth_logic import stats_format as sf
 from constants import DEV_GUILD_ID
 from supabase_client import supabase, SUPABASE_ROLE
 
@@ -479,6 +480,8 @@ def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
         "boss_losses": sum(1 for t in boss_rows if t.get("boss_result") == "loss"),
         "regular_turns": len(regular),
         "avg_links_regular": (sum(regular) / len(regular)) if regular else 0,
+        # The spread behind that average, for the chart: {links: turns}.
+        "links_distribution": {n: regular.count(n) for n in set(regular)},
         "boss_turn_count": len(boss),
         "avg_links_boss": (sum(boss) / len(boss)) if boss else 0,
         "levelup_packs": len(levelups),
@@ -668,36 +671,9 @@ def _format_duration(seconds):
     return f"{hours}h {mins}m"
 
 
-# Width of the longest bar in the act chart, in characters.
-BAR_WIDTH = 10
-
-
 def _ratio(part: int, whole: int) -> str:
     """`picked/offered`, the rate and its sample size in one token."""
     return f"{part}/{whole}"
-
-
-def _act_chart(distribution: dict) -> str:
-    """The act distribution as a bar chart, in a code block so it aligns.
-
-    Every act from 1 up to the deepest one reached gets a row, including the
-    ones nobody reached -- a gap in the middle of the ladder is the shape worth
-    seeing, and omitting the empty rows would hide it. The top of the range
-    comes from the data rather than from the five acts the game has today, so an
-    act added later appears here without a code change.
-
-    Bars are scaled to the busiest act, and any non-zero count draws at least
-    one block: a bar that rounds away reads as nothing happened.
-    """
-    peak = max(distribution.values())
-    lines = []
-    for act in range(1, max(distribution) + 1):
-        count = distribution.get(act, 0)
-        width = round(BAR_WIDTH * count / peak) if peak else 0
-        if count and width == 0:
-            width = 1
-        lines.append(f"act {act}  {'█' * width:<{BAR_WIDTH}} {count}")
-    return "```\n" + "\n".join(lines) + "\n```"
 
 
 def _embed_char_count(embed: nextcord.Embed) -> int:
@@ -767,12 +743,20 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
     # boss is what advances the act, so the ladder already says who reached and
     # cleared a boss. See _fetch_daily_stats.
     if stats.get("act_distribution"):
-        fields.append(("Act Reached", _act_chart(stats["act_distribution"]), False))
+        fields.append(("Act Reached", sf.act_chart(stats["act_distribution"]), False))
+
+    # Links per regular turn, as a spread rather than the average: whether
+    # yesterday's turns cleared in two links or ran out of nodes is the shape an
+    # average of 3.5 hides. Omitted, not zeroed, when the turn tables could not
+    # be read -- see _fetch_turn_grain_stats.
+    tg = stats.get("turn_grain") or {}
+    if tg.get("links_distribution"):
+        fields.append((f"Links per Regular Turn · {tg.get('regular_turns', 0)} turns",
+                       sf.link_chart(tg["links_distribution"]), False))
 
     # Level-up rewards. `options` is the denominator: raw pick counts are
     # uninterpretable on their own, because common rewards get offered far more
     # often than rare ones and would top any list by volume alone.
-    tg = stats.get("turn_grain") or {}
     if tg.get("top_rewards"):
         fields.append((
             f"Level-Up Picks · {tg.get('levelup_packs', 0)} packs",
