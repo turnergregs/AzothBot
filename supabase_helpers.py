@@ -31,6 +31,8 @@ class SupabaseUnreadableError(SupabaseError):
 # readable only costs a confusing error; one omitted costs silent wrong answers.
 ANON_INSERT_ONLY = frozenset({
 	"turns", "turn_nodes", "levelups", "reports",
+	# 2026-09-28_engagement_spans.sql. Read through the two views below.
+	"engagement_spans",
 })
 
 # Retired content type. Kept in the database on purpose -- it still holds data
@@ -58,6 +60,8 @@ SERVICE_ROLE_ONLY_VIEWS = frozenset({
 	# 2026-09-28_turn_habits.sql. Read `turns` / `turn_nodes`, and run_act_view
 	# reads player_run_view.
 	"player_turn_habits_view", "player_link_view", "run_act_view",
+	# 2026-09-28_engagement_spans.sql.
+	"player_engagement_view", "player_engagement_actions_view",
 })
 
 # The six taxonomy tables that used to live here -- `card_attributes`,

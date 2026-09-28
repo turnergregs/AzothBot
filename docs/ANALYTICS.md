@@ -55,6 +55,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats active_players` | `player_activity_view` | Play counts, highest ritual played, hours. The footer counts the players shown |
 | `/stats breakdown by:hero` | `hero_info_view` + `hero_ritual_view` + `run_act_view` | Per-hero aggregates, with games-by-ritual and furthest-act charts per hero |
 | `/stats breakdown by:ritual` | `ritual_info_view` + `run_act_view` | Per-ritual aggregates, with games-per-ritual and furthest-act charts |
+| `/stats engagement` | `player_engagement_view` + `player_engagement_actions_view` | Players bucketed by the share of their active time spent in the Codex tools, a per-player time table, and what was made in the Codex. Developers excluded by default. See [Engagement](#engagement-2026-09-28) |
 | `/stats habits` | `player_turn_habits_view` | Players bucketed by their own skips and hero activations per turn. See [Habits](#habits-2026-09-28) |
 | `/stats breakdown by:version` | `version_info_view` | Per-version aggregates. The one reply with no cutoff |
 | `/stats draft composition` | `draft_deck_view` | Draft pool composition, as bar charts. **The view kept its old name** through two command renames. See [The draft pool](#the-draft-pool) |
@@ -75,6 +76,30 @@ the game repo adds what answers it:
 | "Highest Ritual" on the player card → a per-hero table | Ritual ladders are per hero. One max across heroes read R1 on Lumis as R1 everywhere |
 | `/stats hero` + `/stats version` → `/stats breakdown by:` | Same columns, different GROUP BY. A third grouping (ritual) would have been a third copy |
 | One bar chart, `stats_format.histogram()` | The daily report drew its act chart with its own copy until this change. Charts are used where a reply has one number per row; tables stay where it has several |
+
+### Engagement (2026-09-28)
+
+Are some players here for the tools rather than the game? The game repo's
+`EngagementTracker` writes `engagement_spans`: active time (within a minute of
+the last input) per surface, `run`, `custom_run`, `codex_browse`, `codex_edit`
+and `art_tools`, plus counts of what was made in the Codex. See the game repo's
+docs/ANALYTICS.md § Engagement spans.
+
+`/stats engagement` has three fields:
+
+- **Players by share of time in the tools**: `none`, `<25%`, `25-50%`,
+  `50-75%`, `75%+`, each with its share of players. Tools are the three Codex
+  surfaces; play is runs and custom runs.
+- **Time per player**: play, tools and share, most tool time first.
+- **Made in the Codex**: the eight most common actions over everyone shown.
+  Counts are not comparable across kinds (a hero is far more work than a deck
+  edit), so this says what kind of building happens, not how much.
+
+Players with under 5 minutes of active time in total are counted in the footer
+rather than charted (`MIN_ENGAGEMENT_SEC`). **Turner and Caleb are recorded but
+excluded by default** (`stats.DEVELOPERS`, matched on `players.name`):
+`include_devs:True` puts them back, which is the quickest way to check a new
+build's tracking before any playtester has opened the Codex.
 
 ### Habits (2026-09-28)
 

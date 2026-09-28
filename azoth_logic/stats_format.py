@@ -1601,3 +1601,107 @@ def player_link_chart(rows) -> str:
     if rows is None:
         return "*unavailable — `player_link_view` is not migrated*"
     return link_chart({r.get("links"): r.get("turns") for r in rows})
+
+
+# ---------------------------------------------------------------------------
+# Engagement: time in the game vs time in the Codex tools
+# ---------------------------------------------------------------------------
+# /stats engagement, 2026-09-28, from engagement_spans. The question: are some
+# players here for the tools (the Codex, the Easel, the art pages) rather than
+# the game? Time is the one measure that means the same thing on both sides,
+# so the chart buckets players by the SHARE of their active time spent in the
+# tools. What they made there is the second field.
+
+# Less active time than this in total and the share is a coin flip: someone who
+# opened the Index for two minutes on their first launch reads as "all tools".
+MIN_ENGAGEMENT_SEC = 300
+
+# Bucket upper bounds on the tool share. `none` is exactly zero, the players
+# who have never opened the tools, which is the headline in its own right.
+ENGAGEMENT_BUCKETS = [("none", 0), ("<25%", 0.25), ("25-50%", 0.5), ("50-75%", 0.75)]
+ENGAGEMENT_TOP = "75%+"
+
+# `verb:type` action keys are stored as the game names them; these shorten
+# them to fit a phone-width chart label.
+_ACTION_VERBS = {"created": "new", "edited": "edit", "cloned": "clone",
+                 "drafted": "draft", "exported": "export",
+                 "design_saved": "design", "look_saved": "look"}
+_ACTION_TYPES = {"deck_tile": "tile"}
+
+
+def duration(seconds) -> str:
+    """`45s`, `12m`, `1.5h`: active time at the precision anyone reads it."""
+    seconds = int(seconds or 0)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{round(seconds / 60)}m"
+    return f"{seconds / 3600:.1f}".rstrip("0").rstrip(".") + "h"
+
+
+def tool_share(row: dict) -> float:
+    """Share of a player's active time spent in the Codex tools, 0-1."""
+    play, tools = int(row.get("play_sec") or 0), int(row.get("tool_sec") or 0)
+    return tools / (play + tools) if play + tools else 0.0
+
+
+def engagement_bucket(share: float) -> str:
+    if share <= 0:
+        return "none"
+    for label, bound in ENGAGEMENT_BUCKETS[1:]:
+        if share < bound:
+            return label
+    return ENGAGEMENT_TOP
+
+
+def engagement_split(rows: list):
+    """`(counted, too_little)`. See MIN_ENGAGEMENT_SEC."""
+    counted = [r for r in rows or []
+               if int(r.get("play_sec") or 0) + int(r.get("tool_sec") or 0) >= MIN_ENGAGEMENT_SEC]
+    return counted, len(rows or []) - len(counted)
+
+
+def engagement_chart(rows: list) -> str:
+    """Players by the share of their time spent in the tools, every bucket shown."""
+    if not rows:
+        return "*no players with enough active time yet*"
+    counts = {label: 0 for label, _ in ENGAGEMENT_BUCKETS}
+    counts[ENGAGEMENT_TOP] = 0
+    for row in rows:
+        counts[engagement_bucket(tool_share(row))] += 1
+    return block(histogram(list(counts.items()), share=True))
+
+
+def engagement_table(rows: list) -> str:
+    """Each player's play time, tool time and tool share, most tool time first."""
+    if not rows:
+        return "*no rows*"
+    ordered = sorted(rows, key=lambda r: (-int(r.get("tool_sec") or 0),
+                                          -int(r.get("play_sec") or 0), str(r.get("player"))))
+    body = [[str(r.get("player") or "—"), duration(r.get("play_sec")),
+             duration(r.get("tool_sec")), f"{round(100 * tool_share(r))}%"]
+            for r in ordered]
+    return _grid(["Player", "Play", "Tools", "Share"], body)
+
+
+def action_label(key: str) -> str:
+    """`design_saved:deck_tile` -> `design tile`."""
+    verb, _, what = str(key).partition(":")
+    return f"{_ACTION_VERBS.get(verb, verb)} {_ACTION_TYPES.get(what, what)}".strip()
+
+
+def engagement_actions_chart(rows: list, top: int = 8) -> str:
+    """What was made in the Codex, summed over players, most common first.
+
+    Counts are not comparable across kinds -- a new hero is far more work than a
+    deck edit -- so this says what kind of builder the population is, not how
+    much building happened.
+    """
+    totals = {}
+    for row in rows or []:
+        key = row.get("action")
+        totals[key] = totals.get(key, 0) + int(row.get("count") or 0)
+    if not totals:
+        return "*nothing made in the Codex yet*"
+    ordered = sorted(totals.items(), key=lambda kv: (-kv[1], str(kv[0])))[:top]
+    return block(histogram([(action_label(k), n) for k, n in ordered]))

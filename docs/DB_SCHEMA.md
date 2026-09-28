@@ -148,6 +148,8 @@ verbatim with their defects annotated but not fixed.
 | `ritual_info_view` | — | `ritual`, `game_count`, `player_count`, `avg/max` × `turns`/`act`/`level`/`combo`. Added 2026-09-28 |
 | `player_turn_habits_view` | — | Per (`player`, `hero`, `turn_type` regular/boss): `runs`, `turns`, `skips`, `skip_turns`, `hero_activations`, `activation_turns`. Counts only, so rows sum exactly. **service_role only.** Added 2026-09-28 |
 | `player_link_view` | — | Regular turns per (`player`, `links`), zero-link turns included. **service_role only.** Added 2026-09-28 |
+| `player_engagement_view` | — | Per player: `run_sec`, `custom_run_sec`, `codex_browse_sec`, `codex_edit_sec`, `art_tools_sec`, `play_sec`, `tool_sec`, `spans`, `first_seen`, `last_seen`, from `engagement_spans`. **service_role only.** Added 2026-09-28 |
+| `player_engagement_actions_view` | — | Per (`player`, `action`): `count`, where `action` is `"verb:type"` from `engagement_spans.actions`. **service_role only.** Added 2026-09-28 |
 | `run_act_view` | — | Runs per (`hero_name`, `ritual`, `furthest_act`), from `player_run_view`. **service_role only.** Added 2026-09-28 |
 | `active_players_view` | ~184 | `name` (autocomplete source) |
 | `hero_info_view` | 1 | `hero_name`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |

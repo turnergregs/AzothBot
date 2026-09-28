@@ -55,12 +55,20 @@ ALL_REPORTS = [
     ("breakdown by:version", "stats_breakdown", {"by": "version"}),
     ("habits (regular)", "stats_habits", {"turns": "regular", "hero": None}),
     ("habits (boss)", "stats_habits", {"turns": "boss", "hero": None}),
+    ("engagement", "stats_engagement", {"include_devs": False}),
     ("scoreboard", "stats_scoreboard", {}),
     ("draft composition", "stats_draft_composition", {}),
     ("draft breakdown", "stats_draft_breakdown", {}),
     ("draft embellishments", "stats_draft_embellishments", {}),
     ("draft rates", "stats_draft_rates", {"limit": 15, "order": "most", "item_type": None}),
 ]
+
+
+# Left out of /stats engagement unless asked for. Recorded like anyone else --
+# their sessions are how a new build's tracking gets checked first -- but the
+# two people who build content for a living would otherwise define "a player
+# who prefers the tools". Matched on players.name, so a rename needs this too.
+DEVELOPERS = {"Turner", "Caleb Gannon"}
 
 
 class _Deferred:
@@ -444,6 +452,51 @@ def add_stats_commands(cls):
             summary += f" {len(failed)} replied with text instead of an embed: " + ", ".join(failed)
         await interaction.followup.send(summary)
 
+    # --- Engagement ---
+    # 2026-09-28. Time in runs against time in the Codex tools, per player,
+    # from engagement_spans. See stats_format § Engagement.
+    @stats_cmd.subcommand(name="engagement", description="Time in the game vs time in the Codex tools")
+    @safe_interaction(timeout=10, error_message="❌ Failed to fetch engagement.")
+    async def stats_engagement(
+        self,
+        interaction: Interaction,
+        include_devs: bool = SlashOption(description="Include Turner and Caleb",
+                                         required=False, default=False),
+    ):
+        try:
+            rows = fetch_all("player_engagement_view")
+            actions = fetch_all("player_engagement_actions_view")
+        except SupabaseError:
+            return ("❌ `player_engagement_view` is not migrated — run "
+                    "`db/migrations/2026-09-28_engagement_spans.sql`.")
+
+        excluded = 0
+        if not include_devs:
+            excluded = sum(1 for r in rows if r.get("player") in DEVELOPERS)
+            rows = [r for r in rows if r.get("player") not in DEVELOPERS]
+            actions = [a for a in actions if a.get("player") not in DEVELOPERS]
+        if not rows:
+            return ("❌ No engagement recorded yet. It starts with the first build "
+                    "carrying EngagementTracker.")
+        counted, too_little = sf.engagement_split(rows)
+
+        embed = nextcord.Embed(title="Engagement", colour=0x8E44AD)
+        embed.add_field(name="Players by share of time in the tools", inline=False,
+                        value=sf.engagement_chart(counted))
+        embed.add_field(name="Time per player (active only)", inline=False,
+                        value=sf.engagement_table(counted))
+        embed.add_field(name="Made in the Codex", inline=False,
+                        value=sf.engagement_actions_chart(actions))
+
+        floor = sf.duration(sf.MIN_ENGAGEMENT_SEC)
+        note = f"{len(counted)} player{'' if len(counted) == 1 else 's'} with {floor}+"
+        if too_little:
+            note += f" · {too_little} with less not shown"
+        if excluded:
+            note += " · developers excluded"
+        embed.set_footer(text=sf.footer([], note=note))
+        await interaction.followup.send(embed=embed)
+
     # --- Turn Scoreboard ---
     @stats_cmd.subcommand(name="scoreboard", description="End-of-turn bonus thresholds, by act")
     @safe_interaction(timeout=10, error_message="❌ Failed to fetch scoreboard stats.")
@@ -696,6 +749,7 @@ def add_stats_commands(cls):
     cls.stats_breakdown = stats_breakdown
     cls.stats_habits = stats_habits
     cls.stats_all = stats_all
+    cls.stats_engagement = stats_engagement
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would
     # leave the three bodies unreachable in exactly the way
