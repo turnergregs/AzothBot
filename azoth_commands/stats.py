@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 import json
 import nextcord
@@ -11,6 +12,7 @@ from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID
 from supabase_helpers import fetch_all, SupabaseError
 from azoth_logic import stats_format as sf
+from azoth_logic import stats_cards
 
 
 # Columns worth showing, per view. Explicit rather than "whatever the view
@@ -56,6 +58,7 @@ ALL_REPORTS = [
     ("habits (regular)", "stats_habits", {"turns": "regular", "hero": None}),
     ("habits (boss)", "stats_habits", {"turns": "boss", "hero": None}),
     ("engagement", "stats_engagement", {"include_devs": False}),
+    ("bosses", "stats_bosses", {"players": "new"}),
     ("scoreboard", "stats_scoreboard", {}),
     ("draft composition", "stats_draft_composition", {}),
     ("draft breakdown", "stats_draft_breakdown", {}),
@@ -108,6 +111,21 @@ class _Preview:
 
     def __getattr__(self, name):
         return getattr(self._interaction, name)
+
+
+async def _send_card(interaction, card, filename, *, footer, colour=0x5865F2):
+    """A report drawn as an image, in an embed that carries a text footer.
+
+    The image states everything the chart needs; the footer repeats what it
+    rests on as text so it can be copied. Drawn off the event loop: PIL blocks
+    for a noticeable moment, which would stall the gateway heartbeat.
+    """
+    data = await asyncio.to_thread(card.png)
+    embed = nextcord.Embed(colour=colour)
+    embed.set_image(url=f"attachment://{filename}")
+    embed.set_footer(text=footer)
+    await interaction.followup.send(embed=embed,
+                                    file=nextcord.File(io.BytesIO(data), filename=filename))
 
 
 async def _send_table(interaction, title, rows, columns=None, *, rank=False,
@@ -497,6 +515,40 @@ def add_stats_commands(cls):
         embed.set_footer(text=sf.footer([], note=note))
         await interaction.followup.send(embed=embed)
 
+    # --- Bosses ---
+    # 2026-09-28, the first report drawn as an image (stats_charts). Each boss's
+    # win rate, read against its act's overall rate: Caleb's addition to the
+    # first draft, since later acts are meant to be harder.
+    @stats_cmd.subcommand(name="bosses", description="Boss win rates, by act")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch boss stats.")
+    async def stats_bosses(
+        self,
+        interaction: Interaction,
+        players: str = SlashOption(
+            description="Whose fights to count (default: new playtesters)",
+            required=False,
+            default="new",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
+    ):
+        try:
+            rows = fetch_all("boss_fight_view")
+        except SupabaseError:
+            return ("❌ `boss_fight_view` is not migrated — run "
+                    "`db/migrations/2026-09-28_player_cohorts.sql` then "
+                    "`2026-09-28_boss_fight_view.sql`.")
+        if not rows:
+            return "❌ No bosses found."
+
+        rows, filtered = stats_cards.select_cohort(rows, players, "boss",
+                                                   stats_cards.BOSS_COUNTS)
+        population = stats_cards.COHORT_LABELS[players] if filtered else "Everyone"
+        footer = stats_cards.bosses_footer(rows)
+        if not filtered:
+            footer += " · player filter needs 2026-09-28_player_cohorts.sql"
+        await _send_card(interaction, stats_cards.bosses_card(rows, population), "bosses.png",
+                         footer=footer, colour=0xC0392B)
+
     # --- Turn Scoreboard ---
     @stats_cmd.subcommand(name="scoreboard", description="End-of-turn bonus thresholds, by act")
     @safe_interaction(timeout=10, error_message="❌ Failed to fetch scoreboard stats.")
@@ -750,6 +802,7 @@ def add_stats_commands(cls):
     cls.stats_habits = stats_habits
     cls.stats_all = stats_all
     cls.stats_engagement = stats_engagement
+    cls.stats_bosses = stats_bosses
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would
     # leave the three bodies unreachable in exactly the way

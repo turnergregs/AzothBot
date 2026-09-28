@@ -150,6 +150,8 @@ verbatim with their defects annotated but not fixed.
 | `player_link_view` | — | Regular turns per (`player`, `links`), zero-link turns included. **service_role only.** Added 2026-09-28 |
 | `player_engagement_view` | — | Per player: `run_sec`, `custom_run_sec`, `codex_browse_sec`, `codex_edit_sec`, `art_tools_sec`, `play_sec`, `tool_sec`, `spans`, `first_seen`, `last_seen`, from `engagement_spans`. **service_role only.** Added 2026-09-28 |
 | `player_engagement_actions_view` | — | Per (`player`, `action`): `count`, where `action` is `"verb:type"` from `engagement_spans.actions`. **service_role only.** Added 2026-09-28 |
+| `boss_fight_view` | ~40 | Per (`boss`, `cohort`): `act`, `fights`, `wins`, `losses`, `unfinished` (player wins and losses; solo, cutoff, no restarts). An unfought live boss is one `cohort` NULL zero row. **service_role only.** Added 2026-09-28 |
+| `player_cohort_view` | ~200 | `player_uuid`, `cohort`: `developer` (`players.developer`), `veteran` (a game below the cutoff) or `new`. Added 2026-09-28 |
 | `run_act_view` | — | Runs per (`hero_name`, `ritual`, `furthest_act`), from `player_run_view`. **service_role only.** Added 2026-09-28 |
 | `active_players_view` | ~184 | `name` (autocomplete source) |
 | `hero_info_view` | 1 | `hero_name`, `game_count`, `avg/max` × `turns`/`act`/`level`/`combo` |

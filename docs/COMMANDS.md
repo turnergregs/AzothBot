@@ -430,6 +430,7 @@ what you would want to force. Full policy:
 | `/stats player` | — | `player`* — a full player card |
 | `/stats breakdown` | — | `by`* (hero / ritual / version). Replaced `/stats hero` and `/stats version` 2026-09-28 |
 | `/stats habits` | — | `turns?` (regular / boss, default regular), `hero?`* |
+| `/stats bosses` | — | `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Every boss's win rate by act, drawn as an image |
 | `/stats engagement` | — | `include_devs?` (default false; the names are `stats.DEVELOPERS`) |
 | `/stats all` | 🔒 | `player?`* (default: most games), `daily?` (default true). Runs every report above with its defaults, then a preview of yesterday's daily report, then a summary naming every report that replied with text (an error, "not migrated" or "no data") instead of an embed. For checking the reports after a change. The daily preview never touches `daily_update_state.json`, so it cannot claim or skip a scheduled send. `stats.ALL_REPORTS` is the list; `test_command_registration` fails if a new report is missing from it |
 | `/stats scoreboard` | — | — |

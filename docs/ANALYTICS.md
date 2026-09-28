@@ -55,6 +55,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats active_players` | `player_activity_view` | Play counts, highest ritual played, hours. The footer counts the players shown |
 | `/stats breakdown by:hero` | `hero_info_view` + `hero_ritual_view` + `run_act_view` | Per-hero aggregates, with games-by-ritual and furthest-act charts per hero |
 | `/stats breakdown by:ritual` | `ritual_info_view` + `run_act_view` | Per-ritual aggregates, with games-per-ritual and furthest-act charts |
+| `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
 | `/stats engagement` | `player_engagement_view` + `player_engagement_actions_view` | Players bucketed by the share of their active time spent in the Codex tools, a per-player time table, and what was made in the Codex. Developers excluded by default. See [Engagement](#engagement-2026-09-28) |
 | `/stats habits` | `player_turn_habits_view` | Players bucketed by their own skips and hero activations per turn. See [Habits](#habits-2026-09-28) |
 | `/stats breakdown by:version` | `version_info_view` | Per-version aggregates. The one reply with no cutoff |
@@ -76,6 +77,59 @@ the game repo adds what answers it:
 | "Highest Ritual" on the player card → a per-hero table | Ritual ladders are per hero. One max across heroes read R1 on Lumis as R1 everywhere |
 | `/stats hero` + `/stats version` → `/stats breakdown by:` | Same columns, different GROUP BY. A third grouping (ritual) would have been a third copy |
 | One bar chart, `stats_format.histogram()` | The daily report drew its act chart with its own copy until this change. Charts are used where a reply has one number per row; tables stay where it has several |
+
+### Reports as images (2026-09-28)
+
+`/stats all` put every report side by side and showed the limits of text in
+embeds: Discord wraps code blocks instead of scrolling them, so every chart was
+squeezed into 24 characters, and ANSI text has eight colours. The reports are
+being redrawn as images, one at a time, each reviewed in Discord before the next.
+
+- `azoth_logic/stats_charts.py` is the drawing layer and the house style: a
+  `Card` of stacked blocks (section header, bar row, note, spacer) on a dark
+  surface, drawn at 2x, in DejaVu Sans from matplotlib. Blocks are added as
+  reports need them.
+- `azoth_logic/stats_cards.py` holds one function per report, rows in, `Card`
+  out: what comes first, what is grey, what each number is read against.
+- `stats._send_card` draws off the event loop and sends the image in an embed
+  whose footer repeats what it rests on, as copyable text.
+
+The rules, from the dataviz guidance the reports were audited against: pick the
+chart from the data's job; label values directly (an image has no hover); one
+accent colour for one measure and grey for anything not asserted; hairline
+chrome; and every card states its population and sample size.
+
+**Hero colours never carry identity alone.** Checked with a colour-blindness
+validator: Eith and Essra are nearly indistinguishable to protanopes, and Lumis
+and Nebul are too pale for a dark card. Hero charts always label the hero. The
+element colours pass.
+
+**`/stats bosses`** is the first. Each boss's win rate (player wins over
+finished fights) is drawn against a line at its act's overall rate, pooled over
+every fight in the act rather than averaged over bosses, with the difference in
+points beside it: Caleb's review of the first draft, since later acts are meant
+to be harder. Bosses under 5 finished fights are grey and sort after the
+reliable ones. An act with one fought boss draws no line, since a baseline of
+one boss is that boss. Unfought bosses are named, not drawn: "Not yet fought:
+..." under their act, and an act nobody reached is its header alone.
+
+**Outliers** are flagged red ▼ (clearly harder) or blue ▲ (clearly easier),
+and every other bar is neutral grey so the flags are what the eye finds. Not
+standard deviations across the act's bosses, which ignore fight counts and let
+an outlier inflate its own baseline: a boss is flagged when its whole 95%
+Wilson range sits below or above the pooled rate of the act's OTHER bosses
+(`stats_cards.boss_flag`, `FLAG_Z`). Only bosses with 5+ finished fights are
+flagged. The marker is drawn in the flag colour, and a 0% bar is a dot, so a
+flagged boss with no wins is never invisible. The card carries no legend.
+
+**Cohorts.** Every player is `developer` (`players.developer`: Turner and
+Caleb), `veteran` (any game below the cutoff) or `new`, from the game repo's
+`player_cohort_view`. Views that support it group by `cohort`, and
+`stats_cards.select_cohort` sums the ones asked for: `players:` is New
+playtesters (the default), Everyone but us, or Everyone. A boss only other
+cohorts fought still appears, as unfought. On a view without the column the
+filter is skipped and the footer says so, rather than labelling everyone as
+new playtesters.
 
 ### Engagement (2026-09-28)
 

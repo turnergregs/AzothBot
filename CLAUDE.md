@@ -76,6 +76,10 @@ All docs live in `docs/`. Read before changing a system.
   upserting, so regenerating destroys the previous image. No history, no seed.
   Because the name does not change, `art_cache.forget_art()` must be called at
   every upload site or the bot keeps drawing the old art for up to 7 days.
+- **`/stats` reports are being redrawn as images** (2026-09-28): the drawing
+  layer is `azoth_logic/stats_charts.py`, each report's layout
+  `azoth_logic/stats_cards.py`, sent by `stats._send_card`. `/stats bosses` is
+  the first. See `docs/ANALYTICS.md` § Reports as images.
 - **The `/stats draft` subcommands are grouped, not merged.** `composition` is
   content with no games behind it and no cutoff; `rates` and `breakdown` are
   game data at `analytics_cutoff()`. One embed carries one footer, so a merged
