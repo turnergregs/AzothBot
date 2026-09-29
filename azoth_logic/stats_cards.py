@@ -631,3 +631,214 @@ def player_card(name: str, runs: list, summary: dict | None, info: dict | None) 
 
 def player_footer(runs: list) -> str:
     return f"version >= {CUTOFF_VERSION} · {len(runs)} solo run{'' if len(runs) == 1 else 's'}"
+
+
+# ---------------------------------------------------------------------------
+# /stats draft picks, items and pool
+# ---------------------------------------------------------------------------
+# Redrawn as images 2026-09-29. picks and items read draft_offer_view and
+# draft_item_offer_view (counts per cohort); pool reads draft_deck_view, which
+# is content rather than play and so takes no players: filter.
+#
+# picks replaced /stats draft breakdown and /stats draft embellishments;
+# items replaced the text /stats draft rates; pool is the renamed composition.
+#
+# A pick rate is conditional on the offer, so rites rank beside cards and
+# aspects: the injection budget changes how often a rite is offered, and that
+# divides out. Raw pick counts would not be comparable.
+
+# Below this many offers a bucket is dimmed and never flagged.
+MIN_OFFERS = 10
+# Items are ranked only from this many offers: below it one lucky offer puts
+# a card at 100% above everything.
+MIN_ITEM_OFFERS = 5
+ITEMS_PER_SECTION = 5
+
+DRAFT_COUNTS = ("offered", "picked")
+
+# The game's element colours (GlobalVars.ELEMENTS), for the pool's element
+# bars. Catalysts are the game's "any" white, a step off pure white so the bar
+# does not glare on the dark card.
+ELEMENT_COLOURS = {"anima": "#8769e9", "blood": "#ef1212", "sol": "#f9a410",
+                   "catalyst": "#e8e6dc"}
+ELEMENT_ORDER = ["anima", "blood", "sol", "catalyst"]
+TYPE_LABELS = {"card": "Cards", "aspect": "Aspects", "rite": "Rites"}
+KIND_LABELS = {"upgrade": "Upgraded", "attribute": "Attribute", "enhancement": "Enhanced"}
+
+
+def _flag_style(flag):
+    colour = {"below": sc.BELOW, "above": sc.ABOVE}.get(flag)
+    return {"fill": colour or sc.NEUTRAL, "marker": {"below": "▼", "above": "▲"}.get(flag, ""),
+            "marker_fill": colour}
+
+
+def _rate_rows(rows: list, baseline: tuple | None = None) -> list:
+    """BarRows for `[(label, picked, offered)]`, each read against the pooled
+    rate of the section, or against `baseline` `(picked, offered)` when given.
+    A row is flagged against the REST of its section (rate_flag's rule), or
+    against the baseline, with MIN_OFFERS on both sides."""
+    picked = sum(p for _, p, _ in rows)
+    offered = sum(o for _, _, o in rows)
+    base_p, base_o = baseline or (picked, offered)
+    average = base_p / base_o if base_o else 0
+    bars = []
+    for label, p, o in rows:
+        rate = p / o if o else 0
+        ref_p, ref_o = baseline or (picked - p, offered - o)
+        flag = (rate_flag(p, o, ref_p / ref_o)
+                if o >= MIN_OFFERS and ref_o >= MIN_OFFERS else None)
+        bars.append(sc.BarRow(label, rate, value_text=f"{round(rate * 100)}%",
+                              count_text=f"{p}/{o}", delta=sc.signed((rate - average) * 100),
+                              faded=o < MIN_OFFERS, reference=average,
+                              label_w=100, count_w=66, **_flag_style(flag)))
+    return bars
+
+
+def _buckets(rows: list, dimension: str) -> dict:
+    return {r.get("bucket"): (int(r.get("picked") or 0), int(r.get("offered") or 0))
+            for r in rows if r.get("dimension") == dimension and int(r.get("offered") or 0)}
+
+
+def _valence_key(bucket) -> tuple:
+    text = str(bucket)
+    return (0, 0) if text == "none" else (1, int(text)) if text.isdigit() else (2, text)
+
+
+def _valence_name(bucket) -> str:
+    text = str(bucket)
+    return "—" if text == "none" else f"{text}v" if text.isdigit() else text
+
+
+def draft_picks_card(rows: list, population: str = "") -> sc.Card:
+    """Pick rates by type, element, valence and embellishment kind.
+
+    No bare-vs-embellished section (Turner's review): embellished cards are
+    expected to be picked more. What is worth knowing is WHICH kind lifts a
+    card most, so each kind is read against bare cards.
+    """
+    types = _buckets(rows, "type")
+    offered = sum(o for _, o in types.values())
+    picked = sum(p for p, _ in types.values())
+    parts = [population, f"version ≥ {CUTOFF_VERSION}", f"{offered:,} offers"]
+    card = sc.Card("Draft picks", " · ".join(p for p in parts if p))
+    card.add(sc.StatTiles([("Offers", f"{offered:,}"), ("Picked", f"{picked:,}"),
+                           ("Pick rate", f"{round(100 * picked / offered)}%" if offered else "—")]))
+    card.add(sc.Spacer(4))
+
+    def section(title, entries, baseline=None, detail=None):
+        if not entries:
+            return
+        p = sum(e[1] for e in entries)
+        o = sum(e[2] for e in entries)
+        if detail is None:
+            detail = f"{round(100 * p / o)}% overall · {p}/{o}" if o else ""
+        card.add(sc.SectionHeader(title, detail))
+        card.add(*_rate_rows(entries, baseline))
+        card.add(sc.Spacer(4))
+
+    order = [t for t in TYPE_LABELS if t in types] + sorted(t for t in types if t not in TYPE_LABELS)
+    section("By type", [(TYPE_LABELS.get(t, t), *types[t]) for t in order])
+
+    elements = _buckets(rows, "element")
+    order = [e for e in ELEMENT_ORDER if e in elements] + sorted(e for e in elements if e not in ELEMENT_ORDER)
+    section("By element", [(str(e).capitalize(), *elements[e]) for e in order])
+
+    valences = _buckets(rows, "valence")
+    section("By valence", [(_valence_name(v), *valences[v]) for v in sorted(valences, key=_valence_key)])
+
+    bare = _buckets(rows, "embellished").get("bare")
+    kinds = _buckets(rows, "kind")
+    if bare and kinds:
+        section("By embellishment",
+                [(KIND_LABELS.get(k, k), *kinds[k]) for k in KIND_LABELS if k in kinds],
+                baseline=bare,
+                detail=f"against bare cards: {round(100 * bare[0] / bare[1])}%")
+    return card
+
+
+def draft_picks_footer(rows: list) -> str:
+    offered = sum(o for _, o in _buckets(rows, "type").values())
+    return f"version >= {CUTOFF_VERSION} · {offered:,} offers · solo · element and valence are cards only"
+
+
+def _item_label(row: dict) -> str:
+    return str(row.get("item_name") or "—")
+
+
+def draft_items_card(rows: list, population: str = "") -> sc.Card:
+    """The five most and five least picked items, cards, aspects and rites
+    ranked together, each read against the pick rate over ALL offers."""
+    offered = sum(int(r.get("offered") or 0) for r in rows)
+    picked = sum(int(r.get("picked") or 0) for r in rows)
+    average = picked / offered if offered else 0
+    ranked = [r for r in rows if int(r.get("offered") or 0) >= MIN_ITEM_OFFERS]
+
+    def rate(r):
+        return int(r.get("picked") or 0) / int(r.get("offered"))
+
+    most = sorted(ranked, key=lambda r: (-rate(r), -int(r["offered"]), _item_label(r)))[:ITEMS_PER_SECTION]
+    rest = [r for r in ranked if r not in most]
+    least = sorted(rest, key=lambda r: (rate(r), -int(r["offered"]), _item_label(r)))[:ITEMS_PER_SECTION]
+
+    parts = [population, f"version ≥ {CUTOFF_VERSION}", f"items offered {MIN_ITEM_OFFERS}+ times"]
+    card = sc.Card("Draft items", " · ".join(p for p in parts if p))
+
+    def section(title, items):
+        if not items:
+            return
+        card.add(sc.SectionHeader(title, f"all items {round(average * 100)}%"))
+        for r in items:
+            p, o = int(r.get("picked") or 0), int(r.get("offered"))
+            flag = rate_flag(p, o, (picked - p) / (offered - o)) if offered - o else None
+            kind = r.get("item_type")
+            card.add(sc.BarRow(_item_label(r), p / o, value_text=f"{round(100 * p / o)}%",
+                               count_text=f"{p}/{o}", delta=sc.signed((p / o - average) * 100),
+                               reference=average, label_w=130,
+                               tag="" if kind == "card" else str(kind or ""),
+                               **_flag_style(flag)))
+        card.add(sc.Spacer(6))
+
+    section("Most picked", most)
+    # Least picked leads with the lowest rate; drawn in that order.
+    section("Least picked", least)
+    return card
+
+
+def draft_items_footer(rows: list) -> str:
+    unranked = sum(1 for r in rows if int(r.get("offered") or 0) < MIN_ITEM_OFFERS)
+    footer = f"version >= {CUTOFF_VERSION} · {len(rows)} items offered · solo"
+    if unranked:
+        footer += f" · {unranked} offered fewer than {MIN_ITEM_OFFERS} times, not ranked"
+    return footer
+
+
+def draft_pool_card(row: dict) -> sc.Card:
+    """What the draft pool holds: content, not play, so no cohort."""
+    from azoth_logic import stats_format as sf
+    cards_n, aspects_n = int(row.get("cards") or 0), int(row.get("aspects") or 0)
+    card = sc.Card("Draft pool", "Shipped draft decks · content, not play")
+    tiles = [("Cards", str(cards_n)), ("Aspects", str(aspects_n))]
+    templates = int(row.get("rite_templates") or 0)
+    if templates:
+        # Rites are templates drawn WITH replacement into injected slots, not
+        # pool members: counted beside the pool, never added into it.
+        tiles += [("Rite templates", str(templates)),
+                  ("Rite slots / run", f"~{sf.injected_slots(cards_n + aspects_n)}")]
+    card.add(*sc.tile_rows(tiles))
+    card.add(sc.Spacer(4))
+
+    elements, _ = sf._element_buckets(row)
+    if elements:
+        top = max(n for _, n in elements)
+        card.add(sc.SectionHeader("Cards by element"))
+        for name, n in elements:
+            card.add(sc.BarRow(str(name).capitalize(), n / top, value_text=str(n), count_w=0,
+                               fill=ELEMENT_COLOURS.get(name, sc.NEUTRAL)))
+        card.add(sc.Spacer(4))
+    valences, _ = sf._valence_buckets(row)
+    if valences:
+        top = max(n for _, n in valences)
+        card.add(sc.SectionHeader("Cards by valence"))
+        for label, n in valences:
+            card.add(sc.BarRow(label, n / top, value_text=str(n), count_w=0, fill=sc.NEUTRAL))
+    return card

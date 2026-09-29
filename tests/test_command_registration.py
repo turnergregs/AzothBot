@@ -159,7 +159,9 @@ def test_the_draft_subcommands_are_all_reachable():
     levels down. Assigning only the group onto the cog would leave all of them
     unreachable in exactly the way this file exists to catch -- and the group
     itself does nothing, so nothing would visibly break."""
-    expected = {"composition", "rates", "breakdown", "embellishments"}
+    # picks, items, pool since 2026-09-29 (they replaced breakdown and
+    # embellishments, rates, and composition respectively).
+    expected = {"picks", "items", "pool"}
     registered = _registered_command_names()
     assert {"draft"} | expected <= registered
 

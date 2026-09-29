@@ -152,6 +152,8 @@ verbatim with their defects annotated but not fixed.
 | `player_engagement_actions_view` | — | Per (`player`, `action`): `count`, where `action` is `"verb:type"` from `engagement_spans.actions`. **service_role only.** Added 2026-09-28 |
 | `player_summary_view` | ~15 | One row per player at the cutoff: `player`, `cohort`, `runs`, `max_ritual`, `run_sec` (games; `run_sec` is summed `elapsed_sec`, idle included), `custom_run_sec`, `codex_sec`, `art_sec` (engagement_spans active time; NULL before a tracked build), `actions` (jsonb), `last_seen`. **service_role only.** Added 2026-09-28 |
 | `breakdown_view` | ~100 | Per (`dimension` hero/ritual/version, `grp`, `cohort`, `furthest_act`): `runs`, `cleared`, `regular_turns`, `regular_skips`, `regular_links`, `regular_activations`, `boss_turns`, `boss_activations`. Counts only. **service_role only.** Added 2026-09-28 |
+| `draft_offer_view` | ~40 | Per (`dimension` type/element/valence/embellished/kind, `bucket`, `cohort`): `offered`, `picked`. Uncensored. **service_role only.** Added 2026-09-29 |
+| `draft_item_offer_view` | ~500 | Per (`item_type`, `item_id`, `item_name`, `cohort`): `offered`, `picked`. Uncensored. **service_role only.** Added 2026-09-29 |
 | `boss_fight_view` | ~40 | Per (`boss`, `cohort`): `act`, `fights`, `wins`, `losses`, `unfinished` (player wins and losses; solo, cutoff, no restarts). An unfought live boss is one `cohort` NULL zero row. **service_role only.** Added 2026-09-28 |
 | `player_cohort_view` | ~200 | `player_uuid`, `cohort`: `developer` (`players.developer`), `veteran` (a game below the cutoff) or `new`. Added 2026-09-28 |
 | `run_act_view` | — | Runs per (`hero_name`, `ritual`, `furthest_act`), from `player_run_view`. **service_role only.** Added 2026-09-28 |

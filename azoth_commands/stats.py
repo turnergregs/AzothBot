@@ -21,15 +21,6 @@ from azoth_logic import stats_cards
 # actually came for. Anything trimmed beyond this is named in the footer.
 COLUMNS = {
     "leaderboard": ["player", "combo", "hero", "turns", "act", "level"],
-    # Was ABSENT until 2026-09-03, which is exactly the failure the note above
-    # describes. draft_rates_view returns item_type, item_id, item_name,
-    # element, valence and only then the five rate columns, so the width trim
-    # dropped `times_offered`, `times_picked`, `times_reserved`, `pick_rate`
-    # and `reserve_rate` -- every number in the table -- and the reply was a
-    # ranked list of names with no visible reason for the ranking. `item_id` is
-    # left out for the opposite reason: it is a join key, not information.
-    "draft_rates": ["item_name", "item_type", "pick_rate", "times_picked",
-                    "times_offered"],
 }
 
 
@@ -48,10 +39,9 @@ ALL_REPORTS = [
     ("breakdown by:version", "stats_breakdown", {"by": "version", "players": "new"}),
     ("bosses", "stats_bosses", {"players": "new"}),
     ("scoreboard", "stats_scoreboard", {}),
-    ("draft composition", "stats_draft_composition", {}),
-    ("draft breakdown", "stats_draft_breakdown", {}),
-    ("draft embellishments", "stats_draft_embellishments", {}),
-    ("draft rates", "stats_draft_rates", {"limit": 15, "order": "most", "item_type": None}),
+    ("draft picks", "stats_draft_picks", {"players": "new"}),
+    ("draft items", "stats_draft_items", {"players": "new"}),
+    ("draft pool", "stats_draft_pool", {}),
 ]
 
 
@@ -399,169 +389,77 @@ def add_stats_commands(cls):
         await interaction.followup.send(embed=embed)
 
     # --- Draft ---------------------------------------------------------
-    # A subcommand GROUP, 2026-09-03. The three replies are neighbours but they
-    # are not one reply: the composition is content with no games behind it and
-    # no cutoff, while the two rate views are games at 0.9.10+ filtered further
-    # by `having times_offered >= 5`. One embed carries one footer, and merging
-    # them would have to either claim the cutoff over content numbers or drop it
-    # over game numbers. Grouping gets the tidiness without the lie.
+    # A subcommand GROUP: picks and items are play (draft offers, with the
+    # players: filter); pool is content (what the shipped draft decks hold),
+    # with no cohort. Each is its own image, so each states what it rests on.
+    # Redrawn 2026-09-29: picks replaced `breakdown` and `embellishments`,
+    # items replaced the text `rates`, pool is the renamed `composition`.
     @stats_cmd.subcommand(name="draft", description="The draft pool and how it is picked")
     async def stats_draft(self, interaction: Interaction):
         pass
 
-    # --- Draft Pool Composition ---
-    @stats_draft.subcommand(name="composition", description="Draft pool composition")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft pool data.")
-    async def stats_draft_composition(self, interaction: Interaction):
+    @stats_draft.subcommand(name="picks", description="Pick rates by type, element, valence and embellishment")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch draft picks.")
+    async def stats_draft_picks(
+        self,
+        interaction: Interaction,
+        players: str = SlashOption(
+            description="Whose drafts to count (default: new playtesters)",
+            required=False,
+            default="new",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
+    ):
+        try:
+            rows = fetch_all("draft_offer_view")
+        except SupabaseError:
+            return ("❌ `draft_offer_view` is not migrated — run "
+                    "`db/migrations/2026-09-29_draft_offer_views.sql`.")
+        rows, _ = stats_cards.select_cohort(rows, players, ("dimension", "bucket"),
+                                            stats_cards.DRAFT_COUNTS)
+        if not any(r.get("offered") for r in rows):
+            return "❌ No draft offers recorded for these players yet."
+        await _send_card(interaction,
+                         stats_cards.draft_picks_card(rows, stats_cards.COHORT_LABELS[players]),
+                         "draft_picks.png", footer=stats_cards.draft_picks_footer(rows),
+                         colour=0x1ABC9C)
+
+    @stats_draft.subcommand(name="items", description="The most and least picked items")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch draft items.")
+    async def stats_draft_items(
+        self,
+        interaction: Interaction,
+        players: str = SlashOption(
+            description="Whose drafts to count (default: new playtesters)",
+            required=False,
+            default="new",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
+    ):
+        try:
+            rows = fetch_all("draft_item_offer_view")
+        except SupabaseError:
+            return ("❌ `draft_item_offer_view` is not migrated — run "
+                    "`db/migrations/2026-09-29_draft_offer_views.sql`.")
+        rows, _ = stats_cards.select_cohort(rows, players, ("item_type", "item_id", "item_name"),
+                                            stats_cards.DRAFT_COUNTS)
+        rows = [r for r in rows if r.get("offered")]
+        if not rows:
+            return "❌ No draft offers recorded for these players yet."
+        await _send_card(interaction,
+                         stats_cards.draft_items_card(rows, stats_cards.COHORT_LABELS[players]),
+                         "draft_items.png", footer=stats_cards.draft_items_footer(rows),
+                         colour=0x1ABC9C)
+
+    @stats_draft.subcommand(name="pool", description="What the draft pool holds")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch the draft pool.")
+    async def stats_draft_pool(self, interaction: Interaction):
         records = fetch_all("draft_deck_view")
         if not records:
             return "❌ No draft pool data available."
-
-        # Bar charts rather than runs of "label N", because both fields are
-        # DISTRIBUTIONS and a distribution read as prose is just arithmetic
-        # homework. The element chart is coloured to the game's own element
-        # colours; see stats_format.ANSI_ELEMENT.
-        #
-        # The valence field used to render `range(1, 7)` against a column per
-        # valence, so cards at 7 and 9 -- four of them, in the pool today -- were
-        # counted by nothing and shown by nothing, and the field silently
-        # described 108 of 136 cards. stats_format reads the jsonb histogram
-        # added by 2026-09-03_draft_pool_histograms.sql, which cannot have that
-        # failure, and falls back to the old columns with the reply saying so.
-        row = records[0]
-        embed = nextcord.Embed(title="Draft pool", colour=0x2ECC71)
-        embed.add_field(name="Contents", inline=False,
-                        value=sf.draft_pool_contents(row))
-        embed.add_field(name="Element", inline=False,
-                        value=sf.draft_pool_elements(row))
-        embed.add_field(name="Valence", inline=False,
-                        value=sf.draft_pool_valence(row))
-
-        # Rites LAST and in their own field, never folded into Contents. They
-        # are templates drawn with replacement into injected slots, not pool
-        # members counted once each, so "22 rites" beside "136 cards" reads as
-        # 22 pool slots and is wrong by construction. Dropped entirely on a view
-        # that does not carry them, rather than shown as zero.
-        rites = sf.draft_pool_rites(row)
-        if rites:
-            embed.add_field(name="Rites", inline=False, value=rites)
-
-        # Content only -- no games behind it, so no cutoff and no game count.
-        embed.set_footer(text="base decks, not archived — usage draft, plus rite templates")
-        await interaction.followup.send(embed=embed)
-
-    # --- Draft Rates, by element and valence ---
-    @stats_draft.subcommand(name="breakdown", description="Pick rate by element and valence")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft breakdown.")
-    async def stats_draft_breakdown(self, interaction: Interaction):
-        # Caught the way /stats scoreboard is: an unmigrated view is PGRST205,
-        # and "not migrated" is a different answer from "nobody has drafted
-        # yet". Naming the file is the whole value of catching it.
-        try:
-            records = fetch_all("draft_dimension_rates_view")
-        except SupabaseError:
-            return ("❌ `draft_dimension_rates_view` is not migrated — run "
-                    "`db/migrations/2026-09-03_draft_dimension_rates.sql`.")
-
-        if not records:
-            return "❌ No card draft data at or above the cutoff yet."
-
-        embed = nextcord.Embed(title="Draft picks by kind", colour=0x1ABC9C)
-        # Type first: it is the only breakdown covering every offer, and the
-        # two below it are cards only.
-        embed.add_field(name="By type", inline=False,
-                        value=sf.draft_rate_by_type(records))
-        embed.add_field(name="By element", inline=False,
-                        value=sf.draft_rate_by_element(records))
-        embed.add_field(name="By valence", inline=False,
-                        value=sf.draft_rate_by_valence(records))
-
-        # NOT len(records) and not a sum over the view: every offer is counted
-        # once under its element and again under its valence, so the view totals
-        # twice the real number. draft_offers_sampled reads one dimension.
-        offers = sf.draft_offers_sampled(records)
-        embed.set_footer(text=sf.footer(
-            records, note=f"{offers} card offer{'' if offers == 1 else 's'}"))
-        await interaction.followup.send(embed=embed)
-
-    # --- Draft Rates, by embellishment ---
-    @stats_draft.subcommand(name="embellishments",
-                            description="Does an embellished card get picked more?")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch embellishment data.")
-    async def stats_draft_embellishments(self, interaction: Interaction):
-        try:
-            records = fetch_all("draft_embellishment_rates_view")
-        except SupabaseError:
-            return ("❌ `draft_embellishment_rates_view` is not migrated — run "
-                    "`db/migrations/2026-09-04_draft_item_embellishments.sql`.")
-
-        if not records:
-            # Distinct from "not migrated": the view filters
-            # `embellished is not null`, so it is empty until runs from a client
-            # that records the columns land. Saying which is the difference
-            # between waiting and debugging.
-            return ("❌ No embellishment data yet — `draft_items` only carries it "
-                    "from the 2026-09-04 migration onward.")
-
-        embed = nextcord.Embed(title="Draft picks by embellishment", colour=0x1ABC9C)
-        # The headline split leads, and the lift is stated in words underneath
-        # it rather than left as a subtraction between two table rows.
-        embed.add_field(name="Bare vs embellished", inline=False,
-                        value=sf.draft_rate_by_embellishment(records))
-        embed.add_field(name="Lift", inline=False,
-                        value=sf.draft_embellishment_lift_line(records))
-        embed.add_field(name="By kind", inline=False,
-                        value=sf.draft_rate_by_kind(records))
-        embed.add_field(name="By enhancement", inline=False,
-                        value=sf.draft_rate_by_enhancement(records))
-        embed.add_field(name="By attribute", inline=False,
-                        value=sf.draft_rate_by_attribute(records))
-
-        # NOT len(records) and not a sum: an offer appears in the `embellished`
-        # dimension and again in every kind it carries.
-        offers = sf.draft_embellishment_offers(records)
-        embed.set_footer(text=sf.footer(
-            records, note=f"{offers} card offer{'' if offers == 1 else 's'}"))
-        await interaction.followup.send(embed=embed)
-
-    # --- Draft Rate Data ---
-    @stats_draft.subcommand(name="rates", description="Draft pick rates, per item")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch draft rate data.")
-    async def stats_draft_rates(
-        self,
-        interaction: Interaction,
-        limit: int = SlashOption(description="How many items to return", default=15),
-        order: str = SlashOption(
-            description="Most or least picked",
-            required=False,
-            default="most",
-            choices={"Most picked": "most", "Least picked": "least"},
-        ),
-        item_type: str = SlashOption(
-            description="Restrict to one content type",
-            required=False,
-            # draft_rates_view.item_type says `rite`, or `event` on a database
-            # the rename migration has not reached. The filter below asks
-            # rite_schema which one to send.
-            choices={"Card": "card", "Aspect": "aspect", "Rite": "rite"},
-        ),
-    ):
-        # draft_rates_view returns ONE ROW PER ITEM as of 2026-08-26, carrying
-        # times_picked AND times_offered rather than a pre-formatted string, so
-        # the limit has to be applied here or this dumps every draftable item.
-        # The view is ordered pick_rate DESC, so "least" just reverses it.
-        from azoth_logic import rite_schema
-        filters = {"item_type": rite_schema.db_content_type(item_type)} if item_type else None
-        sort = ["pick_rate", "-times_offered"] if order == "least" else None
-
-        records = fetch_all("draft_rates_view", filters=filters, sort=sort, limit=limit)
-        if not records:
-            return "❌ No draft rate data available."
-
-        note = f"{order} picked" + (f", {item_type}s only" if item_type else "")
-        await _send_table(interaction, "Draft pick rates", records,
-                          COLUMNS["draft_rates"], rank=True, note=note,
-                          colour=0x1ABC9C)
+        await _send_card(interaction, stats_cards.draft_pool_card(records[0]), "draft_pool.png",
+                         footer="base draft decks, not archived · rites are templates injected per run",
+                         colour=0x2ECC71)
 
 
     @stats_leaderboard.on_autocomplete("player")
@@ -613,7 +511,6 @@ def add_stats_commands(cls):
     # leave the three bodies unreachable in exactly the way
     # test_command_registration.py exists to catch.
     cls.stats_draft = stats_draft
-    cls.stats_draft_composition = stats_draft_composition
-    cls.stats_draft_breakdown = stats_draft_breakdown
-    cls.stats_draft_embellishments = stats_draft_embellishments
-    cls.stats_draft_rates = stats_draft_rates
+    cls.stats_draft_picks = stats_draft_picks
+    cls.stats_draft_items = stats_draft_items
+    cls.stats_draft_pool = stats_draft_pool

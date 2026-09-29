@@ -164,6 +164,12 @@ class BarRow(Block):
     marker: str = ""
     marker_fill: str | None = None
     empty_text: str = "no data"
+    # Column widths, in points. Defaults fit boss names and "14/19"; a report
+    # with longer labels ("Embellished") or counts ("300/900") widens them and
+    # the bar gives up the difference.
+    label_w: float = LABEL_W
+    count_w: float = 54
+    tag: str = ""              # small muted text after the label ("aspect")
     height: float = 28
 
     LABEL_W = LABEL_W
@@ -173,13 +179,16 @@ class BarRow(Block):
 
     def draw(self, d, top):
         cy = top + px(self.height) // 2
-        bar_x0 = px(PAD + self.LABEL_W)
-        bar_x1 = px(WIDTH - PAD - self.VALUE_W - self.DELTA_W - self.COUNT_W - 8)
+        bar_x0 = px(PAD + self.label_w)
+        bar_x1 = px(WIDTH - PAD - self.VALUE_W - self.DELTA_W - self.count_w - 8)
         bar_h = px(12)
         y0, y1 = cy - bar_h // 2, cy + bar_h // 2
 
         d.text((px(PAD), cy), self.label, font=font(15),
                fill=INK_2 if self.faded or self.value is None else INK, anchor="lm")
+        if self.tag:
+            x = px(PAD) + d.textlength(self.label, font=font(15)) + px(5)
+            d.text((x, cy + px(1)), self.tag, font=font(11), fill=MUTED, anchor="lm")
         d.rounded_rectangle([bar_x0, y0, bar_x1, y1], radius=bar_h // 2, fill=TRACK)
 
         if self.value is None:
@@ -192,7 +201,7 @@ class BarRow(Block):
                                 fill=FADED if self.faded else (self.fill or ACCENT))
             right = px(WIDTH - PAD)
             d.text((right, cy), self.count_text, font=font(13), fill=MUTED, anchor="rm")
-            right -= px(self.COUNT_W)
+            right -= px(self.count_w)
             if self.delta:
                 d.text((right, cy), self.delta, font=font(13),
                        fill=MUTED if self.faded else INK_2, anchor="rm")

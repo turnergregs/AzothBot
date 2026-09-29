@@ -80,10 +80,13 @@ All docs live in `docs/`. Read before changing a system.
   layer is `azoth_logic/stats_charts.py`, each report's layout
   `azoth_logic/stats_cards.py`, sent by `stats._send_card`. `/stats bosses` is
   the first. See `docs/ANALYTICS.md` § Reports as images.
-- **The `/stats draft` subcommands are grouped, not merged.** `composition` is
-  content with no games behind it and no cutoff; `rates` and `breakdown` are
-  game data at `analytics_cutoff()`. One embed carries one footer, so a merged
-  reply would have to misstate what one half rests on. Don't combine them.
+- **`/stats draft` keeps content apart from play** (revised 2026-09-29).
+  `pool` is content (the shipped draft decks, no cutoff, no cohort); `picks`
+  and `items` are play (draft offers at `analytics_cutoff()`, with `players:`).
+  Don't fold the pool into a play report: it would claim a cutoff and a cohort
+  it does not have. Within play, merging is now fine, because each image states
+  its own population per section: `picks` absorbed `breakdown` and
+  `embellishments`, `items` replaced the text `rates`.
 - **Two commands cover all content lookup.** `/show` and `/render` dispatch on an
   encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
   `/render_*` commands were retired 2026-08-26.

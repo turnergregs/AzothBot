@@ -55,10 +55,9 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
-| `/stats draft composition` | `draft_deck_view` | Draft pool composition, as bar charts. **The view kept its old name** through two command renames. See [The draft pool](#the-draft-pool) |
-| `/stats draft rates` | `draft_rates_view` | Pick rate, per item |
-| `/stats draft breakdown` | `draft_dimension_rates_view` | Pick rate by type, element and valence (2026-09-03) |
-| `/stats draft embellishments` | `draft_embellishment_rates_view` | Pick rate by draft embellishment (2026-09-04). See [Embellished cards](#embellished-cards) |
+| `/stats draft picks` | `draft_offer_view` | Pick rate by type, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
+| `/stats draft items` | `draft_item_offer_view` | The five most and five least picked items, all types together |
+| `/stats draft pool` | `draft_deck_view` | What the draft pool holds (content, not play) |
 
 ### Rituals in /stats (2026-09-28)
 
@@ -421,7 +420,33 @@ The charts are not decoration. Both fields are **distributions**, and a
 distribution written out as `1v 23 · 2v 26 · 3v 20` is arithmetic homework — the
 shape only appears if you do the division yourself.
 
-#### Why these are three commands and not one
+### Draft reports (2026-09-29)
+
+Redrawn as images, three subcommands where there were four. The views behind
+`picks` and `items` count offers per cohort (`2026-09-29_draft_offer_views.sql`
+in the game repo), so they take `players:`; `pool` is content and does not.
+
+- **`picks`** (`draft_offer_view`): tiles for offers, picks and pick rate, then
+  a pick-rate bar per bucket by type, element and valence, each against its
+  section's pooled rate with the `rate_flag` red/blue flags and 10+ offers to be
+  flagged; then each embellishment kind (upgraded, attribute, enhanced) against
+  **bare cards**, since one card can carry two kinds. The bare-vs-embellished
+  split itself was cut (Turner's review): embellished cards are expected to be
+  picked more; which kind lifts a card most is the useful part.
+- **`items`** (`draft_item_offer_view`): the five most and five least picked
+  items. Cards, aspects and rites rank together against one all-items rate,
+  since a pick rate is conditional on the offer (the rite injection budget
+  divides out); aspects and rites carry a small tag. Only items offered 5+ times
+  rank, and the footer counts the rest.
+- **`pool`** (`draft_deck_view`): cards, aspects, rite templates and the
+  estimated rite slots per run as tiles (rites beside the pool, never in it),
+  then cards by element in the game's element colours and by valence.
+
+It retired `draft_dimension_rates_view`, `draft_embellishment_rates_view` and
+`draft_rates_view` from the bot, and the text formatting helpers with them.
+The sections below describe the text versions and are kept for the reasoning.
+
+#### Why these were three commands and not one (2026-09-03; superseded)
 
 Grouped under `/stats draft` on 2026-09-03, and deliberately **not merged into
 one reply**. They are neighbours, but they do not rest on the same thing:

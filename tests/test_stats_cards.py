@@ -551,3 +551,133 @@ def test_most_drafted_and_codex_sections_appear_when_there_is_something():
 def test_the_player_card_renders():
     img = Image.open(io.BytesIO(cards.player_card("Max", MAX_RUNS, None, None).png()))
     assert img.width == sc.WIDTH * sc.SCALE
+
+
+# --- /stats draft picks, items, pool ----------------------------------------------
+
+def _offer(dim, bucket, offered, picked, cohort="new"):
+    return {"dimension": dim, "bucket": bucket, "cohort": cohort, "offered": offered, "picked": picked}
+
+
+OFFERS = [
+    _offer("type", "card", 900, 300), _offer("type", "aspect", 280, 95), _offer("type", "rite", 56, 17),
+    _offer("element", "anima", 280, 110), _offer("element", "blood", 250, 70),
+    _offer("element", "sol", 240, 80), _offer("element", "catalyst", 130, 40),
+    _offer("valence", "none", 34, 8), _offer("valence", "10", 6, 2), _offer("valence", "2", 190, 70),
+    _offer("embellished", "bare", 610, 180), _offer("embellished", "embellished", 290, 120),
+    _offer("kind", "upgrade", 130, 60), _offer("kind", "attribute", 110, 40),
+    _offer("kind", "enhancement", 90, 30),
+]
+
+
+def _bar_rows(card):
+    return [b for b in card.blocks if isinstance(b, sc.BarRow)]
+
+
+def _section_rows(card, title):
+    out, inside = [], False
+    for b in card.blocks:
+        if isinstance(b, sc.SectionHeader):
+            inside = b.label == title
+        elif inside and isinstance(b, sc.BarRow):
+            out.append(b)
+    return out
+
+
+def test_draft_picks_has_no_bare_vs_embellished_section():
+    """Embellished cards are expected to be picked more (Turner's review)."""
+    heads = [b.label for b in cards.draft_picks_card(OFFERS).blocks if isinstance(b, sc.SectionHeader)]
+    assert heads == ["By type", "By element", "By valence", "By embellishment"]
+
+
+def test_each_embellishment_kind_is_read_against_bare_cards():
+    rows = _section_rows(cards.draft_picks_card(OFFERS), "By embellishment")
+    assert [r.label for r in rows] == ["Upgraded", "Attribute", "Enhanced"]
+    assert all(r.reference == pytest.approx(180 / 610) for r in rows)
+    assert rows[0].marker == "▲"          # 60/130 is clearly above bare 30%
+
+
+def test_an_element_is_flagged_against_the_rest_of_its_section():
+    rows = {r.label: r for r in _section_rows(cards.draft_picks_card(OFFERS), "By element")}
+    assert rows["Anima"].marker == "▲" and rows["Blood"].marker == "▼"
+    assert rows["Sol"].marker == ""
+
+
+def test_valence_is_in_numeric_order_with_none_first():
+    rows = _section_rows(cards.draft_picks_card(OFFERS), "By valence")
+    assert [r.label for r in rows] == ["—", "2v", "10v"]
+    assert rows[2].faded                   # 6 offers
+
+
+def test_the_picks_tiles_total_every_offer_once():
+    tiles = dict(cards.draft_picks_card(OFFERS).blocks[0].tiles)
+    assert (tiles["Offers"], tiles["Picked"], tiles["Pick rate"]) == ("1,236", "412", "33%")
+
+
+def test_cohorts_are_summed_per_bucket():
+    rows, _ = cards.select_cohort(OFFERS + [_offer("type", "card", 100, 90, cohort="developer")],
+                                  "all", ("dimension", "bucket"), cards.DRAFT_COUNTS)
+    card = next(r for r in rows if r["bucket"] == "card")
+    assert (card["offered"], card["picked"]) == (1000, 390)
+
+
+def _item(name, kind, offered, picked, item_id=None):
+    return {"item_type": kind, "item_id": item_id or hash(name) % 1000, "item_name": name,
+            "offered": offered, "picked": picked}
+
+
+ITEMS = [_item("Circumvent", "card", 18, 14), _item("Veil", "aspect", 14, 9),
+         _item("Pyre", "rite", 11, 6), _item("Echo", "card", 31, 20), _item("Bloom", "card", 19, 11),
+         _item("Kindle", "card", 24, 12), _item("Thorn", "card", 14, 1), _item("Ledger", "aspect", 13, 2),
+         _item("Hush", "card", 15, 3), _item("Toll", "rite", 8, 2), _item("Waxix", "card", 12, 3),
+         _item("Fluke", "card", 1, 1)]
+
+
+def test_items_rank_cards_aspects_and_rites_together_five_each():
+    card = cards.draft_items_card(ITEMS)
+    most = [r.label for r in _section_rows(card, "Most picked")]
+    least = [r.label for r in _section_rows(card, "Least picked")]
+    assert most == ["Circumvent", "Echo", "Veil", "Bloom", "Pyre"]
+    assert least[0] == "Thorn" and len(least) == 5
+    assert not set(most) & set(least)
+
+
+def test_an_item_offered_too_rarely_is_not_ranked_and_the_footer_says_so():
+    """Fluke's one offer and one pick would otherwise top the list at 100%."""
+    labels = [r.label for r in _bar_rows(cards.draft_items_card(ITEMS))]
+    assert "Fluke" not in labels
+    assert "1 offered fewer than 5 times" in cards.draft_items_footer(ITEMS)
+
+
+def test_aspects_and_rites_are_tagged_cards_are_not():
+    rows = {r.label: r for r in _bar_rows(cards.draft_items_card(ITEMS))}
+    assert (rows["Veil"].tag, rows["Pyre"].tag, rows["Echo"].tag) == ("aspect", "rite", "")
+
+
+POOL = {"cards": 136, "aspects": 22, "rite_templates": 18,
+        "element_counts": {"anima": 37, "blood": 36, "sol": 39, "catalyst": 24},
+        "valence_counts": {"none": 24, "2": 26, "9": 3}}
+
+
+def test_the_pool_uses_the_game_element_colours():
+    rows = {r.label: r for r in _section_rows(cards.draft_pool_card(POOL), "Cards by element")}
+    assert rows["Anima"].fill == cards.ELEMENT_COLOURS["anima"]
+    assert rows["Sol"].value == 1.0
+
+
+def test_rites_are_counted_beside_the_pool_never_in_it():
+    tiles = dict(t for b in cards.draft_pool_card(POOL).blocks if isinstance(b, sc.StatTiles) for t in b.tiles)
+    assert tiles["Cards"] == "136" and tiles["Rite templates"] == "18"
+    assert tiles["Rite slots / run"].startswith("~")
+
+
+def test_the_pool_lists_only_valences_that_exist():
+    rows = _section_rows(cards.draft_pool_card(POOL), "Cards by valence")
+    assert [r.label for r in rows] == ["—", "2v", "9v"]
+
+
+@pytest.mark.parametrize("build", [lambda: cards.draft_picks_card(OFFERS),
+                                   lambda: cards.draft_items_card(ITEMS),
+                                   lambda: cards.draft_pool_card(POOL)])
+def test_every_draft_card_renders(build):
+    assert Image.open(io.BytesIO(build().png())).width == sc.WIDTH * sc.SCALE
