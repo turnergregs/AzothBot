@@ -492,3 +492,25 @@ class TimeRow(Block):
         right = px(WIDTH - PAD - self.EXTRA_W * 2)
         d.text((right, cy), self.total_text, font=font(15, True),
                fill=INK if parts else MUTED, anchor="rm")
+
+
+@dataclass
+class TableRow(Block):
+    """One row of a plain table: `[(text, x_points, anchor, style)]`.
+
+    For ranked lists where the number IS the point and a bar would mislead: a
+    leaderboard's combos grow exponentially, so any bar is one giant and nine
+    slivers. Styles: "strong" (primary, bold), "normal" (secondary),
+    "muted" (small, muted), "rank" (small, bold, muted).
+    """
+    cells: list
+    height: float = 30
+
+    STYLES = {"strong": (15, True, INK), "normal": (15, False, INK_2),
+              "muted": (13, False, MUTED), "rank": (13, True, MUTED)}
+
+    def draw(self, d, top):
+        cy = top + px(self.height) // 2
+        for text, x, anchor, style in self.cells:
+            size, bold, fill = self.STYLES[style]
+            d.text((px(x), cy), text, font=font(size, bold), fill=fill, anchor=anchor)

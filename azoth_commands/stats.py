@@ -15,15 +15,6 @@ from azoth_logic import stats_format as sf
 from azoth_logic import stats_cards
 
 
-# Columns worth showing, per view. Explicit rather than "whatever the view
-# returns": the views order `avg_turns` before `avg_combo_log10`, so the width
-# trim in stats_format.table would throw away the combo -- the column anyone
-# actually came for. Anything trimmed beyond this is named in the footer.
-COLUMNS = {
-    "leaderboard": ["player", "combo", "hero", "turns", "act", "level"],
-}
-
-
 # Every report /stats all runs, in order, with the options it runs them with.
 # `None` is passed explicitly for optional filters: a callback invoked directly
 # receives its SlashOption DEFAULT OBJECT for anything left out, not the
@@ -31,8 +22,7 @@ COLUMNS = {
 # listed here, so a new one cannot be missed.
 ALL_REPORTS = [
     ("players", "stats_players", {"players": "new"}),
-    ("leaderboard", "stats_leaderboard", {"limit": 10, "player": None, "hero": None,
-                                          "version": None}),
+    ("leaderboard", "stats_leaderboard", {"limit": 10, "hero": None, "players": "all"}),
     ("player", "stats_player", {}),     # player filled in at run time
     ("breakdown by:hero", "stats_breakdown", {"by": "hero", "players": "new"}),
     ("breakdown by:ritual", "stats_breakdown", {"by": "ritual", "players": "new"}),
@@ -99,15 +89,6 @@ async def _send_card(interaction, card, filename, *, footer, colour=0x5865F2):
                                     file=nextcord.File(io.BytesIO(data), filename=filename))
 
 
-async def _send_table(interaction, title, rows, columns=None, *, rank=False,
-                      note=None, cutoff=True, colour=0x5865F2):
-    """A view rendered as one embed: aligned table, and what it rests on."""
-    text, dropped = sf.table(rows, columns, rank=rank)
-    embed = nextcord.Embed(title=title, description=sf.block(text), colour=colour)
-    embed.set_footer(text=sf.footer(rows, note=note, dropped=dropped, cutoff=cutoff))
-    await interaction.followup.send(embed=embed)
-
-
 def add_stats_commands(cls):
 
     # Top-level group for stats commands
@@ -150,40 +131,41 @@ def add_stats_commands(cls):
                          colour=0x3498DB)
 
     # --- Leaderboard ---
-    @stats_cmd.subcommand(name="leaderboard", description="Show top combos")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch leaderboard.")
+    # A ranked table of PLAYERS by their best run, drawn as an image
+    # (2026-09-29) from leaderboard_best_view. Everyone by default: it is the
+    # community board. `player:` and `version:` went with the text version: a
+    # player's own best is on their card, and every run is at the cutoff.
+    @stats_cmd.subcommand(name="leaderboard", description="Top combos, best run per player")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch leaderboard.")
     async def stats_leaderboard(
         self,
         interaction: Interaction,
-        limit: int = SlashOption(description="How many results to return", default=10),
-        player: str = SlashOption(description="Filter by player name", required=False, autocomplete=True),
-        hero: str = SlashOption(description="Filter by starting hero", required=False, autocomplete=True),
-        version: str = SlashOption(description="Filter by game version", required=False, autocomplete=True)
+        limit: int = SlashOption(description="How many players to show (default 10)",
+                                 default=10, min_value=1, max_value=25),
+        hero: str = SlashOption(description="Only runs with this hero", required=False,
+                                autocomplete=True),
+        players: str = SlashOption(
+            description="Whose runs to rank (default: everyone)",
+            required=False,
+            default="all",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
     ):
-        filters = {}
-        if version:
-            filters["version"] = version
-        if player:
-            filters["player"] = player
-        if hero:
-            filters["hero"] = hero
+        try:
+            rows = fetch_all("leaderboard_best_view")
+        except SupabaseError:
+            return ("❌ `leaderboard_best_view` is not migrated — run "
+                    "`db/migrations/2026-09-29_leaderboard_best_view.sql`.")
+        wanted = stats_cards.COHORTS[players]
+        rows = [r for r in rows if r.get("cohort") in wanted]
+        if not stats_cards.leaderboard_rows(rows, hero):
+            return "❌ No runs to rank" + (f" with {hero}." if hero else ".")
 
-        # No explicit sort: leaderboard_view carries
-        # `ORDER BY highest_combo::numeric DESC`, and PostgREST preserves it
-        # under a LIMIT (verified 2026-08-26). Sorting here on `combo` would be
-        # WRONG -- it is a text column, so a text sort ranks "9" above
-        # "2596148429267413814265248164610048".
-        # The limit must go to the server: without it PostgREST caps at 1000
-        # rows of an ~1830-row view and the slice reads a truncated page.
-        records = fetch_all("leaderboard_view", filters=filters, limit=limit)
-
-        if not records:
-            return "❌ No leaderboard data available."
-
-        applied = ", ".join(f"{k}: {v}" for k, v in filters.items())
-        await _send_table(interaction, "Leaderboard", records,
-                          COLUMNS["leaderboard"], rank=True,
-                          note=applied or "top combos", colour=0xF1C40F)
+        population = stats_cards.COHORT_LABELS[players]
+        await _send_card(interaction,
+                         stats_cards.leaderboard_card(rows, population, hero, limit),
+                         "leaderboard.png", footer=stats_cards.leaderboard_footer(rows, hero),
+                         colour=0xF1C40F)
 
     # --- Player ---
     # One player's profile, drawn as an image (2026-09-28): runs, act 3 wins,
@@ -463,7 +445,6 @@ def add_stats_commands(cls):
                          colour=0x2ECC71)
 
 
-    @stats_leaderboard.on_autocomplete("player")
     @stats_player.on_autocomplete("player")
     @stats_all.on_autocomplete("player")
     async def autocomplete_active_player(self, interaction: Interaction, input: str):
@@ -475,28 +456,6 @@ def add_stats_commands(cls):
     async def autocomplete_hero(self, interaction: Interaction, input: str):
         suggestions = autocomplete_from_table(table_name="heroes", input=input, filters={"archived_at": None})
         await interaction.response.send_autocomplete(suggestions[:25])
-
-
-    @stats_leaderboard.on_autocomplete("version")
-    async def autocomplete_version(self, interaction: Interaction, input: str):
-        # Was pointed at `game_stats`, which does not exist -- this autocomplete
-        # returned nothing on every keystroke. `games` is the real source, but
-        # it has one row per RUN, so versions must be de-duplicated here.
-        # Ordered newest-first and capped, since PostgREST would otherwise cap
-        # at 1000 arbitrary rows and miss recent versions entirely.
-        try:
-            rows = fetch_all("games", ["version"], sort=["-created_at"], limit=1000)
-        except SupabaseError as e:
-            print(f"AUTOCOMPLETE FAILED on `games`.`version`: {e}")
-            await interaction.response.send_autocomplete([])
-            return
-
-        seen = []
-        for row in rows:
-            v = row.get("version")
-            if v and v not in seen and input.lower() in v.lower():
-                seen.append(v)
-        await interaction.response.send_autocomplete(seen[:25])
 
 
     # Expose on class

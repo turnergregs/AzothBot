@@ -681,3 +681,69 @@ def test_the_pool_lists_only_valences_that_exist():
                                    lambda: cards.draft_pool_card(POOL)])
 def test_every_draft_card_renders(build):
     assert Image.open(io.BytesIO(build().png())).width == sc.WIDTH * sc.SCALE
+
+
+# --- /stats leaderboard ------------------------------------------------------------
+
+def _best(player, hero, combo, ritual=0, act=3, when="2026-09-20T10:00:00+00:00", cohort="new"):
+    return {"player": player, "hero": hero, "combo": str(combo), "combo_numeric": combo,
+            "ritual": ritual, "act": act, "started_at": when, "cohort": cohort}
+
+
+BOARD = [
+    _best("Bram", "Lumis", 2 ** 2048, ritual=1, act=5, cohort="veteran"),
+    _best("Ratpunzel", "Lumis", 4_300_000),
+    _best("Ratpunzel", "Ignis", 9_000),
+    _best("Max", "Eith", 65_500, act=4),
+    _best("Max", "Lumis", 40_000),
+    _best("Mike", "Lumis", 365),
+]
+
+
+def test_each_player_appears_once_with_their_best_run():
+    """Ranking runs let one player hold half the board."""
+    rows = cards.leaderboard_rows(BOARD)
+    assert [r["player"] for r in rows] == ["Bram", "Ratpunzel", "Max", "Mike"]
+    assert rows[2]["hero"] == "Eith"
+
+
+def test_a_combo_past_float_range_ranks_first():
+    """2^2048 overflows a float; compared as Decimal it simply wins."""
+    assert cards.leaderboard_rows(BOARD)[0]["player"] == "Bram"
+
+
+def test_a_hero_board_takes_each_players_best_with_that_hero():
+    rows = cards.leaderboard_rows(BOARD, hero="Lumis")
+    assert [(r["player"], r["combo_numeric"]) for r in rows][2] == ("Max", 40_000)
+
+
+def test_ties_go_to_the_earlier_run():
+    rows = cards.leaderboard_rows([_best("Late", "Lumis", 100, when="2026-09-21T00:00:00+00:00"),
+                                   _best("Early", "Lumis", 100, when="2026-09-20T00:00:00+00:00")])
+    assert [r["player"] for r in rows] == ["Early", "Late"]
+
+
+def _table(card):
+    return [b for b in card.blocks if isinstance(b, sc.TableRow)]
+
+
+def test_the_podium_is_bold_and_set_apart():
+    card = cards.leaderboard_card(BOARD)
+    rows = _table(card)
+    assert rows[2].cells[1][3] == "strong" and rows[3].cells[1][3] == "normal"
+    assert any(isinstance(b, sc.Rule) for b in card.blocks)
+
+
+def test_each_row_shows_hero_and_ritual_and_act():
+    first = _table(cards.leaderboard_card(BOARD))[0].cells
+    assert first[3][0] == "Lumis R1" and first[4][0] == "5"
+    assert first[2][0].startswith("2^")
+
+
+def test_the_limit_caps_the_board():
+    assert len(_table(cards.leaderboard_card(BOARD, limit=2))) == 2
+
+
+def test_the_leaderboard_renders():
+    assert Image.open(io.BytesIO(cards.leaderboard_card(BOARD, "Everyone").png())).width \
+        == sc.WIDTH * sc.SCALE

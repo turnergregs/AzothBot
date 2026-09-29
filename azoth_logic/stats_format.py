@@ -17,10 +17,6 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
-# Discord's limits, and what a phone can read without horizontal scrolling.
-MAX_DESCRIPTION = 4096
-MAX_FIELD = 1024
-MAX_TABLE_WIDTH = 56
 
 # What actually fits an embed code block on a PHONE, measured from a wrapped
 # screenshot: a 24-character header survived, a 36-character one wrapped. A
@@ -62,8 +58,6 @@ HEADINGS = {
     "times_reserved": "Kept",
 }
 
-# Columns that are internal or redundant in a rendered table.
-HIDDEN = {"combo_numeric"}
 
 
 def heading(column: str) -> str:
@@ -153,71 +147,6 @@ def value(column: str, raw) -> str:
     if isinstance(raw, bool):
         return "yes" if raw else "no"
     return str(raw)
-
-
-def columns_of(rows: list, exclude=()) -> list:
-    """Every column present, in the view's own order, minus the noise."""
-    seen = []
-    for row in rows:
-        for column in row:
-            if column not in seen and column not in HIDDEN and column not in exclude:
-                seen.append(column)
-    return seen
-
-
-def table(rows: list, columns=None, rank: bool = False,
-          limit_width: int = MAX_TABLE_WIDTH):
-    """Rows as an aligned monospace block. Returns `(text, dropped_columns)`.
-
-    Callers should pass the columns they want. Left to itself this keeps the
-    view's own order, and the view puts `avg_turns` before `avg_combo_log10` --
-    so the width trim below would throw away the combo, which is the column
-    anyone actually came for.
-
-    That trim is the backstop, not the plan: columns come off the RIGHT until
-    the table fits a phone, because a table that wraps is unreadable in a way
-    that a table missing a column is not. **What came off is returned**, never
-    dropped silently -- same rule `/search` follows when it truncates.
-    """
-    if not rows:
-        return "", []
-    columns = list(columns or columns_of(rows))
-    dropped = []
-
-    body = [[value(c, row.get(c)) for c in columns] for row in rows]
-    heads = [heading(c) for c in columns]
-    widths = [max(len(heads[i]), *(len(r[i]) for r in body)) for i in range(len(columns))]
-
-    if rank:
-        heads.insert(0, "#")
-        widths.insert(0, max(1, len(str(len(rows)))))
-        for index, row in enumerate(body, start=1):
-            row.insert(0, str(index))
-
-    # Trim from the right until it fits.
-    while len(columns) > 1 and sum(widths) + 2 * (len(widths) - 1) > limit_width:
-        widths.pop()
-        heads.pop()
-        for row in body:
-            row.pop()
-        dropped.insert(0, columns.pop())
-
-    def line(cells):
-        return "  ".join(cell.ljust(widths[i]) for i, cell in enumerate(cells)).rstrip()
-
-    text = "\n".join([line(heads), "  ".join("-" * w for w in widths)]
-                     + [line(r) for r in body])
-    return text, dropped
-
-
-def fields(row: dict, columns=None, inline: bool = True, exclude=()) -> list:
-    """A single record as embed `(name, value, inline)` triples.
-
-    `exclude` drops columns that the embed's title already carries -- repeating
-    the player's name inside their own card is noise.
-    """
-    columns = columns or columns_of([row], exclude=exclude)
-    return [(heading(c), value(c, row.get(c)), inline) for c in columns]
 
 
 def _grid(heads: list, body: list) -> str:

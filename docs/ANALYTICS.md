@@ -50,7 +50,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 
 | Command | View | Purpose |
 |---|---|---|
-| `/stats leaderboard` | `leaderboard_view` | Top combos, optionally by player / hero / version |
+| `/stats leaderboard` | `leaderboard_best_view` | Each player's best run, ranked, as an image table: combo, hero with that run's ritual, furthest act. Top three bold. Everyone by default. See [Leaderboard](#leaderboard-2026-09-29) |
 | `/stats player` | `player_run_view` + `player_summary_view` + `player_info_view` | One player's profile, drawn as an image. See [The player card (2026-09-28)](#the-player-card-2026-09-28) |
 | `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
@@ -419,6 +419,20 @@ renaming again.
 The charts are not decoration. Both fields are **distributions**, and a
 distribution written out as `1v 23 · 2v 26 · 3v 20` is arithmetic homework — the
 shape only appears if you do the division yourself.
+
+### Leaderboard (2026-09-29)
+
+A ranked table of PLAYERS, not runs: ranking runs let one player hold half a
+small community's board. `leaderboard_best_view` holds each player's best run
+per hero (ties to the earlier run), so the bot takes the best per player, or
+per player with one hero when `hero:` is given. A table rather than bars:
+combos grow exponentially (2^2048 against 65.5K), so any bar is one giant and
+nine slivers; the number is the point, and huge ones read as powers of two.
+The top three are bold with a hairline under them. It is the community board,
+so it counts everyone by default; `players:` narrows it. `player:` and
+`version:` went with the text version: a player's own best is on their card,
+and every run is at the cutoff. The combo is compared as a Decimal: 2^2048
+passes a float's range.
 
 ### Draft reports (2026-09-29)
 

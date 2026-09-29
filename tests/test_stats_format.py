@@ -86,69 +86,10 @@ def test_trailing_zeros_are_trimmed():
 # Tables
 # ---------------------------------------------------------------------------
 
-def test_columns_are_aligned():
-    text, _ = sf.table(ROWS, ["player", "game_count"])
-    header, rule, *body = text.splitlines()
-    assert len(header) == len(rule)
-    assert all(line.startswith("Turner  ") or line.startswith("Bram    ") for line in body)
-
-
-def test_rank_adds_a_numbered_column():
-    text, _ = sf.table(ROWS, ["player"], rank=True)
-    assert text.splitlines()[2].startswith("1")
-    assert text.splitlines()[3].startswith("2")
-
-
-def test_headings_are_renamed_where_the_column_name_would_mislead():
-    text, _ = sf.table(ROWS, ["highest_combo"])
-    assert "Best combo" in text.splitlines()[0]
-
-
-def test_an_empty_result_is_not_a_table():
-    assert sf.table([], ["player"]) == ("", [])
-    assert sf.block("") == "*no rows*"
-
-
-def test_a_wide_table_drops_columns_from_the_right():
-    wide = [{f"col_{i}": "xxxxxxxx" for i in range(12)}]
-    text, dropped = sf.table(wide)
-    assert dropped, "something had to give"
-    assert max(len(line) for line in text.splitlines()) <= sf.MAX_TABLE_WIDTH
-
-
-def test_what_was_dropped_is_reported_never_silent():
-    """Same rule `/search` follows: truncation is always announced. A table
-    quietly missing a column reads as a column that does not exist."""
-    wide = [{f"col_{i}": "xxxxxxxx" for i in range(12)}]
-    _, dropped = sf.table(wide)
-    assert "not shown" in sf.footer(wide, dropped=dropped)
-
-
-def test_the_leftmost_column_always_survives():
-    """It is the identifying one — a table of numbers with no names is useless."""
-    wide = [{"player": "Turner", **{f"col_{i}": "xxxxxxxx" for i in range(12)}}]
-    text, _ = sf.table(wide)
-    assert "Player" in text.splitlines()[0]
-
-
-def test_hidden_columns_never_appear():
-    """`combo_numeric` exists so the view can sort; it duplicates `combo`."""
-    rows = [{"combo": "652298", "combo_numeric": 652298}]
-    assert "combo_numeric" not in sf.columns_of(rows)
-
 
 # ---------------------------------------------------------------------------
 # Fields
 # ---------------------------------------------------------------------------
-
-def test_fields_are_name_value_inline_triples():
-    assert sf.fields(ROWS[0], ["game_count"]) == [("Games", "2", True)]
-
-
-def test_excluded_columns_are_dropped():
-    """The player's name titles the embed; repeating it inside is noise."""
-    names = [name for name, _, _ in sf.fields(ROWS[0], exclude=("player",))]
-    assert "Player" not in names
 
 
 # ---------------------------------------------------------------------------

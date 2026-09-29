@@ -7,6 +7,7 @@ rows in, Card out.
 from __future__ import annotations
 
 import math
+from decimal import Decimal, InvalidOperation
 
 from azoth_logic import stats_charts as sc
 from azoth_logic.stats_format import CUTOFF_VERSION
@@ -931,3 +932,75 @@ def daily_card(stats: dict, day: str) -> sc.Card:
                                count_text=f"{i['picked']}/{i['offered']}", fill=sc.NEUTRAL,
                                label_w=130, tag="" if i["item_type"] == "card" else i["item_type"]))
     return card
+
+
+# ---------------------------------------------------------------------------
+# /stats leaderboard
+# ---------------------------------------------------------------------------
+# Redrawn 2026-09-29 as a ranked table of PLAYERS by their best run, from
+# leaderboard_best_view (best run per player and hero). The fun, community
+# board, so it counts everyone by default. A table, not bars: combos grow
+# exponentially, and the number is the point.
+
+LEADERBOARD_PODIUM = 3
+
+
+def _combo_key(row: dict) -> Decimal:
+    """combo_numeric can pass float's range (2^2048), so compare as Decimal."""
+    try:
+        return Decimal(str(row.get("combo_numeric")))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(-1)
+
+
+def leaderboard_rows(rows: list, hero: str | None = None) -> list:
+    """Each player's single best run, best first: across heroes, or with
+    `hero` only. Ties go to the earlier run, as the view breaks them."""
+    best: dict = {}
+    for row in rows:
+        if hero and row.get("hero") != hero:
+            continue
+        key = row.get("player")
+        mine = best.get(key)
+        if mine is None or (_combo_key(row), -_ts(row)) > (_combo_key(mine), -_ts(mine)):
+            best[key] = row
+    return sorted(best.values(), key=lambda r: (-_combo_key(r), _ts(r), str(r.get("player"))))
+
+
+def _ts(row: dict) -> float:
+    """started_at as a sortable number; missing sorts last."""
+    text = str(row.get("started_at") or "")
+    digits = "".join(ch for ch in text if ch.isdigit())[:14]
+    return float(digits) if digits else float("inf")
+
+
+def leaderboard_card(rows: list, population: str = "", hero: str | None = None,
+                     limit: int = 10) -> sc.Card:
+    from azoth_logic import stats_format as sf
+    ranked = leaderboard_rows(rows, hero)[:limit]
+    parts = [population, hero, f"version ≥ {CUTOFF_VERSION}", "best run per player"]
+    card = sc.Card("Top combos", " · ".join(p for p in parts if p))
+    x_rank, x_name = sc.PAD, sc.PAD + 28
+    x_combo, x_hero, x_act = 330, 344, sc.WIDTH - sc.PAD
+    card.add(sc.ColumnHeads([("Player", x_name, "lm"), ("Combo", x_combo, "rm"),
+                             ("Hero", x_hero, "lm"), ("Act", x_act, "rm")]))
+    for i, row in enumerate(ranked, start=1):
+        style = "strong" if i <= LEADERBOARD_PODIUM else "normal"
+        ritual = row.get("ritual")
+        hero_text = str(row.get("hero") or "—") + (f" R{ritual}" if ritual is not None else "")
+        card.add(sc.TableRow([
+            (str(i), x_rank, "lm", "rank"),
+            (str(row.get("player") or "—"), x_name, "lm", style),
+            (sf.value("combo", row.get("combo_numeric", row.get("combo"))), x_combo, "rm", style),
+            (hero_text, x_hero, "lm", "muted"),
+            (str(row.get("act") or "—"), x_act, "rm", "muted"),
+        ]))
+        # The podium, set apart without medals.
+        if i == LEADERBOARD_PODIUM and len(ranked) > LEADERBOARD_PODIUM:
+            card.add(sc.Rule(6))
+    return card
+
+
+def leaderboard_footer(rows: list, hero: str | None = None) -> str:
+    players = len(leaderboard_rows(rows, hero))
+    return f"version >= {CUTOFF_VERSION} · {players} player{'' if players == 1 else 's'} ranked · solo"
