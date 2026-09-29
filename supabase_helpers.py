@@ -53,15 +53,11 @@ ANON_NO_POLICY = frozenset({
 # "No stats found for X" on an anon key, which reads as a player who has never
 # played rather than as a key that cannot see them.
 SERVICE_ROLE_ONLY_VIEWS = frozenset({
-	"turn_clearing_view", "player_act_view", "player_info_view",
-	"turn_scoreboard_view",
+	"turn_clearing_view", "player_info_view", "turn_scoreboard_view",
 	# 2026-09-28_ritual_stats.sql. Reads `turns` through run_cleared().
 	"player_run_view",
-	# 2026-09-28_turn_habits.sql. Read `turns` / `turn_nodes`, and run_act_view
-	# reads player_run_view.
-	"player_turn_habits_view", "player_link_view", "run_act_view",
-	# 2026-09-28_engagement_spans.sql.
-	"player_engagement_view", "player_engagement_actions_view",
+	# (player_act_view, the turn-habits and the engagement views were dropped
+	# 2026-09-29, db/migrations/2026-09-29_drop_retired_stats_views.sql.)
 	# 2026-09-28_boss_fight_view.sql. Reads `turns`.
 	"boss_fight_view",
 	# 2026-09-28_breakdown_view.sql. Reads `turns` and `turn_nodes`.

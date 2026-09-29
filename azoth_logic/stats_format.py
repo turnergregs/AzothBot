@@ -46,7 +46,7 @@ HEADINGS = {
     "deck_size": "Deck",
     "max_ritual": "Ritual",
     "player_count": "Players",
-    # draft_rates_view. Short on purpose: the default headings ("Times
+    # The draft rate columns. Short on purpose: the default headings ("Times
     # offered", "Times picked") are wider than the numbers under them, and this
     # table has five columns to fit.
     "item_name": "Item",

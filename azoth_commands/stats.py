@@ -339,7 +339,7 @@ def add_stats_commands(cls):
         # NULL) to the top. The renderer re-orders anyway; this just avoids
         # fighting the view.
         #
-        # Caught the way player_act_view is on /stats player: an unmigrated view
+        # Caught the way the image reports catch theirs: an unmigrated view
         # is PGRST205, and "not migrated" is a different answer from "no turns
         # yet". Naming the file is the whole value of catching it.
         try:
