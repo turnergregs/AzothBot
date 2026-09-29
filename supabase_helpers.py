@@ -113,8 +113,39 @@ def _assert_readable(table_name: str):
 	)
 
 
+# PostgREST's `max-rows` on this project: no response carries more, whatever
+# is asked for. fetch_all pages in steps of it, so it must never be set above
+# the server's value, or every page comes back short and reads as the last.
+PAGE_SIZE = 1000
+
+# Columns that identify a row on their own, preferred as the paging tiebreak.
+_KEY_COLUMNS = ("id", "uuid")
+
+
+def _order_spec(sort: list[str]) -> list[str]:
+	"""["-created_at", "name"] -> ["created_at.desc", "name.asc"]."""
+	return [f"{c[1:]}.desc" if c.startswith("-") else f"{c}.asc" for c in sort]
+
+
+def _tiebreak(rows: list[dict], sorted_on: set) -> list[str]:
+	"""Order terms that make a sort TOTAL, from what one page shows.
+
+	A key column when the rows have one. Otherwise every column whose values
+	on this page are all scalar: a `json` column cannot be ordered at all, and
+	rows equal on every scalar column are, for any caller reading them,
+	the same row -- which of two copies a page returns does not change the
+	result.
+	"""
+	columns = [c for c in (rows[0] if rows else {}) if c not in sorted_on]
+	keys = [c for c in _KEY_COLUMNS if c in columns]
+	if keys:
+		return [f"{keys[0]}.asc"]
+	return [f"{c}.asc" for c in columns
+	        if not any(isinstance(r.get(c), (dict, list)) for r in rows)]
+
+
 def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, sort: list[str] = None, limit: int = None) -> list[dict]:
-	"""Fetch records from a Supabase table.
+	"""Fetch records from a Supabase table: every matching row, however many.
 
 	- columns: column names to select (defaults to '*')
 	- filters: field -> value. None becomes `is null`, a list becomes `in`,
@@ -122,9 +153,17 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 	- sort: e.g. ["-created_at", "name"]; a leading '-' means descending.
 	  Multiple columns apply left to right (this was broken until 2026-08-27 --
 	  only the first took effect)
-	- limit: pushed to PostgREST. WITHOUT it, PostgREST caps the response at
-	  1000 rows, so slicing the result in Python silently reads a truncated
-	  page of a larger table. Pass a limit whenever you only need the top N.
+	- limit: the most rows wanted, pushed to PostgREST. Pass it whenever you
+	  only need the top N: a limit of PAGE_SIZE or less is one request.
+
+	PAGED (2026-09-29). PostgREST answers at most PAGE_SIZE rows per request
+	and says nothing when it stops there, so a read of a larger table used to
+	come back silently truncated -- `draft_item_offer_view` was ~500 rows and
+	growing. A result that fits one page is still ONE request. When the first
+	page comes back full, the read starts again from row 0 under a TOTAL order
+	(the sort asked for, then `_tiebreak`) and pages through it: offset paging
+	over an order with ties can return a row twice and skip another, and the
+	unordered first page cannot be continued for the same reason.
 
 	Returns [] ONLY when the query genuinely matched no rows. Every failure
 	raises: this function used to swallow exceptions and return [], which made
@@ -138,42 +177,63 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 	_assert_readable(table_name)
 
 	selector = ",".join(columns) if columns else "*"
-	query = supabase.table(table_name).select(selector)
+	order = _order_spec(sort or [])
 
-	if filters:
-		for key, value in filters.items():
-			if value is None:
-				query = query.is_(key, "null")
-			elif isinstance(value, list):
-				query = query.in_(key, value)
-			else:
-				query = query.eq(key, value)
+	def build(order_terms):
+		query = supabase.table(table_name).select(selector)
+		if filters:
+			for key, value in filters.items():
+				if value is None:
+					query = query.is_(key, "null")
+				elif isinstance(value, list):
+					query = query.in_(key, value)
+				else:
+					query = query.eq(key, value)
+		if order_terms:
+			# ONE order call, comma-joined -- not one per column.
+			#
+			# postgrest-py's .order() does params.add("order", ...), so calling
+			# it twice sends `order=a&order=b` and PostgREST honours only the
+			# first. Every column after the first was silently dropped:
+			# `sort=["usage_type", "name"]` grouped correctly and then ordered
+			# arbitrarily WITHIN each group, which looks like a sort that works
+			# until you read it closely.
+			#
+			# PostgREST wants `order=a.asc,b.desc`. The direction suffix is
+			# explicit on every column because it has to be for the ones after
+			# the first.
+			query = query.order(",".join(order_terms))
+		return query
 
-	if sort:
-		# ONE order call, comma-joined -- not one per column.
-		#
-		# postgrest-py's .order() does params.add("order", ...), so calling it
-		# twice sends `order=a&order=b` and PostgREST honours only the first.
-		# Every column after the first was silently dropped: `sort=["usage_type",
-		# "name"]` grouped correctly and then ordered arbitrarily WITHIN each
-		# group, which looks like a sort that works until you read it closely.
-		#
-		# PostgREST wants `order=a.asc,b.desc`. The direction suffix is explicit
-		# on every column because it has to be for the ones after the first.
-		spec = ",".join(
-			f"{column[1:]}.desc" if column.startswith("-") else f"{column}.asc"
-			for column in sort)
-		query = query.order(spec)
+	def run(query) -> list:
+		try:
+			response = query.execute()
+		except Exception as e:
+			raise SupabaseQueryError(f"select on `{table_name}` failed: {e}") from e
+		return response.data or []
 
-	if limit is not None:
-		query = query.limit(limit)
+	def page(query, start: int) -> list:
+		# postgrest-py 0.10.7 (pinned through supabase==1.0.3) sends
+		# `Range: start-(end-1)`: its `end` is EXCLUSIVE. Later versions made
+		# it inclusive. The loop below advances by the rows that came back and
+		# stops on a short page, so it pages correctly under either reading.
+		return run(query.range(start, start + PAGE_SIZE))
 
-	try:
-		response = query.execute()
-	except Exception as e:
-		raise SupabaseQueryError(f"select on `{table_name}` failed: {e}") from e
+	if limit is not None and limit <= PAGE_SIZE:
+		return run(build(order).limit(limit))
 
-	return response.data or []
+	first = page(build(order), 0)
+	if len(first) < PAGE_SIZE:
+		return first
+
+	total = order + _tiebreak(first, {t.rsplit(".", 1)[0] for t in order})
+	rows: list = []
+	while limit is None or len(rows) < limit:
+		chunk = page(build(total), len(rows))
+		rows += chunk
+		if len(chunk) < PAGE_SIZE:
+			break
+	return rows[:limit] if limit is not None else rows
 
 
 def create_record(table_name: str, data: dict):

@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 880 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 958 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -99,6 +99,23 @@ forget_art becomes a no-op                 CAUGHT
 sync_assets exits 0 on a missing background CAUGHT
 ```
 
+The 2026-09-29 round, on `fetch_all` paging past PostgREST's 1000-row cap:
+
+```
+one request, no paging (the bug)          CAUGHT
+paging over a sort with ties (no tiebreak) CAUGHT
+range end read as inclusive               CAUGHT
+unordered first page continued            CAUGHT
+json column put in the tiebreak           CAUGHT
+limit above the cap ignored               CAUGHT
+small limit no longer one request         CAUGHT
+```
+
+The fake had to change first: its `range` only logged, and it returned every
+row whatever was asked, so a one-request `fetch_all` passed against it. It now
+caps a response at 1000 rows, reads `range` with 0.10.7's exclusive end, sorts
+by the requested order, and can shuffle tied rows per request (`shuffle=`).
+
 The first pass **missed** the June 30 mutant: the test exercised `_to_number` in
 isolation while the bug lived at the call site. That is the failure mode to watch
 for — a test of the helper is not a test of the code that uses it. An end-to-end
@@ -121,7 +138,10 @@ revert.
   also documents which paths need it.
 - **Fake PostgREST, not mocks.** `FakeSupabase` / `FakeQuery` in `conftest.py`
   mimic the query-builder chain and record calls, so tests can assert on the
-  request that *would* have been sent (`fs.log["cards"]["filters"]`).
+  request that *would* have been sent (`fs.log["cards"]["filters"]`, and every
+  executed request in `fs.log["cards"]["requests"]`). Like the server, it
+  answers at most 1000 rows, reads `range` with an exclusive end and applies
+  `order`.
 - **Name the bug in the test.** A regression test whose docstring doesn't say
   what broke gets deleted by the next person who finds it inconvenient.
 - **`pyflakes` is a test dependency.** `test_command_registration.py` shells out

@@ -158,7 +158,7 @@ a followup. Commands that send their own files or embeds return `None`.
 
 | Function | Notes |
 |---|---|
-| `fetch_all(table, columns, filters, sort)` | `filters` values dispatch by type: `None` → `is null`, `list` → `in_`, else `eq`. `sort` takes `["-col"]` for descending |
+| `fetch_all(table, columns, filters, sort, limit)` | `filters` values dispatch by type: `None` → `is null`, `list` → `in_`, else `eq`. `sort` takes `["-col"]` for descending. Returns **every** matching row: pages past PostgREST's 1000-row cap (see below). `limit` ≤ 1000 is one request |
 | `create_record(table, data)` | |
 | `update_record(table, id, data)` | Stamps `updated_at`. Returns the updated rows; `[]` means no row matched |
 | `delete_record(table, id)` | Hard delete. **No command calls this any more** — the four `/delete_*` commands were removed 2026-08-27 |
@@ -185,6 +185,43 @@ They now raise:
 
 `safe_interaction` already catches everything and posts the exception to Discord,
 so errors reach the user with no per-command work.
+
+### Reads page past the 1000-row cap (2026-09-29)
+
+PostgREST answers at most 1000 rows per request (the project's `max-rows`)
+and returns them with HTTP 200 and no sign it stopped. `fetch_all` used to send
+one request, so any read of more than 1000 rows came back **silently
+truncated**. Nothing was over the line yet, but `draft_item_offer_view` (read in
+full by `/stats draft items`) was ~500 rows and growing with every card and
+cohort, and a truncated read ranks a partial sample with no error.
+
+It now pages, transparently to every caller:
+
+- **One page is still one request.** The first request asks for rows 0–999. A
+  shorter answer is the whole result, which is every read today.
+- **A full first page restarts under a total order.** Offset paging over an
+  order with ties can return a row twice and skip another: Postgres may order
+  tied rows differently on each request. So the read starts again from row 0
+  ordered by the requested `sort`, then a tiebreak (`_tiebreak`): `id` or
+  `uuid` when the rows have one, otherwise every column whose values on the
+  first page are all scalar. A `json` column cannot be ordered at all; rows
+  equal on every scalar column are interchangeable to any caller. The unordered
+  first page is thrown away rather than continued, for the same reason.
+- **Pages until one comes back short**, advancing by the rows received.
+- **`postgrest-py` 0.10.7's `range(start, end)` has an EXCLUSIVE end** (it sends
+  `Range: start-(end-1)`); later versions made it inclusive. Advancing by what
+  came back and stopping on a short page is correct under either reading.
+  `PAGE_SIZE` must never exceed the server's `max-rows`, or every page is short
+  and reads as the last.
+- **`limit`** is the most rows wanted: at or under `PAGE_SIZE` it is one
+  request with `limit`, as before; above it the read pages up to it.
+
+A lookup that only needs a few rows should still ask for only those (a filter
+or a `limit`): paging makes a large read correct, not cheap. That is why the
+`/stats item` split views carry their kind's totals on every row.
+
+The fake in `tests/conftest.py` enforces the cap, the exclusive `range` and
+unstable ties, so a single-request `fetch_all` fails the suite.
 
 #### The pre-flight guard
 
@@ -300,7 +337,7 @@ fixed; the rest are still open.
 | ~~`fetch_all` returns `[]` on any error~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — failures now raise |
 | ~~`soft_delete_record` always returned `None`~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — `/delete_deck` and `/delete_hero` reported failure on every success |
 | `game_stats` table does not exist | `stats.py` version autocomplete | Autocomplete always returns nothing. Now logs the reason to the console |
-| Leaderboard sorts client-side after a capped fetch | `stats.py` | Hits PostgREST's 1000-row default against a larger view |
+| ~~Leaderboard sorts client-side after a capped fetch~~ | `stats.py` | **Fixed**: `limit` is pushed to the server, and since 2026-09-29 `fetch_all` pages past the 1000-row cap |
 | Hardcoded deck IDs | `decks.py` `stage` / `merge_staging` | IDs 20/21/22/3; deck 21 ("Staging") is **archived** and 22 is "Testing Fates" despite the constant being `ASPECT_DECK_ID`. **Both commands hidden 2026-08-27** — the bug is parked, not fixed. Derive the decks from `type`/`usage_type` before restoring them |
 | Six pseudo-docstrings placed above `def` | `supabase_helpers.py` | Not real docstrings; `help()` shows nothing |
 | Stale comment | `supabase_storage.py` `download_image` | Says "timestamped filename"; it writes a flat name |

@@ -172,6 +172,74 @@ def test_limit_is_pushed_to_the_server(monkeypatch, fake_supabase):
     assert len(rows) == 10
 
 
+# --- Paging past PostgREST's row cap (2026-09-29) ----------------------------------
+# REGRESSION: fetch_all sent one request, and PostgREST answers at most 1000
+# rows without saying it stopped. `draft_item_offer_view` (read in full by
+# /stats draft items) was ~500 rows and growing: past 1000 the report would
+# have ranked a partial sample with no error. The fake enforces the cap.
+
+def _paged(monkeypatch, fake_supabase, table, rows, shuffle=None):
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    fs = fake_supabase({table: rows}, shuffle=shuffle)
+    monkeypatch.setattr(h, "supabase", fs)
+    return fs
+
+
+def test_a_read_past_the_row_cap_comes_back_whole(monkeypatch, fake_supabase):
+    fs = _paged(monkeypatch, fake_supabase, "cards", [{"id": i} for i in range(2500)])
+    rows = h.fetch_all("cards")
+    assert [r["id"] for r in rows] == list(range(2500))
+    requests = fs.log["cards"]["requests"]
+    # A probe that came back full, then three pages under a total order.
+    assert [r["range"] for r in requests[1:]] == [(0, 1000), (1000, 2000), (2000, 3000)]
+    assert all(r["order"] == "id.asc" for r in requests[1:])
+
+
+def test_a_read_that_fits_one_page_is_one_request(monkeypatch, fake_supabase):
+    fs = _paged(monkeypatch, fake_supabase, "cards", [{"id": i} for i in range(999)])
+    assert len(h.fetch_all("cards")) == 999
+    assert len(fs.log["cards"]["requests"]) == 1
+
+
+def test_a_limit_is_still_one_request(monkeypatch, fake_supabase):
+    fs = _paged(monkeypatch, fake_supabase, "cards", [{"id": i} for i in range(2500)])
+    assert len(h.fetch_all("cards", limit=10)) == 10
+    assert fs.log["cards"]["requests"] == [{"order": None, "range": None, "limit": 10}]
+
+
+def test_a_limit_above_the_cap_pages_up_to_it(monkeypatch, fake_supabase):
+    _paged(monkeypatch, fake_supabase, "cards", [{"id": i} for i in range(2500)])
+    assert [r["id"] for r in h.fetch_all("cards", limit=1500)] == list(range(1500))
+
+
+def test_pages_are_read_over_a_total_order(monkeypatch, fake_supabase):
+    """Offset paging over a sort with ties can return a row twice and skip
+    another: Postgres may order tied rows differently on each request. A view
+    with no key column, sorted on a column with ties, shuffled per request."""
+    import random
+    calls = iter(range(100))
+
+    def shuffle(rows):
+        random.Random(next(calls)).shuffle(rows)
+        return rows
+
+    rows = [{"grp": i // 7, "n": i, "data": {"k": i}} for i in range(2500)]
+    fs = _paged(monkeypatch, fake_supabase, "draft_item_offer_view", rows, shuffle=shuffle)
+    got = h.fetch_all("draft_item_offer_view", sort=["-grp"])
+    assert sorted(r["n"] for r in got) == list(range(2500))          # none twice, none missed
+    order = fs.log["draft_item_offer_view"]["requests"][-1]["order"]
+    assert order == "grp.desc,n.asc"   # the sort asked for leads; no json column
+
+
+def test_a_query_failure_while_paging_still_raises(monkeypatch, fake_supabase):
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    fs = fake_supabase({"cards": [{"id": i} for i in range(2500)]},
+                       raises={"cards": RuntimeError("boom")})
+    monkeypatch.setattr(h, "supabase", fs)
+    with pytest.raises(h.SupabaseQueryError):
+        h.fetch_all("cards")
+
+
 # ---------------------------------------------------------------------------
 # Mutations
 # ---------------------------------------------------------------------------

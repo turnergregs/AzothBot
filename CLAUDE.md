@@ -85,7 +85,9 @@ All docs live in `docs/`. Read before changing a system.
   `hero_split_view` hold each item per (version | ritual | hero, cohort) WITH
   its kind's totals for that group on every row (item included; the bot
   subtracts). A lookup is one item's few rows. Don't widen the older views
-  instead: `fetch_all` does not page, and PostgREST stops at 1000 rows.
+  instead: every other report would fetch the multiplied rows. (`fetch_all`
+  pages past PostgREST's 1000-row cap since 2026-09-29, which makes a big read
+  correct, not cheap.)
 - **`/stats draft` keeps content apart from play** (revised 2026-09-29).
   `pool` is content (the shipped draft decks, no cutoff, no cohort); `picks`
   and `items` are play (draft offers at `analytics_cutoff()`, with `players:`).
@@ -160,7 +162,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 901 tests, all offline** (`docs/TESTING.md`):
+**pytest, 958 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest

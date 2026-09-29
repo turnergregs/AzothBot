@@ -477,7 +477,9 @@ carries its kind's totals per group on every row (a window sum, item
 included; the bot subtracts), so a lookup reads the one item's handful of rows.
 Adding version, ritual and hero to `boss_fight_view` or
 `draft_item_offer_view` would have multiplied the rows every other report
-fetches, and `fetch_all` does not page: PostgREST answers at most 1000 rows.
+fetches, and at the time `fetch_all` did not page past PostgREST's 1000-row
+cap. It does now (2026-09-29, ARCHITECTURE.md), but a lookup of one item's
+rows is still one small request rather than several pages.
 
 ### Draft reports (2026-09-29)
 

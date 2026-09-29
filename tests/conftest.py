@@ -39,13 +39,24 @@ class FakeQuery:
     *would* have been sent, and returns canned rows.
     """
 
-    def __init__(self, rows=None, raises=None, log=None, table=None):
+    # PostgREST's max-rows: no response carries more, whatever is asked for.
+    MAX_ROWS = 1000
+
+    def __init__(self, rows=None, raises=None, log=None, table=None, shuffle=None):
         self._rows = rows if rows is not None else []
         self._raises = raises
         self.log = log if log is not None else {}
         self.table = table
+        self._order = None
+        self._range = None
+        self._limit = None
+        # A callable reordering rows that TIE under the requested order, per
+        # request, the way Postgres may return equal rows in any order. Lets a
+        # test catch paging over a sort that is not total.
+        self._shuffle = shuffle
         self.log.setdefault("filters", [])
         self.log.setdefault("order", [])
+        self.log.setdefault("requests", [])
 
     def select(self, *a, **k):
         self.log["select"] = a[0] if a else "*"
@@ -67,15 +78,20 @@ class FakeQuery:
         self.log["filters"].append(("not", None, None)); return self
 
     def order(self, col, desc=False):
-        self.log["order"].append((col, desc)); return self
+        self.log["order"].append((col, desc))
+        self._order = col
+        return self
 
     def limit(self, n):
         self.log["limit"] = n
-        self._rows = self._rows[:n]
+        self._limit = n
         return self
 
     def range(self, lo, hi):
-        self.log["range"] = (lo, hi); return self
+        # postgrest-py 0.10.7's reading: `hi` is EXCLUSIVE (Range: lo-(hi-1)).
+        self.log["range"] = (lo, hi)
+        self._range = (lo, hi)
+        return self
 
     def insert(self, data):
         self.log["insert"] = data; return self
@@ -86,23 +102,46 @@ class FakeQuery:
     def delete(self):
         self.log["delete"] = True; return self
 
+    def _sorted(self, rows):
+        terms = [t.rsplit(".", 1) for t in (self._order or "").split(",") if t]
+
+        def key(row):
+            return tuple(row.get(col) for col, _ in terms)
+
+        if self._shuffle:
+            rows = self._shuffle(list(rows))
+        # Stable sorts from the last term to the first: a multi-column order.
+        for col, direction in reversed(terms):
+            rows = sorted(rows, key=lambda r: (r.get(col) is None, r.get(col)),
+                          reverse=direction == "desc")
+        return rows
+
     def execute(self):
+        self.log["requests"].append({"order": self._order, "range": self._range,
+                                     "limit": self._limit})
         if self._raises:
             raise self._raises
-        return type("Response", (), {"data": list(self._rows)})()
+        rows = self._sorted(self._rows)
+        if self._range:
+            rows = rows[self._range[0]:self._range[1]]
+        if self._limit is not None:
+            rows = rows[:self._limit]
+        return type("Response", (), {"data": rows[:self.MAX_ROWS]})()
 
 
 class FakeSupabase:
     """Routes .table(name) to canned rows per table name."""
 
-    def __init__(self, tables=None, raises=None):
+    def __init__(self, tables=None, raises=None, shuffle=None):
         self.tables = tables or {}
         self.raises = raises or {}
+        self.shuffle = shuffle
         self.log = {}
 
     def table(self, name):
         log = self.log.setdefault(name, {})
-        return FakeQuery(self.tables.get(name, []), self.raises.get(name), log, name)
+        return FakeQuery(self.tables.get(name, []), self.raises.get(name), log, name,
+                         shuffle=self.shuffle)
 
 
 @pytest.fixture
