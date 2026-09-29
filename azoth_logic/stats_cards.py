@@ -842,3 +842,92 @@ def draft_pool_card(row: dict) -> sc.Card:
         for label, n in valences:
             card.add(sc.BarRow(label, n / top, value_text=str(n), count_w=0, fill=sc.NEUTRAL))
     return card
+
+
+# ---------------------------------------------------------------------------
+# The daily report
+# ---------------------------------------------------------------------------
+# Redrawn as one image 2026-09-29 from daily_update._fetch_daily_stats. A
+# digest of what happened yesterday, not a verdict: one day is too little to
+# flag anything, so the same MIN_ rules as the other reports dim nearly every
+# row and flag none. /stats bosses and /stats draft give the verdicts.
+#
+# It counts everyone, developers included, as the text report always did: a
+# day of only testing reads as that day's activity, not as "no one played".
+# The links-per-turn chart it used to carry is dropped with the other per-turn
+# habits (Turner's review of the breakdown).
+
+DAILY_MOST, DAILY_LEAST = 3, 2
+
+
+def daily_card(stats: dict, day: str) -> sc.Card:
+    card = sc.Card("Yesterday", f"{day} · Central time")
+
+    tiles = [("Players", str(stats.get("unique_players") or 0)),
+             ("New", str(stats.get("new_players") or 0)),
+             # Solo only: co-op has its own tile below, counted by session.
+             ("Solo runs", str(stats.get("solo_runs", stats.get("total_games")) or 0))]
+    if stats.get("total_playtime_sec"):
+        tiles.append(("Played", duration(stats["total_playtime_sec"])))
+    card.add(*sc.tile_rows(tiles))
+    # Co-op and legacy runs, always shown, 0 included (Turner, 2026-09-29): not
+    # balance data yet, but whether anyone played them is itself the answer.
+    # Co-op counts SESSIONS, not the one row per participant.
+    more = [("Co-op runs", str(stats.get("coop_sessions") or 0)),
+            ("Legacy runs", str(stats.get("legacy_runs") or 0))]
+    if stats.get("tutorial_games"):
+        more.append(("Tutorial", str(stats["tutorial_games"])))
+    card.add(*sc.tile_rows(more))
+    card.add(sc.Spacer(4))
+
+    acts = {int(a): int(n) for a, n in (stats.get("act_distribution") or {}).items() if n}
+    if acts:
+        right = sc.WIDTH - sc.PAD
+        card.add(sc.SectionHeader("How far runs got"))
+        card.add(sc.ColumnHeads([("Furthest act", sc.PAD + sc.LABEL_W, "lm"),
+                                 ("Beat act 3", right - sc.ActStripRow.COUNT_W, "rm"),
+                                 ("Runs", right, "rm")]))
+        # Reaching act 4 means the act 3 boss fell.
+        card.add(sc.ActStripRow("Solo runs", acts, sum(n for a, n in acts.items() if a >= 4)))
+        card.add(sc.act_legend(acts))
+        card.add(sc.Spacer(4))
+
+    tg = stats.get("turn_grain") or {}
+    if tg.get("error"):
+        card.add(sc.Note(f"Boss fights and level-ups unavailable: {tg['error']}"[:90]))
+        card.add(sc.Spacer(4))
+
+    record = tg.get("boss_record") or {}
+    if record:
+        wins = sum(w for w, _ in record.values())
+        fights = sum(f for _, f in record.values())
+        card.add(sc.SectionHeader("Boss fights", f"won {wins} of {fights}"))
+        average = wins / fights if fights else 0
+        for name in sorted(record, key=lambda n: (-record[n][1], n)):
+            w, f = record[name]
+            card.add(sc.BarRow(name, w / f, value_text=f"{round(100 * w / f)}%",
+                               count_text=f"{w}/{f}", delta=sc.signed((w / f - average) * 100),
+                               faded=f < MIN_BOSS_FIGHTS, reference=average, fill=sc.NEUTRAL))
+        card.add(sc.Spacer(4))
+
+    rewards = tg.get("top_rewards") or []
+    if rewards:
+        card.add(sc.SectionHeader("Level-up picks", f"{tg.get('levelup_packs', 0)} packs"))
+        for name, r in rewards:
+            card.add(sc.BarRow(name, r["taken"] / r["offered"],
+                               value_text=f"{round(100 * r['taken'] / r['offered'])}%",
+                               count_text=f"{r['taken']}/{r['offered']}", fill=sc.NEUTRAL))
+        card.add(sc.Spacer(4))
+
+    items = (stats.get("draft") or {}).get("item_rates") or []
+    if items:
+        rate = lambda i: i["picked"] / i["offered"]
+        most = sorted(items, key=lambda i: (-rate(i), -i["offered"], i["item_name"]))[:DAILY_MOST]
+        least = sorted([i for i in items if i not in most],
+                       key=lambda i: (rate(i), -i["offered"], i["item_name"]))[:DAILY_LEAST]
+        card.add(sc.SectionHeader("Draft", "most and least picked"))
+        for i in most + least:
+            card.add(sc.BarRow(i["item_name"], rate(i), value_text=f"{round(100 * rate(i))}%",
+                               count_text=f"{i['picked']}/{i['offered']}", fill=sc.NEUTRAL,
+                               label_w=130, tag="" if i["item_type"] == "card" else i["item_type"]))
+    return card

@@ -563,7 +563,7 @@ than drawing a partial distribution as a whole one. Full account in
 > before quoting a number: the trustworthy dataset is still only a couple of runs
 > deep, so most of these will be thin or empty until there is play at `0.9.10`+.
 
-`/daily_update` is per-channel: enabling it in a channel registers that channel
+`/daily_update` posts one image since 2026-09-29 (see ANALYTICS.md § The daily report). It is per-channel: enabling it in a channel registers that channel
 with its own send time, and the report covers the previous day (CST). Disabling
 preserves the dedup date so re-enabling the same day doesn't re-send.
 

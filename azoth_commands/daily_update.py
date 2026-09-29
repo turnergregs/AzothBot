@@ -1,3 +1,4 @@
+import io
 import json
 import math
 import os
@@ -9,7 +10,7 @@ from nextcord import Interaction, SlashOption
 from nextcord.ext import tasks
 from azoth_commands.helpers import safe_interaction, AUTHORIZED_USER_IDS
 from azoth_logic import rite_schema
-from azoth_logic import stats_format as sf
+from azoth_logic import stats_cards
 from constants import DEV_GUILD_ID
 from supabase_client import supabase, SUPABASE_ROLE
 
@@ -260,6 +261,12 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     # either side of it (azoth_logic/rite_schema.py).
     cards = {k: v for k, v in pick_rates.items() if k[0] in ("card", "aspect")}
     rites = {k: v for k, v in pick_rates.items() if k[0] in rite_schema.CONTENT_TYPES}
+    # Every item with a rate, all types together, for the image report
+    # (2026-09-29), which ranks cards, aspects and rites on one list: a RATE is
+    # comparable across them (above). `rite` whichever spelling the row used.
+    item_rates = [{"item_type": "rite" if kind in rite_schema.CONTENT_TYPES else kind,
+                   "item_name": name, "picked": v["picked"], "offered": v["offered"]}
+                  for (kind, name), v in pick_rates.items()]
 
     # Performance correlation: for each picked item, the typical combo of the
     # games it appeared in.
@@ -306,6 +313,7 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     return {
         "total_drafts": len(all_drafts),
         "total_picks": sum(pick_count.values()),
+        "item_rates": item_rates,
         "most_picked_cards": _rank_most(cards),
         "least_picked_cards": _rank_least(cards),
         "most_picked_rites": _rank_most(rites, limit=1),
@@ -431,6 +439,15 @@ def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
                 .execute()
             ).data or [])
 
+        # Boss names for the per-boss record. One small read; a failure here is
+        # a failure of the whole turn-grain block, reported as "unavailable".
+        boss_ids = sorted({t["boss_id"] for t in turns if t.get("boss_id") is not None})
+        boss_names = {}
+        if boss_ids:
+            boss_names = {b["id"]: b["name"] for b in (
+                supabase.table("bosses").select("id, name").in_("id", boss_ids).execute()
+            ).data or []}
+
         levelups = []
         for i in range(0, len(turn_uuids), 50):
             chunk = turn_uuids[i:i + 50]
@@ -455,6 +472,16 @@ def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
             if t.get("uuid") and t.get("boss_id") is not None]
 
     boss_rows = [t for t in turns if t.get("boss_id") is not None]
+    # Per boss: [player wins, finished fights]. Unfinished fights (no result)
+    # are left out, as /stats bosses does.
+    boss_record = {}
+    for t in boss_rows:
+        if t.get("boss_result") not in ("win", "loss"):
+            continue
+        name = boss_names.get(t["boss_id"], f"boss #{t['boss_id']}")
+        rec = boss_record.setdefault(name, [0, 0])
+        rec[0] += 1 if t["boss_result"] == "win" else 0
+        rec[1] += 1
 
     # Level-up rewards. `options` is the denominator -- raw pick counts are
     # uninterpretable without it, because common rewards are simply offered more.
@@ -476,6 +503,7 @@ def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
 
     return {
         "boss_turns": len(boss_rows),
+        "boss_record": boss_record,
         "boss_wins": sum(1 for t in boss_rows if t.get("boss_result") == "win"),
         "boss_losses": sum(1 for t in boss_rows if t.get("boss_result") == "loss"),
         "regular_turns": len(regular),
@@ -487,6 +515,26 @@ def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
         "levelup_packs": len(levelups),
         "top_rewards": top_rewards,
     }
+
+
+def _count_runs(games: list[dict]) -> tuple[int, int, int]:
+    """`(solo runs, co-op runs, legacy runs)` in a day's regular rows.
+
+    Co-op counts RUNS, not rows: every participant writes their own `games`
+    row, and rows sharing a shared_run_id are one session. A co-op row with no
+    id (older builds) counts as its own run rather than vanishing. Legacy is
+    the `format` axis, orthogonal to solo / co-op (docs/DB_SCHEMA.md § Format),
+    so a legacy co-op session counts once, like any other co-op run.
+    """
+    def run_key(g):
+        if g.get("game_type") == "coop":
+            return g.get("shared_run_id") or f"row:{g.get('uuid')}"
+        return f"row:{g.get('uuid')}"
+
+    solo = sum(1 for g in games if g.get("game_type") == "solo")
+    coop = len({run_key(g) for g in games if g.get("game_type") == "coop"})
+    legacy = len({run_key(g) for g in games if g.get("format") == "legacy"})
+    return solo, coop, legacy
 
 
 def _fetch_daily_stats():
@@ -514,7 +562,7 @@ def _fetch_daily_stats():
     # make visible. It is NULL on no row since id 6000.
     games = (
         supabase.table("games")
-        .select("id, uuid, player_uuid, level_reached, highest_combo, turns_played, elapsed_sec, result, act_reached, game_type, version, starter_deck")
+        .select("id, uuid, player_uuid, level_reached, highest_combo, turns_played, elapsed_sec, result, act_reached, game_type, version, starter_deck, shared_run_id, format")
         .gte("started_at", start)
         .lt("started_at", end)
         .execute()
@@ -575,6 +623,7 @@ def _fetch_daily_stats():
     ]
     restarts = sum(1 for g in regular if g.get("result") == "restart")
     coop_rows = sum(1 for g in regular if g.get("game_type") != "solo")
+    solo_runs, coop_sessions, legacy_runs = _count_runs(regular)
 
     tutorial_restarts = sum(1 for g in tutorial_games if g.get("result") == "restart")
     tutorial_players = len({g["player_uuid"] for g in tutorial_games})
@@ -642,6 +691,9 @@ def _fetch_daily_stats():
         "measured_games": len(measured),
         "restarts": restarts,
         "coop_rows": coop_rows,
+        "solo_runs": solo_runs,
+        "coop_sessions": coop_sessions,
+        "legacy_runs": legacy_runs,
         "tutorial_games": len(tutorial_games),
         "tutorial_restarts": tutorial_restarts,
         "tutorial_players": tutorial_players,
@@ -671,27 +723,15 @@ def _format_duration(seconds):
     return f"{hours}h {mins}m"
 
 
-def _ratio(part: int, whole: int) -> str:
-    """`picked/offered`, the rate and its sample size in one token."""
-    return f"{part}/{whole}"
+def _build_update_messages(stats: dict) -> list[dict]:
+    """The daily report as `channel.send(**message)` keyword sets.
 
-
-def _embed_char_count(embed: nextcord.Embed) -> int:
-    """Calculate total character count of an embed (Discord limit: 6000)."""
-    total = len(embed.title or "")
-    total += len(embed.description or "")
-    for field in embed.fields:
-        total += len(field.name or "")
-        total += len(field.value or "")
-    if embed.footer:
-        total += len(embed.footer.text or "")
-    if embed.author:
-        total += len(embed.author.name or "")
-    return total
-
-
-def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
-    """Build one or more embeds for the daily report, splitting if needed."""
+    One image since 2026-09-29 (stats_cards.daily_card), in an embed whose
+    footer repeats what it rests on as text. A quiet day stays one line of
+    text: there is nothing to draw, and an empty card would be the empty
+    legend again. Built -- image rendered included -- BEFORE the day is
+    claimed, so a drawing failure never uses up the day's send.
+    """
     yesterday = _yesterday_cst_str()
     color = 0x7B2D8E
 
@@ -707,109 +747,17 @@ def _build_update_embeds(stats: dict) -> list[nextcord.Embed]:
                 f"{'' if stats['dropped_opening_turn'] == 1 else 's'} in the opening "
                 f"turn, excluded.)"
             )
-        embed = nextcord.Embed(
-            title=f"Daily Report — {yesterday}",
-            description="\n".join(lines),
-            color=color,
-        )
-        return [embed]
+        return [{"embed": nextcord.Embed(title=f"Daily Report — {yesterday}",
+                                         description="\n".join(lines), color=color)}]
 
-    # Collect all fields as (name, value, inline) tuples
-    fields = []
-
-    # Headline counts. Three inline fields, so Discord lays them out as labelled
-    # columns rather than as sentences.
-    #
-    # Nothing here is a sentence on purpose. The lines this replaced carried
-    # their own methodology ("-- of which 1 was a restart", "(one per
-    # participant, not per session)", "not counted above", "N restarts in the
-    # opening turn, excluded"), which is what made the report read as written by
-    # a machine defending itself. The rules did not change -- opening-turn
-    # restarts are still dropped in `_partition_games`, co-op is still one row
-    # per participant -- they are just documented in docs/ANALYTICS.md instead of
-    # re-explained every morning.
-    fields.append(("Players", f"**{stats['unique_players']}**", True))
-    fields.append(("New", f"**{stats['new_players']}**", True))
-    fields.append(("Runs", f"**{stats['total_games']}**", True))
-
-    # Tutorial runs keep a field of their own, shown only when there are any.
-    # Without it a tutorial-only day renders as zero runs by players who do not
-    # appear to have played anything -- these rows are split out of the counts,
-    # not hidden (see _partition_games).
-    if stats.get("tutorial_games"):
-        fields.append(("Tutorial", f"**{stats['tutorial_games']}**", True))
-
-    # How far runs got. This replaced the `result` breakdown: beating an act's
-    # boss is what advances the act, so the ladder already says who reached and
-    # cleared a boss. See _fetch_daily_stats.
-    if stats.get("act_distribution"):
-        fields.append(("Act Reached", sf.act_chart(stats["act_distribution"]), False))
-
-    # Links per regular turn, as a spread rather than the average: whether
-    # yesterday's turns cleared in two links or ran out of nodes is the shape an
-    # average of 3.5 hides. Omitted, not zeroed, when the turn tables could not
-    # be read -- see _fetch_turn_grain_stats.
-    tg = stats.get("turn_grain") or {}
-    if tg.get("links_distribution"):
-        fields.append((f"Links per Regular Turn · {tg.get('regular_turns', 0)} turns",
-                       sf.link_chart(tg["links_distribution"]), False))
-
-    # Level-up rewards. `options` is the denominator: raw pick counts are
-    # uninterpretable on their own, because common rewards get offered far more
-    # often than rare ones and would top any list by volume alone.
-    if tg.get("top_rewards"):
-        fields.append((
-            f"Level-Up Picks · {tg.get('levelup_packs', 0)} packs",
-            " · ".join(f"{name} {_ratio(r['taken'], r['offered'])}"
-                       for name, r in tg["top_rewards"]),
-            False))
-
-    # Draft rankings, cards and Rites side by side as two inline fields.
-    #
-    # Both print a bare `picked/offered` ratio. The percentage that used to lead
-    # each line ("100% (2/2)") was the same fact twice, and at a day's sample
-    # size the rounder of the two numbers was the more misleading one.
-    draft = stats.get("draft") or {}
-    for label, most_key, least_key in (
-        ("Cards", "most_picked_cards", "least_picked_cards"),
-        ("Rites", "most_picked_rites", "least_picked_rites"),
-    ):
-        lines = [f"▲ {name} {_ratio(s['picked'], s['offered'])}"
-                 for name, s in draft.get(most_key) or []]
-        lines += [f"▼ {name} {_ratio(s['picked'], s['offered'])}"
-                  for name, s in draft.get(least_key) or []]
-        if lines:
-            fields.append((label, "\n".join(lines), True))
-
-    # Pack fields into embeds, splitting at 5800 chars (buffer under 6000 limit)
-    MAX_EMBED_CHARS = 5800
-    MAX_FIELD_CHARS = 1024
-    embeds = []
-    current = nextcord.Embed(
-        title=f"Daily Report — {yesterday}",
-        color=color,
-    )
-
-    for name, value, inline in fields:
-        # Truncate field value if it exceeds Discord's 1024 char field limit
-        if len(value) > MAX_FIELD_CHARS:
-            value = value[:MAX_FIELD_CHARS - 4] + "\n..."
-
-        field_size = len(name) + len(value)
-        current_size = _embed_char_count(current)
-
-        if current_size + field_size > MAX_EMBED_CHARS and current.fields:
-            # Current embed is full, start a new one
-            embeds.append(current)
-            current = nextcord.Embed(
-                title=f"Daily Report — {yesterday} (cont.)",
-                color=color,
-            )
-
-        current.add_field(name=name, value=value, inline=inline)
-
-    embeds.append(current)
-    return embeds
+    data = stats_cards.daily_card(stats, yesterday).png()
+    embed = nextcord.Embed(color=color)
+    embed.set_image(url="attachment://daily.png")
+    footer = "everyone, developers included · act and boss sections are solo runs"
+    if stats.get("dropped_opening_turn"):
+        footer += f" · {stats['dropped_opening_turn']} opening-turn restarts excluded"
+    embed.set_footer(text=footer)
+    return [{"embed": embed, "file": nextcord.File(io.BytesIO(data), filename="daily.png")}]
 
 
 # ---------------------------------------------------------------------------
@@ -845,7 +793,7 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
     # calls), that window opens and the claim must be moved behind a real lock,
     # e.g. an asyncio.Lock held across load -> claim -> save.
     stats = _fetch_daily_stats()
-    embeds = _build_update_embeds(stats)
+    messages = _build_update_messages(stats)
 
     # Claim the day and persist it before sending anything.
     config["last_sent_date"] = today
@@ -853,8 +801,8 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
     _save_state(state)
 
     try:
-        for embed in embeds:
-            await channel.send(embed=embed)
+        for message in messages:
+            await channel.send(**message)
         print(f"Daily update sent to channel {channel_id} for {_yesterday_cst_str()}")
     except Exception as e:
         print(

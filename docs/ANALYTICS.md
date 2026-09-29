@@ -802,7 +802,33 @@ exception reaching `tasks.Loop` **stops the loop for the life of the process**,
 so absorbing it here is what keeps the schedule alive. See the third bug
 below.
 
-### What the report contains
+### Drawn as one image (2026-09-29)
+
+The report is one image (`stats_cards.daily_card`) in an embed whose footer
+says it counts everyone, developers included, and how many opening-turn
+restarts were excluded. `daily_update._build_update_messages` returns the
+`channel.send` keyword sets, rendered before the day is claimed so a drawing
+failure never uses the day up. A quiet day is still one line of text.
+
+Top to bottom: tiles (players, new, solo runs, time played; then co-op runs,
+legacy runs, and tutorial runs when there were any); one act bar for the day with the beat-act-3 share (reaching
+act 4 means the act 3 boss fell); **boss fights per boss** (`boss_record`,
+new: the text report gave only a total, and a day of Veln winning every fight
+hid in it), against the day's overall rate; level-up reward pick rates; and the
+three most and two least picked items, cards, aspects and rites together
+(`item_rates`). It is a digest, not a verdict: one day is too little to flag, so
+nothing is flagged and most rows are dimmed by the usual minimums.
+`/stats bosses` and `/stats draft` give the verdicts. **Co-op and legacy runs**
+(added the same day at Turner's request) are always shown, 0 included: not
+balance data yet, but whether anyone played them is the answer.
+`daily_update._count_runs` counts co-op by SESSION (distinct `shared_run_id`,
+since every participant writes a row) and legacy on the `format` axis, a
+legacy co-op session once. "Solo runs" is solo only, so co-op is never
+counted twice. The links-per-turn chart
+was dropped with the other per-turn habits. Sections with nothing in them are
+not drawn; turn data the key cannot read is a note, not zeroes.
+
+### What the report contained as text (superseded)
 
 Built from `games`, `players`, `drafts`, `draft_items` and the turn-grain tables
 (`turns`, `turn_nodes`, `levelups`) for the previous CST day:

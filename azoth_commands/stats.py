@@ -298,11 +298,12 @@ def add_stats_commands(cls):
             from azoth_commands import daily_update as du
             preview.followup.label = "daily report"
             try:
-                embeds = await asyncio.to_thread(
-                    lambda: du._build_update_embeds(du._fetch_daily_stats()))
-                for embed in embeds:
-                    embed.title = f"{embed.title} (preview)"
-                    await interaction.followup.send(embed=embed)
+                messages = await asyncio.to_thread(
+                    lambda: du._build_update_messages(du._fetch_daily_stats()))
+                for message in messages:
+                    embed = message["embed"]
+                    embed.title = f"{embed.title or 'Daily report'} (preview)"
+                    await interaction.followup.send(**message)
             except Exception as e:
                 await preview.followup.send(f"❌ failed\n```{e}```")
             count += 1

@@ -466,9 +466,6 @@ def block(text: str) -> str:
 #     _valence_buckets. A missing bucket is invisible in prose; in a chart the
 #     labels are the axis, so a bucket either has a row or it visibly does not.
 
-# The escape character, spelled out: a literal 0x1b in a source file is
-# invisible in a diff and does not survive a careless copy-paste.
-ESC = "\u001b"
 
 # Listing order, mirroring taxonomy.CARD_ELEMENTS -- which is itself the game's
 # GlobalVars.ELEMENTS order, not alphabetical. NOT imported from taxonomy: this
@@ -487,53 +484,6 @@ ELEMENT_ORDER = ["anima", "blood", "sol", "catalyst"]
 # trailing it: these are not a valence above the others, and reading down from
 # 1v the eye takes a final row as the end of the scale.
 NO_VALENCE = "—"
-
-BAR = "█"
-
-def histogram(buckets: list, width: int = MOBILE_TABLE_WIDTH,
-               colours: dict = None, share: bool = False) -> str:
-    """`(label, count)` pairs as one bar per row, scaled to the largest.
-
-    The ONE bar chart. The draft pool, the daily report's act chart, and the
-    ritual and act charts on /stats player and /stats breakdown all draw
-    through it, so every chart the bot posts reads the same way. The daily
-    report kept a copy of its own until 2026-09-28.
-
-    **A non-zero count always gets at least one cell.** That is the whole point.
-    Scaled against a peak of 26 the single 7v card rounds to 0.7 of a cell, and
-    a bar that renders empty says "none" -- which is precisely the false reading
-    the missing `7v` column produced for as long as it was missing. Rows are
-    never dropped or merged for being small either.
-
-    Sized to MOBILE_TABLE_WIDTH for the same reason the tables are: a line that
-    wraps in a monospace fence loses its alignment, and an unaligned bar chart
-    is not a chart. The escape codes are outside the padded text, so colouring
-    a row cannot shift its columns.
-
-    `share` adds each row's percentage of the total after its count, for charts
-    read as "what fraction of players..." -- the reading /stats habits exists
-    for, which should not need arithmetic.
-    """
-    rows = [(str(label), int(count or 0)) for label, count in buckets]
-    if not rows:
-        return ""
-
-    total = sum(count for _, count in rows)
-    label_width = max(len(label) for label, _ in rows)
-    count_width = max(len(str(count)) for _, count in rows)
-    share_width = 5 if share else 0          # " 100%"
-    cells = max(1, width - label_width - count_width - share_width - 2)
-    peak = max(count for _, count in rows)
-
-    lines = []
-    for label, count in rows:
-        filled = max(1, round(cells * count / peak)) if count > 0 and peak else 0
-        pct = f" {round(100 * count / total) if total else 0:>3}%" if share else ""
-        line = (f"{label.ljust(label_width)} {str(count).rjust(count_width)}{pct} "
-                f"{BAR * filled}").rstrip()
-        colour = (colours or {}).get(label)
-        lines.append(f"{ESC}[0;{colour}m{line}{ESC}[0m" if colour else line)
-    return "\n".join(lines)
 
 
 def _element_order(keys) -> list:
@@ -661,58 +611,6 @@ def injected_slots(pool_size: int) -> int:
     return int(p * pool_size / (7 - p)) if pool_size > 0 else 0
 
 
-# ---------------------------------------------------------------------------
-# Rituals and acts
-# ---------------------------------------------------------------------------
-# 2026-09-28, when new playtesters arrived and "which heroes and rituals are
-# they on" became the question asked most. Charts rather than tables wherever
-# the reply has ONE number per row: a bar shows at a glance what a column of
-# counts makes you compare digit by digit.
-
-def _ladder(counts: dict, label) -> list:
-    """`(label, count)` for every step from the lowest seen to the highest,
-    including the empty ones.
-
-    A gap in a ladder is the shape worth seeing: drawing only the steps that
-    occurred would put acts 2 and 4 in adjacent rows and hide that act 3
-    stopped everyone. The range comes from the data, so an act or a ritual
-    rung added later needs no code change.
-    """
-    keys = [int(k) for k in counts if k is not None]
-    if not keys:
-        return []
-    return [(label(step), counts.get(step, 0))
-            for step in range(min(keys), max(keys) + 1)]
-
-
-def act_chart(distribution: dict) -> str:
-    """Runs by act, one row per act from 1 up to the deepest reached.
-
-    Starts at act 1 even when nobody's run ended there, because every run
-    passes through it and a chart starting at 2 reads as if act 1 were not
-    part of the ladder.
-    """
-    counts = {int(act): int(count or 0) for act, count in distribution.items()
-              if act is not None}
-    if not counts:
-        return "*no runs*"
-    counts.setdefault(1, 0)
-    return block(histogram(_ladder(counts, lambda act: f"act {act}")))
-
-
-def link_label(links) -> str:
-    return f"{links} link{'' if int(links) == 1 else 's'}"
-
-
-def link_chart(distribution: dict) -> str:
-    """Regular turns by links played, every count from 0 to the most seen.
-
-    Zero is always a row. A turn that played no links is the one most worth
-    seeing, and a chart starting at 1 would imply there were none.
-    """
-    counts = {int(k): int(v or 0) for k, v in distribution.items() if k is not None}
-    if not counts:
-        return "*no regular turns yet*"
-    counts.setdefault(0, 0)
-    return block(histogram(_ladder(counts, link_label)))
-
+# The text bar charts (histogram, act_chart, link_chart and the ritual and
+# player charts built on them) were retired 2026-09-29, once the daily report,
+# its last user, was drawn as an image. Charts are stats_charts now.

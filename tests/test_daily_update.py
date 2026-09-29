@@ -12,6 +12,8 @@ import math
 import pytest
 
 import azoth_commands.daily_update as du
+from azoth_logic import stats_cards
+from azoth_logic import stats_charts as sc
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +98,9 @@ def test_to_number_coerces_or_falls_back(value, expected):
 # ---------------------------------------------------------------------------
 
 def _install_turn_grain(monkeypatch, turns, nodes, levelups, role="service_role"):
-    data = {"turns": turns, "turn_nodes": nodes, "levelups": levelups}
+    # `bosses` for the per-boss record's names (2026-09-29).
+    data = {"turns": turns, "turn_nodes": nodes, "levelups": levelups,
+            "bosses": [{"id": 7, "name": "Veln"}]}
 
     class Q:
         def __init__(self, t):
@@ -227,7 +231,7 @@ class _FlakyChannel:
     def __init__(self):
         self.sent = []
 
-    async def send(self, embed=None):
+    async def send(self, embed=None, file=None):
         self.sent.append(embed)
         raise RuntimeError("Discord 500 mid-send")
 
@@ -242,7 +246,8 @@ class _Bot:
 
 def _stub_report(monkeypatch):
     monkeypatch.setattr(du, "_fetch_daily_stats", lambda: {"total_games": 0})
-    monkeypatch.setattr(du, "_build_update_embeds", lambda s: ["e1", "e2", "e3"])
+    monkeypatch.setattr(du, "_build_update_messages",
+                        lambda s: [{"embed": "e1"}, {"embed": "e2"}, {"embed": "e3"}])
 
 
 def test_failed_send_does_not_re_fire(monkeypatch, tmp_path):
@@ -373,32 +378,24 @@ def test_utc_conversion_round_trips(local, offset):
 # Embed limits
 # ---------------------------------------------------------------------------
 
-def test_oversized_field_values_are_truncated():
-    """Discord rejects a field value over 1024 chars -- and a rejected send was
-    the trigger for the June 19 retry loop."""
-    stats = {
-        "total_games": 1, "unique_players": 1, "new_players": 0, "measured_games": 1,
-        "restarts": 0, "coop_rows": 0, "max_level": 1, "max_act": 1, "max_combo": 1,
-        "avg_duration_sec": 1, "total_playtime_sec": 1, "avg_turns": 1,
-        "game_results": {"death": 1}, "total_boss_fights": 0, "boss_wins": 0,
-        "boss_losses": 0, "boss_error": None, "turn_grain": {},
-        "act_distribution": {1: 1},
-        "draft": {"total_drafts": 1, "total_picks": 1,
-                  "most_picked_cards": [("N" * 400, {"rate": 1.0, "picked": 1, "offered": 1})] * 6,
-                  "least_picked_cards": [], "most_picked_rites": [],
-                  "least_picked_rites": [], "top_performers": []},
-    }
-    for embed in du._build_update_embeds(stats):
-        for f in embed.fields:
-            assert len(f.value) <= 1024, f"{f.name} exceeds Discord's field limit"
-        assert du._embed_char_count(embed) <= 6000
+def test_a_day_with_runs_is_one_image_message():
+    """Drawn as an image since 2026-09-29 (stats_cards.daily_card): one embed
+    carrying the picture, so Discord's field and embed limits no longer apply."""
+    messages = du._build_update_messages({
+        "total_games": 1, "unique_players": 1, "new_players": 0, "total_playtime_sec": 60,
+        "act_distribution": {1: 1}, "turn_grain": {}, "draft": {},
+    })
+    assert len(messages) == 1
+    assert messages[0]["file"].filename == "daily.png"
+    assert messages[0]["embed"].image.url == "attachment://daily.png"
 
 
 def test_quiet_day_produces_one_embed():
     # "games" -> "runs" (2026-09-08): tutorial rows are no longer counted as
     # runs, so the report says which population it means everywhere.
-    embeds = du._build_update_embeds({"total_games": 0})
-    assert len(embeds) == 1 and "No runs were played" in embeds[0].description
+    messages = du._build_update_messages({"total_games": 0})
+    assert len(messages) == 1 and "No runs were played" in messages[0]["embed"].description
+    assert "file" not in messages[0]
 
 
 # ---------------------------------------------------------------------------
@@ -661,21 +658,17 @@ def test_a_tutorial_only_day_is_not_reported_as_a_quiet_day():
     """total_games counts the regular population only, so a day of pure tutorial
     play has total_games == 0. Printing "no runs were played" would hide exactly
     the rows this split exists to make visible."""
-    embeds = du._build_update_embeds({
+    stats = {
         "total_games": 0, "tutorial_games": 11, "tutorial_players": 2,
         "tutorial_restarts": 10, "dropped_opening_turn": 2,
-        "unique_players": 3, "new_players": 1, "restarts": 0, "coop_rows": 0,
-        "max_level": 0, "max_act": 0, "max_combo": 0,
-        "avg_duration_sec": 0, "avg_turns": 0, "total_playtime_sec": 0,
-        "measured_games": 0, "game_results": {}, "turn_grain": {},
-        "total_boss_fights": 0, "boss_wins": 0, "boss_losses": 0, "draft": {},
-    })
-
-    # Name and value both, since the 2026-09-17 rewrite labels the count with
-    # the field name and puts the bare number in the value.
-    text = " ".join(f"{f.name} {f.value}" for e in embeds for f in e.fields)
-    assert "11" in text and "tutorial" in text.lower()
-    assert not any("No runs were played" in (e.description or "") for e in embeds)
+        "unique_players": 3, "new_players": 1, "total_playtime_sec": 0,
+        "turn_grain": {}, "draft": {},
+    }
+    messages = du._build_update_messages(stats)
+    assert "file" in messages[0], "a tutorial-only day is drawn, not reported as quiet"
+    tiles = dict(t for b in stats_cards.daily_card(stats, "2026-09-28").blocks
+                 if isinstance(b, sc.StatTiles) for t in b.tiles)
+    assert tiles["Tutorial"] == "11"
 
 
 def test_daily_stats_derives_every_number_from_the_regular_population(monkeypatch):
@@ -845,3 +838,91 @@ def test_a_name_shared_by_a_card_and_a_rite_is_not_pooled(monkeypatch):
 
     assert dict(stats["most_picked_cards"])["Echo"]["picked"] == 2
     assert dict(stats["most_picked_rites"])["Echo"]["picked"] == 0
+
+
+
+# ---------------------------------------------------------------------------
+# The image report (2026-09-29)
+# ---------------------------------------------------------------------------
+
+def test_the_boss_record_is_per_boss_by_name(monkeypatch):
+    """The text report gave one total; a day where Veln won every fight hid in it."""
+    _install_turn_grain(monkeypatch, TURNS, NODES, LEVELUPS)
+    assert du._fetch_turn_grain_stats(["g1"])["boss_record"] == {"Veln": [1, 1]}
+
+
+def test_an_unfinished_fight_is_not_in_the_boss_record(monkeypatch):
+    turns = TURNS[:3] + [dict(TURNS[3], boss_result=None)]
+    _install_turn_grain(monkeypatch, turns, NODES, LEVELUPS)
+    assert du._fetch_turn_grain_stats(["g1"])["boss_record"] == {}
+
+
+def _daily(**extra):
+    stats = {"total_games": 11, "unique_players": 6, "new_players": 2,
+             "total_playtime_sec": 18720, "act_distribution": {1: 3, 2: 4, 3: 3, 4: 1},
+             "turn_grain": {"boss_record": {"Veln": [0, 3], "Marrox": [3, 3]},
+                            "top_rewards": [("Hero", {"taken": 5, "offered": 6, "rate": 5 / 6})],
+                            "levelup_packs": 18},
+             "draft": {"item_rates": [
+                 {"item_type": "card", "item_name": "Circumvent", "picked": 4, "offered": 4},
+                 {"item_type": "rite", "item_name": "Pyre", "picked": 2, "offered": 3},
+                 {"item_type": "card", "item_name": "Thorn", "picked": 0, "offered": 4}]}}
+    stats.update(extra)
+    return stats_cards.daily_card(stats, "2026-09-28")
+
+
+def _heads(card):
+    return [b.label for b in card.blocks if isinstance(b, sc.SectionHeader)]
+
+
+def test_the_daily_card_has_every_section_with_data():
+    assert _heads(_daily()) == ["How far runs got", "Boss fights", "Level-up picks", "Draft"]
+
+
+def test_a_section_with_nothing_in_it_is_not_drawn():
+    assert _heads(_daily(turn_grain={}, draft={})) == ["How far runs got"]
+
+
+def test_reaching_act_4_counts_as_beating_act_3():
+    strip = next(b for b in _daily().blocks if isinstance(b, sc.ActStripRow))
+    assert strip.cleared == 1 and sum(strip.acts.values()) == 11
+
+
+def test_one_day_flags_nothing():
+    """A digest, not a verdict: one day is too little for a red or blue flag."""
+    assert not any(getattr(b, "marker", "") for b in _daily().blocks)
+
+
+def test_unavailable_turn_data_is_said_rather_than_shown_as_zero():
+    card = _daily(turn_grain={"error": "needs the service-role key"})
+    notes = [b.text for b in card.blocks if isinstance(b, sc.Note)]
+    assert any("unavailable" in n for n in notes)
+
+
+def test_co_op_counts_sessions_not_participant_rows():
+    """Three friends in one co-op run write three rows: one run."""
+    games = [{"uuid": "a", "game_type": "coop", "shared_run_id": "s1"},
+             {"uuid": "b", "game_type": "coop", "shared_run_id": "s1"},
+             {"uuid": "c", "game_type": "coop", "shared_run_id": "s1"},
+             {"uuid": "d", "game_type": "coop", "shared_run_id": "s2"},
+             {"uuid": "e", "game_type": "solo"}]
+    assert du._count_runs(games) == (1, 2, 0)
+
+
+def test_a_co_op_row_with_no_session_id_still_counts():
+    assert du._count_runs([{"uuid": "a", "game_type": "coop", "shared_run_id": None}]) == (0, 1, 0)
+
+
+def test_legacy_counts_solo_runs_and_co_op_sessions_once_each():
+    games = [{"uuid": "a", "game_type": "solo", "format": "legacy"},
+             {"uuid": "b", "game_type": "coop", "shared_run_id": "s1", "format": "legacy"},
+             {"uuid": "c", "game_type": "coop", "shared_run_id": "s1", "format": "legacy"},
+             {"uuid": "d", "game_type": "solo", "format": "standard"}]
+    assert du._count_runs(games) == (2, 1, 2)
+
+
+def test_co_op_and_legacy_tiles_show_even_at_zero():
+    """Whether anyone played them is the answer, so 0 is shown, not hidden."""
+    card = _daily(solo_runs=11, coop_sessions=0, legacy_runs=0)
+    tiles = dict(t for b in card.blocks if isinstance(b, sc.StatTiles) for t in b.tiles)
+    assert (tiles["Solo runs"], tiles["Co-op runs"], tiles["Legacy runs"]) == ("11", "0", "0")
