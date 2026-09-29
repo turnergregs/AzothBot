@@ -1,6 +1,7 @@
 import asyncio
 import io
 import os
+import re
 import json
 import nextcord
 import aiohttp
@@ -78,6 +79,11 @@ class _Preview:
 # /stats item looks up bosses and heroes beside the content index's cards,
 # aspects and rites. Those two have `archived_at`, so live means unarchived.
 _ITEM_TABLES = {"boss": "bosses", "hero": "heroes"}
+# Their refs (`boss:8`, `hero:7`) are parsed HERE, not by parse_item_ref: that
+# one accepts deck content only, on purpose, so a boss ref can never resolve
+# in the deck commands. Relying on it left every boss and hero the
+# autocomplete offered unresolvable (2026-09-29, `boss:8` for Veln).
+_BOSS_HERO_REF = re.compile(r"^(boss|hero):(\d+)$")
 
 
 def _item_choices(query: str, limit: int = 25) -> dict:
@@ -120,13 +126,14 @@ def _resolve_item(value: str):
     from azoth_logic import content_index
     from supabase_helpers import parse_item_ref
 
-    ref_type, item_id = parse_item_ref(value)
-    if ref_type in _ITEM_TABLES:
-        rows = fetch_all(_ITEM_TABLES[ref_type], filters={"id": item_id})
-        return (ref_type, rows[0]) if rows else (None, None)
-    if ref_type:
-        return content_index.resolve(value)
     name = (value or "").strip()
+    own = _BOSS_HERO_REF.match(name)
+    if own:
+        kind = own.group(1)
+        rows = fetch_all(_ITEM_TABLES[kind], filters={"id": int(own.group(2)), "archived_at": None})
+        return (kind, rows[0]) if rows else (None, None)
+    if parse_item_ref(name)[0]:
+        return content_index.resolve(name)
     for kind, table in _ITEM_TABLES.items():
         rows = fetch_all(table, filters={"name": name, "archived_at": None}) if name else []
         if rows:
