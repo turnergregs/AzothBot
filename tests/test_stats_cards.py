@@ -492,3 +492,62 @@ def test_before_any_tracked_time_the_roster_has_no_bars():
     heads = [h[0] for b in _rows(card, sc.ColumnHeads) for h in b.heads]
     assert "Active time" not in heads
     assert "Who is playing" in [b.label for b in _rows(card, sc.SectionHeader)]
+
+
+# --- /stats player ---------------------------------------------------------------
+
+def _prun(hero, act, ritual=0, cleared=False, when="2026-09-27T10:00:00+00:00"):
+    return {"hero": hero, "ritual": ritual, "furthest_act": act, "cleared": cleared,
+            "started_at": when}
+
+
+MAX_RUNS = ([_prun("Lumis", a) for a in (1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3)]
+            + [_prun("Eith", 4, cleared=True, when="2026-09-28T09:00:00+00:00")])
+
+
+def test_a_hero_row_per_hero_with_its_top_ritual_most_played_first():
+    rows = cards.hero_rows(MAX_RUNS + [_prun("Eith", 2, ritual=2)])
+    assert [(h, sum(a.values()), won, r) for h, a, won, r in rows] == \
+        [("Lumis", 11, 0, 0), ("Eith", 2, 1, 2)]
+
+
+def test_the_player_card_shows_heroes_as_act_bars_labelled_with_ritual():
+    strips = _rows(cards.player_card("Max", MAX_RUNS, None, None), sc.ActStripRow)
+    assert [s.label for s in strips] == ["Lumis R0", "Eith R0"]
+    assert strips[0].acts == {1: 3, 2: 4, 3: 4}
+
+
+def test_the_player_tiles_count_runs_and_act_3_wins():
+    card = cards.player_card("Max", MAX_RUNS, None, {"best_combo": "65500"})
+    tiles = dict(t for row in _rows(card, sc.StatTiles) for t in row.tiles)
+    assert (tiles["Runs"], tiles["Beat act 3"], tiles["Best combo"]) == ("12", "1", "65.5K")
+
+
+def test_time_tiles_only_when_there_is_time():
+    card = cards.player_card("Max", MAX_RUNS, {"cohort": "new", "run_sec": 27700}, None)
+    labels = [label for row in _rows(card, sc.StatTiles) for label, _ in row.tiles]
+    assert "Time in runs" in labels and "Time in the Codex" not in labels
+
+
+def test_the_subtitle_names_the_cohort_and_last_played():
+    card = cards.player_card("Max", MAX_RUNS, {"cohort": "new"}, None)
+    assert card.subtitle.startswith("New playtester") and "last played 2026-09-28" in card.subtitle
+
+
+def test_sections_with_nothing_in_them_are_not_drawn():
+    heads = [b.label for b in cards.player_card("Max", MAX_RUNS, None, None).blocks
+             if isinstance(b, sc.SectionHeader)]
+    assert heads == ["Heroes"]
+
+
+def test_most_drafted_and_codex_sections_appear_when_there_is_something():
+    card = cards.player_card("Rat", MAX_RUNS, {"cohort": "new", "actions": {"created:card": 4}},
+                             {"most_drafted": "Echo, Bloom", "most_drafted_count": 3})
+    heads = [b.label for b in card.blocks if isinstance(b, sc.SectionHeader)]
+    assert heads == ["Heroes", "Most drafted", "Made in the Codex"]
+    assert "Echo, Bloom · 3 times each" in [b.text for b in card.blocks if isinstance(b, sc.Note)]
+
+
+def test_the_player_card_renders():
+    img = Image.open(io.BytesIO(cards.player_card("Max", MAX_RUNS, None, None).png()))
+    assert img.width == sc.WIDTH * sc.SCALE

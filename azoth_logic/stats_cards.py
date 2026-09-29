@@ -10,6 +10,7 @@ import math
 
 from azoth_logic import stats_charts as sc
 from azoth_logic.stats_format import CUTOFF_VERSION
+from azoth_logic.stats_format import value as sf_value
 
 # ---------------------------------------------------------------------------
 # Cohorts: who a report describes
@@ -535,3 +536,98 @@ def players_footer(rows: list) -> str:
     return (f"version >= {CUTOFF_VERSION} · {len(listed)} player{'' if len(listed) == 1 else 's'}"
             f" · run time includes idle; Codex time is active, from tracked builds"
             f" ({on_tracker} of {len(listed)} players so far)")
+
+
+# ---------------------------------------------------------------------------
+# /stats player
+# ---------------------------------------------------------------------------
+# One player's profile, drawn as an image (2026-09-28): how much they play,
+# how far they get with each hero and ritual, and what they make. It replaced a
+# ten-section text card. What it dropped, and why: "max reached" (the act bars
+# say more), and the links-per-turn and pattern-clearing tables -- how someone
+# plays their turns is balance data, not a profile, and averaged over one
+# player's handful of runs it is noise.
+
+COHORT_SINGULAR = {"new": "New playtester", "veteran": "Veteran", "developer": "Developer"}
+
+
+def hero_rows(runs: list) -> list:
+    """`[(hero, {act: runs}, cleared, top ritual)]` from player_run_view rows,
+    most-played hero first."""
+    heroes: dict = {}
+    for run in runs:
+        h = heroes.setdefault(run.get("hero") or "—", {"acts": {}, "cleared": 0, "ritual": 0})
+        act = int(run.get("furthest_act") or 1)
+        h["acts"][act] = h["acts"].get(act, 0) + 1
+        h["cleared"] += 1 if run.get("cleared") else 0
+        h["ritual"] = max(h["ritual"], int(run.get("ritual") or 0))
+    order = sorted(heroes, key=lambda n: (-sum(heroes[n]["acts"].values()), n))
+    return [(n, heroes[n]["acts"], heroes[n]["cleared"], heroes[n]["ritual"]) for n in order]
+
+
+def most_drafted_line(info: dict) -> str:
+    """"Echo, Bloom · 3 times each", or "" when nothing was drafted twice."""
+    names, count = info.get("most_drafted"), info.get("most_drafted_count")
+    if not names or not count:
+        return ""
+    each = " each" if "," in str(names) else ""
+    return f"{names} · {count} times{each}"
+
+
+def player_card(name: str, runs: list, summary: dict | None, info: dict | None) -> sc.Card:
+    """`runs` from player_run_view, `summary` from player_summary_view (None
+    before that migration), `info` from player_info_view (best combo, most
+    drafted)."""
+    summary, info = summary or {}, info or {}
+    cleared = sum(1 for r in runs if r.get("cleared"))
+    last = max((str(r.get("started_at") or "")[:10] for r in runs), default="")
+    last = max(last, str(summary.get("last_seen") or "")[:10])
+
+    parts = [COHORT_SINGULAR.get(summary.get("cohort"), ""), f"version ≥ {CUTOFF_VERSION}"]
+    if last:
+        parts.append(f"last played {last}")
+    card = sc.Card(name, " · ".join(p for p in parts if p))
+
+    tiles = [("Runs", str(len(runs))), ("Beat act 3", str(cleared))]
+    best = info.get("best_combo")
+    if best not in (None, "", "0"):
+        tiles.append(("Best combo", sf_value("max_combo", best)))
+    play = int(summary.get("run_sec") or 0)
+    tools = int(summary.get("codex_sec") or 0) + int(summary.get("art_sec") or 0)
+    if play:
+        tiles.append(("Time in runs", duration(play)))
+    if tools:
+        tiles.append(("Time in the Codex", duration(tools)))
+    card.add(*sc.tile_rows(tiles, height=58))
+    card.add(sc.Spacer(6))
+
+    heroes = hero_rows(runs)
+    if heroes:
+        right = sc.WIDTH - sc.PAD
+        card.add(sc.SectionHeader("Heroes"))
+        card.add(sc.ColumnHeads([("Furthest act", sc.PAD + sc.LABEL_W, "lm"),
+                                 ("Beat act 3", right - sc.ActStripRow.COUNT_W, "rm"),
+                                 ("Runs", right, "rm")]))
+        for hero, acts, won, ritual in heroes:
+            # The label carries the highest ritual played on that hero:
+            # ladders are per hero, so it belongs beside the hero, not in a tile.
+            card.add(sc.ActStripRow(f"{hero} R{ritual}", acts, won,
+                                    faded=sum(acts.values()) < MIN_RUNS))
+        card.add(sc.act_legend(a for _, acts, _, _ in heroes for a, n in acts.items() if n))
+
+    drafted = most_drafted_line(info)
+    if drafted:
+        card.add(sc.Spacer(4))
+        card.add(sc.SectionHeader("Most drafted"))
+        card.add(sc.Note(drafted))
+
+    made = codex_tiles([summary]) if summary else []
+    if made:
+        card.add(sc.Spacer(6))
+        card.add(sc.SectionHeader("Made in the Codex"))
+        card.add(*sc.tile_rows([(label, str(n)) for label, n in made]))
+    return card
+
+
+def player_footer(runs: list) -> str:
+    return f"version >= {CUTOFF_VERSION} · {len(runs)} solo run{'' if len(runs) == 1 else 's'}"

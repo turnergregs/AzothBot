@@ -33,8 +33,6 @@ MOBILE_TABLE_WIDTH = 24
 # or the footer will state a threshold the views are not enforcing.
 CUTOFF_VERSION = "0.9.10"
 
-# Below this, a win RATE is theatre: one win in two runs is not "50%".
-MIN_RUNS_FOR_A_RATE = 5
 
 # Column name -> heading. Anything absent is title-cased with underscores
 # stripped, which is right for `game_count` and wrong for the two below.
@@ -222,78 +220,6 @@ def fields(row: dict, columns=None, inline: bool = True, exclude=()) -> list:
     return [(heading(c), value(c, row.get(c)), inline) for c in columns]
 
 
-def record(row: dict) -> str:
-    """Runs that CLEARED, out of runs that finished.
-
-    "Cleared" is beating the act 3 boss -- the milestone the game itself rewards
-    with the next ritual (main.gd:1464). Acts 4 and 5 are bonus content, so a run
-    that cleared act 3 and then died to the act 4 boss is a cleared run, and
-    `games.result` still correctly says `death`. `public.run_cleared()` holds
-    that definition; nothing here re-derives it.
-
-    A full clear (the act 5 boss) is called out separately when there is one --
-    it is a different achievement, not a bigger version of the same one.
-
-    `finished` excludes NULL results: those are abandoned or in progress, and
-    counting them as losses would invent defeats.
-
-    Reported as TWO NUMBERS, never a bare percentage: "50%" over two runs is one
-    clear wearing a decimal point.
-    """
-    cleared, finished = row.get("cleared"), row.get("finished")
-    if not finished:
-        return f"{row.get('game_count') or 0} played, none finished"
-
-    line = f"**{cleared or 0}** of {finished} cleared act 3"
-    if finished >= MIN_RUNS_FOR_A_RATE:
-        line += f" ({round(100 * (cleared or 0) / finished)}%)"
-
-    full = row.get("full_clears") or 0
-    if full:
-        line += f"\n**{full}** full clear{'' if full == 1 else 's'} *(act 5)*"
-    return line
-
-
-def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}" + ("" if count == 1 else "s")
-
-
-def links(row: dict) -> str:
-    """Average links per turn, regular and boss kept apart.
-
-    A boss turn is a different activity -- docs/DB_SCHEMA.md caveat 8 says the
-    two are not comparable, so they are never averaged together.
-
-    Both carry their SAMPLE SIZE. The link average is over finished runs only
-    (an abandoned run's last turn is mid-flight), so it covers a smaller
-    population than `game_count`, and an average with no denominator over a
-    handful of turns is the thing this document keeps warning about.
-    """
-    regular, boss = row.get("avg_links_regular"), row.get("avg_links_boss")
-    if regular is None and boss is None:
-        return "*no turn-level data yet*"
-
-    parts = []
-    if regular is not None:
-        parts.append(f"**{value('avg_links_regular', regular)}** regular "
-                     f"*({_plural(row.get('regular_turns_sampled') or 0, 'turn')})*")
-    if boss is not None:
-        parts.append(f"**{value('avg_links_boss', boss)}** boss "
-                     f"*({_plural(row.get('boss_turns_sampled') or 0, 'turn')})*")
-    return "\n".join(parts)
-
-
-def _rows(title: str, heads: list, body: list) -> str:
-    """An aligned table with a rule under the header, as plain text."""
-    widths = [max(len(heads[i]), *(len(row[i]) for row in body)) for i in range(len(heads))]
-
-    def line(cells):
-        return "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
-
-    out = [line(heads), "  ".join("-" * w for w in widths)] + [line(row) for row in body]
-    return (f"{title}\n" if title else "") + "\n".join(out)
-
-
 def _grid(heads: list, body: list) -> str:
     """A code-fenced table with a rule under the header."""
     widths = [max(len(heads[i]), *(len(row[i]) for row in body)) for i in range(len(heads))]
@@ -303,100 +229,6 @@ def _grid(heads: list, body: list) -> str:
 
     return block("\n".join([line(heads), "  ".join("-" * w for w in widths)]
                            + [line(row) for row in body]))
-
-
-def _sorted_acts(rows: list) -> list:
-    return sorted(rows, key=lambda r: r.get("act") or 0)
-
-
-def links_table(acts: list, row: dict) -> str:
-    """Links per turn, per act, with the overall figure as a final `All` row.
-
-    One table rather than a number and a table beside it -- the overall average
-    IS the bottom of this column, and separating them invited reading the act
-    rows as a decomposition of something else.
-
-    `All` comes from `player_info_view`, not from averaging the act rows: the
-    acts have different turn counts, so a mean of means would be wrong.
-
-    Turn counts are IN the table. "4.9 in act 3" can rest on four turns, and a
-    difference between acts is only a difference if the samples are real.
-    """
-    if acts is None:
-        return "*unavailable — `player_act_view` is not migrated*"
-
-    body = [[str(r.get("act")),
-             value("x", r.get("avg_links_regular")),
-             str(r.get("regular_turns") or 0),
-             value("x", r.get("avg_links_boss")),
-             str(r.get("boss_turns") or 0)]
-            for r in _sorted_acts(acts or [])]
-
-    if row.get("avg_links_regular") is not None or row.get("avg_links_boss") is not None:
-        body.append(["All",
-                     value("x", row.get("avg_links_regular")),
-                     str(row.get("regular_turns_sampled") or 0),
-                     value("x", row.get("avg_links_boss")),
-                     str(row.get("boss_turns_sampled") or 0)])
-
-    if not body:
-        return "*no turn-level data yet*"
-    return _grid(["Act", "Reg", "num", "Boss", "num"], body)
-
-
-def clearing_table(acts: list, row: dict) -> str:
-    """Pattern clearing per act, with an `All` row.
-
-    Links and seconds share a cell -- "4.3, 8m21s" -- because they answer one
-    question together and six columns will not fit a phone.
-
-    REGULAR TURNS ONLY, and only turns that had patterns to solve; the view
-    decides both. `Cleared` is the censoring, carried on every row: turns that
-    never clear contribute no numerator, so an average without it is biased
-    optimistic exactly where difficulty is highest.
-    """
-    if acts is None:
-        return "*unavailable — `player_act_view` is not migrated*"
-
-    def rows_for(r, label):
-        cleared, clearable = r.get("cleared_turns"), r.get("clearable_turns")
-        if not clearable:
-            return None
-        if not cleared:
-            return ([label, "—", "—", f"0/{clearable}"], [label, "—", "—"])
-        return (
-            [label,
-             value("x", r.get("avg_links_before_clear")),
-             value("x", r.get("avg_links_after_clear")),
-             f"{cleared}/{clearable}"],
-            [label,
-             _seconds(r.get("avg_seconds_before_clear")),
-             _seconds(r.get("avg_seconds_after_clear"))],
-        )
-
-    links, times = [], []
-    for r in _sorted_acts(acts or []):
-        made = rows_for(r, str(r.get("act")))
-        if made:
-            links.append(made[0])
-            times.append(made[1])
-
-    overall = rows_for(row, "All")
-    if overall:
-        links.append(overall[0])
-        times.append(overall[1])
-
-    if not links:
-        return "*no turn-level data yet*"
-
-    # TWO narrow tables rather than one wide one. Links, seconds and the clear
-    # ratio in a single row came to 36 characters, which wraps on a phone and
-    # takes the column alignment with it. Split, each fits inside
-    # MOBILE_TABLE_WIDTH and the alignment survives -- which is the only reason
-    # to use a monospace table at all.
-    return (block(_rows("links", ["Act", "Bef", "Aft", "Cleared"], links))
-            + "\n"
-            + block(_rows("seconds", ["Act", "Bef", "Aft"], times)))
 
 
 # The bonus axes, in the order turn_bonus.gd declares them -- which is also its
@@ -585,99 +417,6 @@ def scoreboard_paid(rows: list) -> str:
     another -- which reads as a healthy axis in the hits table alone.
     """
     return _scoreboard_grid(rows, _rate_cell("won_rate")) or "*no scoreboard data yet*"
-
-
-def clearing(row: dict) -> str:
-    """Links and seconds either side of clearing the turn's patterns.
-
-    RIGHT-CENSORED, and reported as two numbers because of it: turns that never
-    clear contribute no numerator, so the mean is biased optimistic exactly
-    where difficulty is highest. "3.2 links" alone is not the honest statement --
-    "3.2 links, on the 78% of turns that cleared" is.
-
-    Turns that began with no patterns are already excluded by the view; they
-    would "clear" at node one having done nothing.
-    """
-    cleared = row.get("cleared_turns")
-    clearable = row.get("clearable_turns")
-    if not clearable:
-        return "*no turn-level data yet*"
-    if not cleared:
-        return f"*Never cleared* — 0 of {_plural(clearable, 'turn')} with patterns to solve"
-
-    before = (f"**{value('x', row.get('avg_links_before_clear'))}** links, "
-              f"{_seconds(row.get('avg_seconds_before_clear'))}")
-    after = (f"**{value('x', row.get('avg_links_after_clear'))}** links, "
-             f"{_seconds(row.get('avg_seconds_after_clear'))}")
-    share = f"{round(100 * cleared / clearable)}%" if clearable else "?"
-    return (f"Before: {before}\nAfter: {after}\n"
-            f"*cleared on {cleared} of {_plural(clearable, 'turn')} ({share})*")
-
-
-def _seconds(raw) -> str:
-    if raw is None:
-        return "—"
-    try:
-        total = float(raw)
-    except (TypeError, ValueError):
-        return str(raw)
-    if total < 60:
-        return f"{total:.0f}s"
-    return f"{int(total // 60)}m {round(total % 60):02d}s"
-
-
-def reached(row: dict) -> str:
-    """Furthest reached, with the average in parentheses.
-
-    Max leads because it is the unambiguous number -- "act 3" is a fact about a
-    run that happened. The average needs its label to be readable at all, which
-    is why it is the one wearing `avg`.
-    """
-    return (f"Act **{row.get('max_act')}** (avg {value('avg_act', row.get('avg_act'))})\n"
-            f"Level **{row.get('max_level')}** (avg {value('avg_level', row.get('avg_level'))})\n"
-            f"Deck size **{row.get('max_deck_size')}** "
-            f"(avg {value('avg_deck_size', row.get('avg_deck_size'))})")
-
-
-def most_drafted(row: dict) -> str:
-    """The player's most-picked items, or WHY there are none.
-
-    The count matters more than the names when it is 2: it says "everything is
-    tied near the floor", which is what a two-run sample looks like.
-
-    An empty answer has two causes and they are not the same news:
-
-      * picks exist, none repeated -- expected on a small sample, and the pick
-        count says how small;
-      * no picks at all -- draft rows are missing for those runs, which is a
-        recording problem wearing the same blank space.
-
-    `draft_picks` is what tells them apart. Without it (a view older than the
-    2026-08-27 migration) neither claim can be made, so neither is made.
-    """
-    names = row.get("most_drafted")
-    if names:
-        count = row.get("most_drafted_count")
-        if not count:
-            return str(names)
-        # "each" only when there is more than one name to be each of.
-        suffix = " each" if "," in str(names) else ""
-        return f"{names} — picked **{count}×**{suffix}"
-
-    # Nothing to show -> no field at all. The caller drops it rather than
-    # printing a placeholder.
-    #
-    # NOTE this also hides the `draft_picks == 0` case, which is not the same
-    # news: no picks AT ALL means draft rows are missing for those runs, a
-    # recording fault rather than a small sample. Nothing has that shape today
-    # (every player has picks), so it is hidden with the rest -- but that is the
-    # one case worth un-hiding if draft capture ever breaks.
-    return ""
-
-
-def last_played(row: dict) -> str:
-    when = row.get("last_played")
-    return f"last played {str(when)[:10]}" if when else None
 
 
 def footer(rows: list, count_column: str = "game_count", note: str = None,
@@ -1327,11 +1066,6 @@ def draft_pool_rites(row: dict) -> str:
 # the reply has ONE number per row: a bar shows at a glance what a column of
 # counts makes you compare digit by digit.
 
-def ritual_label(ritual) -> str:
-    """`R2`. Short because a chart label is paid for out of the bar's width."""
-    return f"R{ritual}"
-
-
 def _ladder(counts: dict, label) -> list:
     """`(label, count)` for every step from the lowest seen to the highest,
     including the empty ones.
@@ -1363,118 +1097,6 @@ def act_chart(distribution: dict) -> str:
     return block(histogram(_ladder(counts, lambda act: f"act {act}")))
 
 
-def grouped_chart(cells: dict, step_label, fill: bool = False) -> str:
-    """One bar per (group, step), labelled `<group> <step>`, groups stacked.
-
-    `cells` maps `(group, step) -> count`. Groups are ordered by their total,
-    largest first, and steps within a group bottom-up, so each group reads down
-    the chart as a ladder. Every group label is padded to the longest so the
-    step column lines up, which is what makes two groups comparable at a glance.
-
-    `fill` draws every step from 1 (or the lowest seen) to the group's highest,
-    empty ones included -- right for acts, where a gap is a place runs stopped.
-    Without it only the steps that occurred get a row -- right for a hero's
-    rituals, which are climbed one rung at a time, so an empty rung below the
-    highest is not something anyone skipped.
-    """
-    totals = {}
-    for (group, _), count in cells.items():
-        totals[group] = totals.get(group, 0) + count
-    if not totals:
-        return "*no runs*"
-
-    groups = sorted(totals, key=lambda g: (-totals[g], str(g)))
-    width = max(len(str(g)) for g in groups)
-    buckets = []
-    for group in groups:
-        steps = sorted(step for g, step in cells if g == group)
-        if fill:
-            steps = range(min(1, steps[0]), steps[-1] + 1)
-        buckets += [(f"{str(group).ljust(width)} {step_label(step)}",
-                     cells.get((group, step), 0)) for step in steps]
-    return block(histogram(buckets))
-
-
-def _cells(rows: list, group, step, count: str = "game_count") -> dict:
-    cells = {}
-    for row in rows or []:
-        key = (group(row), step(row))
-        cells[key] = cells.get(key, 0) + int(row.get(count) or 0)
-    return cells
-
-
-def hero_ritual_chart(rows: list, hero_column: str = "hero") -> str:
-    """Games per (hero, ritual), one bar each, labelled `Lumis R0`.
-
-    Rows are `{hero, ritual, game_count}`. Only the rituals actually played get
-    a row; see grouped_chart.
-    """
-    return grouped_chart(_cells(rows, lambda r: r.get(hero_column) or "—",
-                                lambda r: int(r.get("ritual") or 0)),
-                         ritual_label)
-
-
-def _runs_by(runs: list, key) -> dict:
-    counts = {}
-    for run in runs or []:
-        k = key(run)
-        counts[k] = counts.get(k, 0) + 1
-    return counts
-
-
-def player_heroes(runs: list) -> str:
-    """A player's heroes: runs, highest ritual played, and act 3 clears.
-
-    Per hero because ritual ladders are per hero (the game repo's
-    docs/RITUALS.md § Unlocking). One "highest ritual" across every hero, which
-    is what this card showed until 2026-09-28, reads Bram at R1 on Lumis and R0
-    on everything else as simply "1".
-
-    `Clr` counts runs that beat the act 3 boss (`player_run_view.cleared`, from
-    run_cleared) -- the win that unlocks the next ritual, however the run ended
-    afterwards. Not every clear unlocks one: only a win at the hero's highest
-    unlocked level does, and unlock progress lives on the player's machine.
-    """
-    if runs is None:
-        return "*unavailable — `player_run_view` is not migrated*"
-    if not runs:
-        return "*no runs*"
-
-    heroes = {}
-    for run in runs:
-        hero = heroes.setdefault(run.get("hero") or "—",
-                                 {"runs": 0, "ritual": 0, "cleared": 0})
-        hero["runs"] += 1
-        hero["ritual"] = max(hero["ritual"], int(run.get("ritual") or 0))
-        hero["cleared"] += 1 if run.get("cleared") else 0
-
-    order = sorted(heroes, key=lambda h: (-heroes[h]["runs"], h))
-    body = [[name, str(heroes[name]["runs"]), ritual_label(heroes[name]["ritual"]),
-             str(heroes[name]["cleared"])] for name in order]
-    return _grid(["Hero", "Runs", "Top", "Clr"], body)
-
-
-def player_ritual_chart(runs: list) -> str:
-    """A player's games per (hero, ritual). See hero_ritual_chart."""
-    if runs is None:
-        return "*unavailable — `player_run_view` is not migrated*"
-    counts = _runs_by(runs, lambda r: (r.get("hero") or "—", int(r.get("ritual") or 0)))
-    return hero_ritual_chart([{"hero": h, "ritual": r, "game_count": n}
-                              for (h, r), n in counts.items()])
-
-
-def player_act_chart(runs: list) -> str:
-    """A player's runs by the furthest act each reached.
-
-    `furthest_act`, not `act_reached`: the latter is written only when a run
-    ends, so an abandoned run carries NULL however far it got. The view takes
-    the turn rows' highest act instead (2026-09-28_ritual_stats.sql).
-    """
-    if runs is None:
-        return "*unavailable — `player_run_view` is not migrated*"
-    return act_chart(_runs_by(runs, lambda r: int(r.get("furthest_act") or 1)))
-
-
 def link_label(links) -> str:
     return f"{links} link{'' if int(links) == 1 else 's'}"
 
@@ -1491,9 +1113,3 @@ def link_chart(distribution: dict) -> str:
     counts.setdefault(0, 0)
     return block(histogram(_ladder(counts, link_label)))
 
-
-def player_link_chart(rows) -> str:
-    """A player's regular turns by links played, from player_link_view."""
-    if rows is None:
-        return "*unavailable — `player_link_view` is not migrated*"
-    return link_chart({r.get("links"): r.get("turns") for r in rows})

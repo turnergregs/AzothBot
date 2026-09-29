@@ -51,7 +51,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | Command | View | Purpose |
 |---|---|---|
 | `/stats leaderboard` | `leaderboard_view` | Top combos, optionally by player / hero / version |
-| `/stats player` | `player_info_view` + `player_act_view` + `player_run_view` + `player_link_view` | One player's aggregates, plus a per-hero table (runs, highest ritual, act 3 clears) and three bar charts: games by hero and ritual, runs by furthest act, regular turns by links played. See [Rituals in /stats](#rituals-in-stats-2026-09-28) |
+| `/stats player` | `player_run_view` + `player_summary_view` + `player_info_view` | One player's profile, drawn as an image. See [The player card (2026-09-28)](#the-player-card-2026-09-28) |
 | `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
@@ -191,7 +191,31 @@ never activated" beside those runs' average skips read as a percentage of
 players. It retired `/stats habits` (players bucketed by their own rates) with
 it; a better view of those habits is still to be designed.
 
-### The player card (2026-08-27)
+### The player card (2026-09-28)
+
+Redrawn as an image, and cut from ten sections to what a profile answers: how
+much this person plays, how far they get with each hero and ritual, and what
+they make.
+
+- **Subtitle:** their cohort ("New playtester", "Veteran", "Developer") and
+  when they last played, so a lapsed player stands out.
+- **Tiles:** runs, act 3 wins, best combo (`player_info_view`), time in runs
+  and in the Codex (`player_summary_view`), each only when it has a value.
+- **Heroes:** one act bar per hero from `player_run_view`, as on the
+  breakdown, labelled with the highest ritual played on that hero ("Lumis R0").
+  It replaced the heroes table, the games-by-ritual chart and the furthest-act
+  chart.
+- **Most drafted** and **Made in the Codex** appear only when there is
+  something in them.
+
+**Dropped:** "max reached" (best and average act, level, deck size), which the
+act bars say better; and the links-per-turn table and chart and both
+pattern-clearing tables. How someone plays their turns is balance data, not a
+profile, and averaged over one player's handful of runs it is noise.
+`player_act_view` and `player_link_view` are no longer read.
+
+### The player card (2026-08-27, text; superseded)
+
 
 `player_info_view` was rebuilt (`db/migrations/2026-08-27_player_info_view_v2.sql`
 in the game repo). What changed and why:

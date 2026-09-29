@@ -195,83 +195,38 @@ def add_stats_commands(cls):
                           COLUMNS["leaderboard"], rank=True,
                           note=applied or "top combos", colour=0xF1C40F)
 
-    # --- Player Info ---
-    @stats_cmd.subcommand(name="player", description="Player statistics")
-    @safe_interaction(timeout=10, error_message="❌ Failed to fetch player stats.")
+    # --- Player ---
+    # One player's profile, drawn as an image (2026-09-28): runs, act 3 wins,
+    # best combo and time; a bar per hero split by furthest act; what they
+    # drafted most and made in the Codex. See stats_cards § /stats player for
+    # what the ten-section text card it replaced carried, and why it went.
+    @stats_cmd.subcommand(name="player", description="One player's profile")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch player stats.")
     async def stats_player(
         self,
         interaction: Interaction,
         player: str = SlashOption(description="Player name", required=True, autocomplete=True)
     ):
-        records = fetch_all("player_info_view", filters={"player": player})
-        if not records:
+        try:
+            runs = fetch_all("player_run_view", filters={"player": player}, sort=["started_at"])
+        except SupabaseError:
+            return ("❌ `player_run_view` is not migrated — run "
+                    "`db/migrations/2026-09-28_ritual_stats.sql`.")
+        # The profile's other two sources are extras: without them the card
+        # loses a tile or a section, not the reply.
+        try:
+            summary = next(iter(fetch_all("player_summary_view", filters={"player": player})), None)
+        except SupabaseError:
+            summary = None
+        try:
+            info = next(iter(fetch_all("player_info_view", filters={"player": player})), None)
+        except SupabaseError:
+            info = None
+        if not runs and not summary:
             return f"❌ No stats found for `{player}`."
 
-        # A second view, because the act breakdown is one row PER ACT and this
-        # card is one row per player. Filtered server-side rather than fetched
-        # whole and sliced -- see fetch_all's note on the 1000-row cap.
-        #
-        # Caught, and ONLY here: if the act migration has not been applied the
-        # table is missing and PostgREST says so with PGRST205. That should not
-        # take down the whole card for the sake of one section -- but it is
-        # named in the reply rather than rendered as "no data", because "not
-        # migrated" and "no turns yet" are different problems.
-        try:
-            acts = fetch_all("player_act_view", filters={"player": player},
-                             sort=["act"])
-        except SupabaseError:
-            acts = None
-
-        # One row per RUN (2026-09-28_ritual_stats.sql), caught the same way:
-        # the hero table and both charts are drawn from it, and None renders as
-        # "not migrated" in each rather than as a player with no runs.
-        try:
-            runs = fetch_all("player_run_view", filters={"player": player},
-                             sort=["started_at"])
-        except SupabaseError:
-            runs = None
-
-        try:
-            link_rows = fetch_all("player_link_view", filters={"player": player})
-        except SupabaseError:
-            link_rows = None
-
-        # One row, and hand-grouped rather than a field per column: the view
-        # carries 22 columns and a flat dump of them is the JSON blob again with
-        # nicer punctuation.
-        row = records[0]
-        embed = nextcord.Embed(title=row.get("player") or player, colour=0x5865F2)
-
-        embed.add_field(name="Runs", inline=True, value=sf.record(row))
-        embed.add_field(name="Best combo", inline=True,
-                        value=sf.value("best_combo", row.get("best_combo")))
-
-        # Per hero, replacing a single "Highest Ritual": ritual ladders are per
-        # hero, and one number across heroes did not say which it was on.
-        embed.add_field(name="Heroes (Top = highest ritual, Clr = beat act 3)",
-                        inline=False, value=sf.player_heroes(runs))
-        embed.add_field(name="Games by ritual", inline=False,
-                        value=sf.player_ritual_chart(runs))
-        embed.add_field(name="Furthest act", inline=False,
-                        value=sf.player_act_chart(runs))
-
-        embed.add_field(name="Max Reached", inline=False, value=sf.reached(row))
-        # The spread first, then the per-act averages it summarises: whether a
-        # player clears in two links or always runs out of nodes is invisible
-        # in "3.5".
-        embed.add_field(name="Regular turns by links played", inline=False,
-                        value=sf.player_link_chart(link_rows))
-        embed.add_field(name="Links per turn", inline=False,
-                        value=sf.links_table(acts, row))
-        embed.add_field(name="Patterns cleared", inline=False,
-                        value=sf.clearing_table(acts, row))
-
-        drafted = sf.most_drafted(row)
-        if drafted:
-            embed.add_field(name="Most drafted", inline=False, value=drafted)
-
-        embed.set_footer(text=sf.footer(records, note=sf.last_played(row)))
-        await interaction.followup.send(embed=embed)
+        await _send_card(interaction, stats_cards.player_card(player, runs, summary, info),
+                         "player.png", footer=stats_cards.player_footer(runs), colour=0x5865F2)
 
     # --- Breakdown ---
     # Runs grouped by hero, ritual or version, drawn as an image (2026-09-28).

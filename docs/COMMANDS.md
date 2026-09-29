@@ -427,7 +427,7 @@ what you would want to force. Full policy:
 |---|---|---|
 | `/stats players` | — | `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Who is playing and where their time goes, drawn as an image. Replaced `/stats active_players` and `/stats engagement` 2026-09-28 |
 | `/stats leaderboard` | — | `limit?` (default 10), `player?`*, `hero?`*, `version?`* |
-| `/stats player` | — | `player`* — a full player card |
+| `/stats player` | — | `player`*. One player's profile, drawn as an image: runs, act 3 wins, best combo and time; a bar per hero split by furthest act; most drafted and what they made in the Codex |
 | `/stats breakdown` | — | `by`* (hero / ritual / version), `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Drawn as an image. Replaced `/stats hero` and `/stats version`, then `/stats habits`, 2026-09-28 |
 | `/stats bosses` | — | `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Every boss's win rate by act, drawn as an image |
 | `/stats all` | 🔒 | `player?`* (default: most games), `daily?` (default true). Runs every report above with its defaults, then a preview of yesterday's daily report, then a summary naming every report that replied with text (an error, "not migrated" or "no data") instead of an embed. For checking the reports after a change. The daily preview never touches `daily_update_state.json`, so it cannot claim or skip a scheduled send. `stats.ALL_REPORTS` is the list; `test_command_registration` fails if a new report is missing from it |
