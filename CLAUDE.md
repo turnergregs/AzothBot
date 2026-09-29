@@ -80,6 +80,12 @@ All docs live in `docs/`. Read before changing a system.
   layer is `azoth_logic/stats_charts.py`, each report's layout
   `azoth_logic/stats_cards.py`, sent by `stats._send_card`. `/stats bosses` is
   the first. See `docs/ANALYTICS.md` § Reports as images.
+- **`/stats item` reads split views that carry their own baseline**
+  (2026-09-29). `boss_split_view`, `draft_item_split_view` and
+  `hero_split_view` hold each item per (version | ritual | hero, cohort) WITH
+  its kind's totals for that group on every row (item included; the bot
+  subtracts). A lookup is one item's few rows. Don't widen the older views
+  instead: `fetch_all` does not page, and PostgREST stops at 1000 rows.
 - **`/stats draft` keeps content apart from play** (revised 2026-09-29).
   `pool` is content (the shipped draft decks, no cutoff, no cohort); `picks`
   and `items` are play (draft offers at `analytics_cutoff()`, with `players:`).

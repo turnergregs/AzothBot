@@ -28,6 +28,7 @@ ALL_REPORTS = [
     ("breakdown by:ritual", "stats_breakdown", {"by": "ritual", "players": "new"}),
     ("breakdown by:version", "stats_breakdown", {"by": "version", "players": "new"}),
     ("bosses", "stats_bosses", {"players": "new"}),
+    ("item", "stats_item", {"by": "version", "players": "new"}),   # item filled in at run time
     ("scoreboard", "stats_scoreboard", {}),
     ("draft picks", "stats_draft_picks", {"players": "new"}),
     ("draft items", "stats_draft_items", {"players": "new"}),
@@ -72,6 +73,65 @@ class _Preview:
 
     def __getattr__(self, name):
         return getattr(self._interaction, name)
+
+
+# /stats item looks up bosses and heroes beside the content index's cards,
+# aspects and rites. Those two have `archived_at`, so live means unarchived.
+_ITEM_TABLES = {"boss": "bosses", "hero": "heroes"}
+
+
+def _item_choices(query: str, limit: int = 25) -> dict:
+    """{label: ref} over live bosses, heroes, cards, aspects and rites, exact
+    and prefix matches first (content_index.choices' ranking)."""
+    from azoth_logic import content_index
+    from supabase_helpers import encode_item_ref
+
+    entries = []
+    for kind, table in _ITEM_TABLES.items():
+        # autocomplete_from_table's rule: an autocomplete has no error channel,
+        # so a failed read is logged and offers nothing rather than raising.
+        try:
+            rows = fetch_all(table, ["id", "name"], {"archived_at": None})
+        except SupabaseError as e:
+            print(f"AUTOCOMPLETE FAILED on `{table}`: {e}")
+            rows = []
+        entries += [(kind, r["id"], r["name"]) for r in rows if r.get("name")]
+    try:
+        entries += [(content_index.ref_type(k), i, n) for k, i, n in content_index.entries()]
+    except SupabaseError as e:
+        print(f"AUTOCOMPLETE FAILED on the content index: {e}")
+
+    needle = (query or "").strip().lower()
+    scored = []
+    for kind, item_id, name in entries:
+        low = str(name).lower()
+        if needle and needle not in low:
+            continue
+        rank = 0 if low == needle else (1 if low.startswith(needle) else 2)
+        scored.append((rank, low, kind, item_id, name))
+    scored.sort(key=lambda r: (r[0], r[1]))
+    return {content_index.label(content_index.KIND_FOR_REF.get(k, k), i, n): encode_item_ref(k, i)
+            for _, _, k, i, n in scored[:limit]}
+
+
+def _resolve_item(value: str):
+    """An encoded ref or a typed name -> (kind, row), or (None, None).
+    Bosses and heroes first by name, then the content index."""
+    from azoth_logic import content_index
+    from supabase_helpers import parse_item_ref
+
+    ref_type, item_id = parse_item_ref(value)
+    if ref_type in _ITEM_TABLES:
+        rows = fetch_all(_ITEM_TABLES[ref_type], filters={"id": item_id})
+        return (ref_type, rows[0]) if rows else (None, None)
+    if ref_type:
+        return content_index.resolve(value)
+    name = (value or "").strip()
+    for kind, table in _ITEM_TABLES.items():
+        rows = fetch_all(table, filters={"name": name, "archived_at": None}) if name else []
+        if rows:
+            return kind, rows[0]
+    return content_index.resolve(name)
 
 
 async def _send_card(interaction, card, filename, *, footer, colour=0x5865F2):
@@ -267,6 +327,19 @@ def add_stats_commands(cls):
                     continue
                 kwargs = {"player": player}
                 label = f"player ({player})"
+            if attr == "stats_item":
+                # The most-fought boss: the one most likely to have data.
+                try:
+                    fights: dict = {}
+                    for r in fetch_all("boss_fight_view", ["boss", "fights"]):
+                        fights[r["boss"]] = fights.get(r["boss"], 0) + int(r.get("fights") or 0)
+                except SupabaseError:
+                    fights = {}
+                if not any(fights.values()):
+                    continue
+                boss = max(fights, key=fights.get)
+                kwargs = {**kwargs, "item": boss}
+                label = f"item ({boss})"
             preview.followup.label = label
             # The report's own safe_interaction catches and posts its errors,
             # so one failing report never stops the rest.
@@ -329,6 +402,67 @@ def add_stats_commands(cls):
             footer += " · player filter needs 2026-09-28_player_cohorts.sql"
         await _send_card(interaction, stats_cards.bosses_card(rows, population), "bosses.png",
                          footer=footer, colour=0xC0392B)
+
+    # --- One item ---
+    # 2026-09-29, after Veln: its hp was halved in 0.9.11 and /stats bosses,
+    # pooling every version, still ranked it the hardest. One boss, card,
+    # aspect, rite or hero, its rate per version (or ritual, or hero), each
+    # against the rest of its kind in that same group. See stats_cards
+    # § /stats item and docs/ANALYTICS.md § One item.
+    @stats_cmd.subcommand(name="item", description="One boss, card, aspect, rite or hero, split by version")
+    @safe_interaction(timeout=30, error_message="❌ Failed to fetch item stats.")
+    async def stats_item(
+        self,
+        interaction: Interaction,
+        item: str = SlashOption(description="The boss, card, aspect, rite or hero", autocomplete=True),
+        by: str = SlashOption(
+            description="What to split it by (default: version)",
+            required=False,
+            default="version",
+            choices={"Version": "version", "Ritual": "ritual", "Hero": "hero"},
+        ),
+        players: str = SlashOption(
+            description="Whose games to count (default: new playtesters)",
+            required=False,
+            default="new",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
+    ):
+        from azoth_logic import stats_thumbs
+
+        kind, row = await asyncio.to_thread(_resolve_item, item)
+        if not row:
+            return f"❌ Could not find a live boss, card, aspect, rite or hero called `{item}`."
+        name = row.get("name") or item
+        if by not in stats_cards.ITEM_AXES[kind]:
+            return f"❌ {name} is a hero: split it by version or ritual."
+
+        view, id_column, counts = stats_cards.ITEM_SPLITS[kind]
+        filters = {id_column: row["id"], "dimension": by}
+        if view == "draft_item_split_view":
+            filters["item_type"] = kind
+        try:
+            rows = fetch_all(view, filters=filters)
+        except SupabaseError:
+            return (f"❌ `{view}` is not migrated — run "
+                    "`db/migrations/2026-09-29_item_split_views.sql`.")
+        rows, _ = stats_cards.select_cohort(rows, players, "grp", counts)
+        groups = [g for g in stats_cards.item_groups(rows, kind) if g["n"]]
+        if not groups:
+            unit = stats_cards.ITEM_MEASURES[kind][1]
+            return f"❌ No {unit} recorded for {name} yet, for these players."
+
+        act = row.get("act") if kind == "boss" else None
+        colour = stats_cards.item_colour(kind, row, act)
+        thumb = await asyncio.to_thread(stats_thumbs.thumbnail, kind, row, colour)
+        card = stats_cards.item_card(name, kind, groups, by, stats_cards.COHORT_LABELS[players],
+                                     act=act, colour=colour, thumb=thumb)
+        await _send_card(interaction, card, "item.png",
+                         footer=stats_cards.item_footer(kind, groups, by), colour=int(colour[1:], 16))
+
+    @stats_item.on_autocomplete("item")
+    async def autocomplete_stats_item(self, interaction: Interaction, input: str):
+        await interaction.response.send_autocomplete(await asyncio.to_thread(_item_choices, input))
 
     # --- Turn Scoreboard ---
     @stats_cmd.subcommand(name="scoreboard", description="End-of-turn bonus thresholds, by act")
@@ -466,6 +600,7 @@ def add_stats_commands(cls):
     cls.stats_breakdown = stats_breakdown
     cls.stats_all = stats_all
     cls.stats_bosses = stats_bosses
+    cls.stats_item = stats_item
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would
     # leave the three bodies unreachable in exactly the way

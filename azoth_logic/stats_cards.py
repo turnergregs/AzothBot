@@ -883,6 +883,194 @@ def draft_pool_card(row: dict) -> sc.Card:
 
 
 # ---------------------------------------------------------------------------
+# /stats item
+# ---------------------------------------------------------------------------
+# One piece of content alone, split by version (or ritual, or hero), so a
+# change shows up as a change (Turner, 2026-09-29): Veln's hp was halved in
+# 0.9.11, and /stats bosses, pooling 0.9.10 with 0.9.11, still ranked it the
+# hardest boss.
+#
+# Each group is read against the REST of its kind in the SAME group: Veln in
+# 0.9.11 against act 3's other bosses in 0.9.11, a card against every other
+# card offered in that version. A version where everything got easier (a new
+# player wave, a global change) then does not read as a fix to this item.
+#
+# Content is live from the database, not from the build, so a version is when
+# players ran a build, not when the item changed. Turner's call: tracking each
+# change's date is too much; the numbers moving is what matters.
+
+# What each kind of content is measured by: (heading, unit, rest, minimum).
+# `rest` names the baseline; `minimum` is the sample below which a row is grey
+# and never flagged, the same floors as the reports these come from.
+ITEM_MEASURES = {
+    "boss": ("Win rate", "fights", "act {act}'s other bosses", MIN_BOSS_FIGHTS),
+    "card": ("Pick rate", "offers", "other cards", MIN_OFFERS),
+    "aspect": ("Pick rate", "offers", "other aspects", MIN_OFFERS),
+    "rite": ("Pick rate", "offers", "other rites", MIN_OFFERS),
+    "hero": ("Beat act 3", "runs", "other heroes", MIN_RUNS),
+}
+ITEM_KIND_LABELS = {"boss": "Boss", "card": "Card", "aspect": "Aspect", "rite": "Rite",
+                    "hero": "Hero"}
+# The baseline's tile label: short, since the tiles share a row with the thumb.
+ITEM_TILE_REST = {"boss": "Rest of act {act}", "card": "Other cards", "aspect": "Other aspects",
+                  "rite": "Other rites", "hero": "Other heroes"}
+ITEM_BY_TITLES = {"version": "by version", "ritual": "by ritual", "hero": "by hero"}
+# Ordered axes draw as columns; heroes, unordered and long-named, as rows.
+ITEM_COLUMN_AXES = ("version", "ritual")
+# What fits across the card before the columns get too thin; the latest shown.
+MAX_ITEM_COLUMNS = 10
+
+
+# Where each kind's split lives (game repo 2026-09-29_item_split_views.sql):
+# (view, id column, (item hits, item n, kind hits, kind n)). The kind's totals
+# ride on every row and include the item; item_groups subtracts it.
+ITEM_SPLITS = {
+    "boss": ("boss_split_view", "boss_id", ("wins", "finished", "act_wins", "act_finished")),
+    "card": ("draft_item_split_view", "item_id", ("picked", "offered", "type_picked", "type_offered")),
+    "aspect": ("draft_item_split_view", "item_id", ("picked", "offered", "type_picked", "type_offered")),
+    "rite": ("draft_item_split_view", "item_id", ("picked", "offered", "type_picked", "type_offered")),
+    "hero": ("hero_split_view", "hero_id", ("cleared", "runs", "all_cleared", "all_runs")),
+}
+# A hero split by hero is itself.
+ITEM_AXES = {"boss": ("version", "ritual", "hero"), "card": ("version", "ritual", "hero"),
+             "aspect": ("version", "ritual", "hero"), "rite": ("version", "ritual", "hero"),
+             "hero": ("version", "ritual")}
+
+
+def item_groups(rows: list, kind: str) -> list:
+    """`[{group, hits, n, rest_hits, rest_n}]` from one item's split rows, the
+    cohorts already summed (select_cohort on `grp`)."""
+    hits_col, n_col, kind_hits_col, kind_n_col = ITEM_SPLITS[kind][2]
+    groups = []
+    for r in rows:
+        hits, n = int(r.get(hits_col) or 0), int(r.get(n_col) or 0)
+        groups.append({"group": r.get("grp"), "hits": hits, "n": n,
+                       "rest_hits": int(r.get(kind_hits_col) or 0) - hits,
+                       "rest_n": int(r.get(kind_n_col) or 0) - n})
+    return groups
+
+
+def _group_order(groups: list, by: str) -> list:
+    if by == "version":
+        return sorted(groups, key=lambda g: _version_key(g["group"]))
+    if by == "ritual":
+        return sorted(groups, key=lambda g: int(g["group"]) if str(g["group"]).isdigit() else 99)
+    return sorted(groups, key=lambda g: (-g["n"], str(g["group"])))
+
+
+def item_colour(kind: str, row: dict | None, act: int | None = None) -> str:
+    """The colour the game gives this item, for its columns (Turner,
+    2026-09-29: a report about one thing should look like that thing). A boss
+    in its act's colour, a card in its element's, an aspect in its art's accent
+    (`primary_color`: aspect colours are reversed, docs/CARD_RENDERING.md), a
+    rite in its palette's `primary_color`, a hero in its `color`. Anything
+    missing falls back to the house accent."""
+    row = row or {}
+    data = row.get("image_data") or {}
+
+    def hex_of(c):
+        if isinstance(c, str) and c.startswith("#") and len(c) >= 7:
+            return c[:7].lower()
+        if isinstance(c, (list, tuple)) and len(c) >= 3:
+            return "#" + "".join(f"{int(v):02x}" for v in c[:3])
+        if isinstance(c, dict) and {"r", "g", "b"} <= set(c):
+            return "#" + "".join(f"{int(c[k]):02x}" for k in "rgb")
+        return None
+
+    if kind == "boss" and act:
+        return sc.ACT_COLOURS[min(max(int(act), 1), len(sc.ACT_COLOURS)) - 1]
+    if kind == "card":
+        return ELEMENT_COLOURS.get(str(row.get("element") or "catalyst").lower(), sc.ACCENT)
+    if kind in ("aspect", "rite"):
+        return hex_of(data.get("primary_color")) or sc.ACCENT
+    if kind == "hero":
+        return hex_of(row.get("color")) or sc.ACCENT
+    return sc.ACCENT
+
+
+def item_card(name: str, kind: str, groups: list, by: str = "version",
+              population: str = "", act: int | None = None,
+              colour: str | None = None, thumb=None) -> sc.Card:
+    """One item's rate per group, each against the rest of its kind there.
+
+    `groups`: `[{group, hits, n, rest_hits, rest_n}]`, where hits / n is the
+    item (wins over finished fights, picks over offers, act-3 clears over runs)
+    and rest_hits / rest_n the same pooled over the rest of its kind in that
+    group. Groups with no sample are left out: a version before the item
+    existed is not a version where it did badly.
+
+    `colour` is the item's own (item_colour); `thumb` its face or art, drawn
+    top right (stats_thumbs, which does the I/O this module does not).
+    """
+    heading, unit, rest_label, minimum = ITEM_MEASURES[kind]
+    rest_label = rest_label.format(act=act)
+    colour = colour or sc.ACCENT
+    groups = _group_order([g for g in groups if g["n"]], by)
+    hits, n = sum(g["hits"] for g in groups), sum(g["n"] for g in groups)
+    rest_hits, rest_n = sum(g["rest_hits"] for g in groups), sum(g["rest_n"] for g in groups)
+
+    kind_text = ITEM_KIND_LABELS[kind] + (f" · act {act}" if act else "")
+    who = " · ".join(p for p in [population, f"version ≥ {CUTOFF_VERSION}"] if p)
+    card = sc.Card(name, f"{kind_text}\n{who}", thumb=thumb)
+    thumb_w = thumb.width / sc.SCALE + 14 if thumb is not None else 0
+    tiles = sc.StatTiles([
+        (unit.capitalize(), f"{n:,}"),
+        (heading, f"{round(100 * hits / n)}%" if n else "—"),
+        (ITEM_TILE_REST[kind].format(act=act), f"{round(100 * rest_hits / rest_n)}%" if rest_n else "—"),
+    ], columns=3, inset_right=thumb_w)
+    card.add(tiles)
+    # Full-width blocks start below the thumb.
+    below = thumb.height / sc.SCALE - card.head() - tiles.height if thumb is not None else 0
+    card.add(sc.Spacer(max(below, 0) + 8))
+    if not groups:
+        return card
+
+    def flag_of(g):
+        base = g["rest_hits"] / g["rest_n"] if g["rest_n"] else None
+        flag = (rate_flag(g["hits"], g["n"], base)
+                if base is not None and g["n"] >= minimum and g["rest_n"] >= minimum else None)
+        return base, _flag_style(flag)
+
+    if by in ITEM_COLUMN_AXES:
+        # An ordered axis reads as a trend left to right (Turner, 2026-09-29):
+        # a column per group in the item's colour, a tick at the rest of its
+        # kind in that group. Flags are the marker; the colour stays the item's.
+        card.add(sc.SectionHeader(f"{heading} {ITEM_BY_TITLES[by]}"))
+        columns = []
+        for g in groups[-MAX_ITEM_COLUMNS:]:
+            base, style = flag_of(g)
+            columns.append({"label": _label({"grp": g["group"]}, by).replace("Ritual ", "R"),
+                            "value": g["hits"] / g["n"], "rest": base,
+                            "count_text": f"{g['hits']}/{g['n']}", "faded": g["n"] < minimum,
+                            "marker": style["marker"], "marker_fill": style["marker_fill"]})
+        card.add(sc.RateColumns(columns, fill=colour))
+        card.add(sc.Legend([(rest_label[0].upper() + rest_label[1:], sc.REFERENCE, "line")], indent=0))
+        return card
+
+    card.add(sc.SectionHeader(f"{heading} {ITEM_BY_TITLES[by]}", f"against {rest_label}"))
+    for g in groups:
+        rate = g["hits"] / g["n"]
+        base, style = flag_of(g)
+        card.add(sc.BarRow(_label({"grp": g["group"]}, by), rate,
+                           value_text=f"{round(rate * 100)}%", count_text=f"{g['hits']}/{g['n']}",
+                           delta=sc.signed((rate - base) * 100) if base is not None else "",
+                           faded=g["n"] < minimum, reference=base, label_w=100, count_w=66,
+                           fill=colour, marker=style["marker"], marker_fill=style["marker_fill"]))
+    return card
+
+
+def item_footer(kind: str, groups: list, by: str = "version") -> str:
+    _, unit, _, minimum = ITEM_MEASURES[kind]
+    live = [g for g in groups if g["n"]]
+    n = sum(g["n"] for g in live)
+    text = (f"version >= {CUTOFF_VERSION} · {n:,} {unit} · solo · grouped by {by}"
+            f" · grey under {minimum} {unit}")
+    if by in ITEM_COLUMN_AXES and len(live) > MAX_ITEM_COLUMNS:
+        text += f" · the latest {MAX_ITEM_COLUMNS} of {len(live)} drawn; the tiles count all"
+    return text
+
+
+# ---------------------------------------------------------------------------
 # The daily report
 # ---------------------------------------------------------------------------
 # Redrawn as one image 2026-09-29 from daily_update._fetch_daily_stats. A

@@ -55,6 +55,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
+| `/stats item` | `boss_split_view` / `draft_item_split_view` / `hero_split_view` | One boss, card, aspect, rite or hero, its rate per version (or ritual, or hero), each against the rest of its kind in that group. Drawn in the item's colour beside its face or art. See [One item](#one-item-2026-09-29) |
 | `/stats draft picks` | `draft_offer_view` | Pick rate by type (packs included), each kind of draft pack, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
 | `/stats draft items` | `draft_item_offer_view` | The five most and five least picked cards, aspects and rites, one group per type, each against its own type |
 | `/stats draft pool` | `draft_deck_view` | What the draft pool holds (content, not play) |
@@ -433,6 +434,50 @@ so it counts everyone by default; `players:` narrows it. `player:` and
 `version:` went with the text version: a player's own best is on their card,
 and every run is at the cutoff. The combo is compared as a Decimal: 2^2048
 passes a float's range.
+
+### One item (2026-09-29)
+
+`/stats item item:<name> by:version|ritual|hero players:`. Built after Veln:
+its hp was halved in 0.9.11, and `/stats bosses`, which pools every version at
+the cutoff, still ranked it the hardest boss. A pooled rate cannot show a fix;
+the same item split by version can.
+
+- **Measures.** A boss: the player's win rate over finished fights. A card,
+  aspect or rite: pick rate. A hero: beat act 3 (`run_cleared`, as
+  `/stats breakdown`). `by:hero` is the run's starting hero, and is refused for
+  a hero (a hero split by hero is itself).
+- **Each group against the rest of its kind in that SAME group.** Veln in
+  0.9.11 against act 2's other bosses in 0.9.11; a card against every other card
+  offered that version. A version where everything got easier then does not
+  read as a fix to this item. The flag is `rate_flag` against that rest, with
+  the usual floors (5 fights, 10 offers, 5 runs) under which a group is grey.
+- **A version is when players ran a build, not when the item changed.** Content
+  is live from the database, so a 0.9.10 client that synced after an edit got
+  the new numbers. Turner's call: dating every change is too much work, and the
+  numbers moving is what matters.
+- **Drawn as columns for an ordered axis** (version, ritual): one column per
+  group in the item's colour, a white tick at the rest of its kind, the value on
+  the column (lifted over the tick only when the tick would cut it). The scale
+  tops at the next 25% above the tallest mark. A low sample is an outline. The
+  latest 10 versions are drawn; the footer says when there are more. `by:hero`
+  stays as horizontal bars: heroes have no order, and names fit rows better.
+- **The item's own colour** (`stats_cards.item_colour`): a boss's act colour, a
+  card's element, an aspect's art accent (`primary_color`: aspect colours are
+  reversed, CARD_RENDERING.md), a rite's palette `primary_color`, a hero's
+  `color`. So a flag is the ▼/▲ marker alone, never the column's colour: a blood
+  card's red column is not a warning.
+- **The picture.** `stats_thumbs.thumbnail`, the one I/O step, off the event
+  loop: a card, aspect or rite is its rendered face (the deck grid's still, so
+  its text is on it); a boss or hero is its art shaded in its colour and cut to
+  a circle, with no ring (Turner's review), since the bot has no face renderer
+  for either. No picture draws the card without one.
+
+**Why three new views and not a column on the old ones.** Each split view
+carries its kind's totals per group on every row (a window sum, item
+included; the bot subtracts), so a lookup reads the one item's handful of rows.
+Adding version, ritual and hero to `boss_fight_view` or
+`draft_item_offer_view` would have multiplied the rows every other report
+fetches, and `fetch_all` does not page: PostgREST answers at most 1000 rows.
 
 ### Draft reports (2026-09-29)
 

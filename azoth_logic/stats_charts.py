@@ -32,6 +32,7 @@ loop (asyncio.to_thread), since drawing blocks for a noticeable moment.
 from __future__ import annotations
 
 import io
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -231,26 +232,42 @@ class Note(Block):
 
 @dataclass
 class Card:
-    """A report image: a title, a subtitle saying what it rests on, blocks."""
+    """A report image: a title, a subtitle saying what it rests on, blocks.
+
+    A subtitle may run to more than one line ("\\n"); each adds SUBTITLE_LINE.
+    `thumb` is an image (already at SCALE) drawn in the top-right corner, for
+    a report about one thing, so the reader sees WHICH thing. Blocks do not
+    flow around it: a caller that puts a block beside it insets that block
+    (StatTiles' `inset_right`) and starts full-width blocks below it.
+    """
     title: str
     subtitle: str = ""
     blocks: list = field(default_factory=list)
+    thumb: object = None
 
     HEAD = 64
+    SUBTITLE_LINE = 18
 
     def add(self, *blocks: Block) -> "Card":
         self.blocks.extend(blocks)
         return self
 
+    def head(self) -> float:
+        return self.HEAD + self.SUBTITLE_LINE * self.subtitle.count("\n")
+
     def render(self) -> Image.Image:
-        height = PAD + self.HEAD + sum(b.height for b in self.blocks) + PAD
+        height = PAD + self.head() + sum(b.height for b in self.blocks) + PAD
+        if self.thumb is not None:
+            height = max(height, PAD + self.thumb.height / SCALE + PAD)
         img = Image.new("RGBA", (px(WIDTH), px(height)), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         d.rounded_rectangle([0, 0, img.width - 1, img.height - 1], radius=px(12), fill=SURFACE)
+        if self.thumb is not None:
+            img.alpha_composite(self.thumb, (px(WIDTH - PAD) - self.thumb.width, px(PAD)))
         d.text((px(PAD), px(PAD)), self.title, font=font(22, True), fill=INK)
-        if self.subtitle:
-            d.text((px(PAD), px(PAD + 30)), self.subtitle, font=font(13), fill=INK_2)
-        top = px(PAD + self.HEAD)
+        for i, line in enumerate(self.subtitle.split("\n") if self.subtitle else []):
+            d.text((px(PAD), px(PAD + 30 + self.SUBTITLE_LINE * i)), line, font=font(13), fill=INK_2)
+        top = px(PAD + self.head())
         for block in self.blocks:
             block.draw(d, top)
             top += px(block.height)
@@ -301,13 +318,18 @@ class Legend(Block):
     """
     items: list
     height: float = 22
+    indent: float = LABEL_W    # from the card's padding; 0 under a chart with no label column
 
     def draw(self, d, top):
         cy = top + px(self.height) // 2
-        x = px(PAD + LABEL_W)
-        for label, colour in self.items:
-            d.rounded_rectangle([x, cy - px(5), x + px(10), cy + px(5)], radius=px(2), fill=colour)
-            x += px(14)
+        x = px(PAD + self.indent)
+        for label, colour, *shape in self.items:
+            if shape and shape[0] == "line":     # the key to a reference tick
+                d.line([(x - px(2), cy), (x + px(12), cy)], fill=colour, width=px(2))
+                x += px(16)
+            else:
+                d.rounded_rectangle([x, cy - px(5), x + px(10), cy + px(5)], radius=px(2), fill=colour)
+                x += px(14)
             d.text((x, cy), label, font=font(11), fill=MUTED, anchor="lm")
             x += d.textlength(label, font=font(11)) + px(12)
 
@@ -437,9 +459,10 @@ class StatTiles(Block):
     tiles: list
     columns: int = 4
     height: float = 58
+    inset_right: float = 0     # room left clear on the right (a Card's thumb)
 
     def draw(self, d, top):
-        w = (WIDTH - PAD * 2) / self.columns
+        w = (WIDTH - PAD * 2 - self.inset_right) / self.columns
         for i, (label, value) in enumerate(self.tiles):
             x = px(PAD + i * w)
             d.text((x, top + px(8)), label, font=font(11), fill=MUTED)
@@ -514,3 +537,98 @@ class TableRow(Block):
         for text, x, anchor, style in self.cells:
             size, bold, fill = self.STYLES[style]
             d.text((px(x), cy), text, font=font(size, bold), fill=fill, anchor=anchor)
+
+
+@dataclass
+class RateColumns(Block):
+    """One column per group over an ordered axis (versions, ritual levels),
+    each with a horizontal tick at its OWN baseline: a trend read left to
+    right, where what a column is read against changes from group to group.
+
+    `groups`: dicts with `label`, `value` (0-1), `rest` (the baseline, 0-1 or
+    None), `count_text` (under the label), and optionally `faded` and
+    `marker` / `marker_fill` for a flag, drawn beside the value. The column
+    keeps `fill` (the item's own colour) whether flagged or not, so the flag
+    is carried by the marker; a faded column is an outline in that colour.
+
+    Slots are capped at SLOT_MAX wide and centred, so three versions do not
+    stretch into three slabs; past a width's worth the caller trims. The scale
+    tops out at the next 25% above the tallest mark (50% at the least),
+    labelled in a right margin no column enters: rates mostly sit under 60%,
+    and a fixed 0-100% left half of every chart empty.
+    """
+    groups: list
+    fill: str = ACCENT
+    height: float = 180
+
+    PLOT_H = 104      # the height of a column at the top of the scale
+    TOP = 34          # room above a full column for its value
+    AXIS_W = 30       # the right margin the gridline labels sit in
+    SLOT_MAX = 84
+    COLUMN_W = 30
+    TICK_OVER = 7     # how far the baseline tick reaches past each side
+    LABEL_CLEAR = 20  # a tick this far above a column would cut its value
+
+    def scale(self) -> float:
+        tallest = max([v for g in self.groups for v in (g.get("value"), g.get("rest"))
+                       if v is not None], default=0)
+        return min(max(0.5, math.ceil(tallest * 4 - 1e-9) / 4), 1.0)
+
+    def draw(self, d, top):
+        n = max(len(self.groups), 1)
+        inner = WIDTH - PAD * 2 - self.AXIS_W
+        slot = min(self.SLOT_MAX, inner / n)
+        x0 = PAD + (inner - slot * n) / 2
+        base = top + px(self.TOP + self.PLOT_H)
+        col_w = min(self.COLUMN_W, slot * 0.45)
+        scale = self.scale()
+        right = px(WIDTH - PAD - self.AXIS_W + 6)
+        for step in range(1, round(scale * 4) + 1):   # quiet gridlines every 25%
+            y = base - px(self.PLOT_H * step / 4 / scale)
+            d.line([(px(PAD), y), (right, y)], fill=TRACK, width=px(0.5))
+            d.text((px(WIDTH - PAD), y), f"{step * 25}%", font=font(10), fill=MUTED, anchor="rm")
+        d.line([(px(PAD), base), (right, base)], fill=MUTED, width=px(0.75))
+        label_font = font(13 if slot >= 48 else 11)
+
+        def height_of(value):
+            return self.PLOT_H * min(max(value, 0), scale) / scale
+
+        for i, g in enumerate(self.groups):
+            centre = x0 + slot * (i + 0.5)
+            faded = g.get("faded", False)
+            value, rest = g.get("value"), g.get("rest")
+            x_a, x_b = px(centre - col_w / 2), px(centre + col_w / 2)
+            peak = 0
+            if value is not None:
+                h = max(height_of(value), 2)
+                peak = h
+                # The value sits on its column. Only a tick that would cut
+                # through the number (just above the column) lifts it over.
+                if rest is not None and 0 <= height_of(rest) - h <= self.LABEL_CLEAR:
+                    peak = height_of(rest)
+                box = [x_a, base - px(h), x_b, base]
+                if faded:
+                    d.rounded_rectangle(box, radius=px(3), outline=dim(self.fill, 0.75), width=px(1.25))
+                else:
+                    d.rounded_rectangle(box, radius=px(3), fill=self.fill)
+            if rest is not None:
+                y = base - px(height_of(rest))
+                # A dark keyline under the tick so it reads over any fill.
+                d.line([(x_a - px(self.TICK_OVER), y), (x_b + px(self.TICK_OVER), y)],
+                       fill=SURFACE, width=px(4))
+                d.line([(x_a - px(self.TICK_OVER), y), (x_b + px(self.TICK_OVER), y)],
+                       fill=REFERENCE, width=px(2))
+            if value is not None:
+                text = f"{round(value * 100)}"
+                text_y = base - px(peak) - px(6)
+                f = font(13, True)
+                d.text((px(centre), text_y), text, font=f, fill=INK_2 if faded else INK, anchor="mb")
+                if g.get("marker"):
+                    x = px(centre) - d.textlength(text, font=f) / 2 - px(3)
+                    d.text((x, text_y), g["marker"], font=font(10),
+                           fill=g.get("marker_fill") or INK_2, anchor="rb")
+            d.text((px(centre), base + px(16)), str(g.get("label", "")), font=label_font,
+                   fill=INK_2 if faded else INK, anchor="mm")
+            if g.get("count_text"):
+                d.text((px(centre), base + px(33)), g["count_text"], font=font(11),
+                       fill=MUTED, anchor="mm")

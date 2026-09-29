@@ -728,6 +728,119 @@ def test_every_draft_card_renders(build):
     assert Image.open(io.BytesIO(build().png())).width == sc.WIDTH * sc.SCALE
 
 
+# --- /stats item -------------------------------------------------------------------
+
+def _split(grp, wins, finished, act_wins, act_finished, cohort="new"):
+    """A boss_split_view row: the act's totals include this boss."""
+    return {"boss_id": 8, "boss": "Veln", "act": 2, "dimension": "version", "grp": grp,
+            "cohort": cohort, "wins": wins, "finished": finished,
+            "act_wins": act_wins, "act_finished": act_finished}
+
+
+VELN = [_split("0.9.10", 3, 19, 33, 77), _split("0.9.11", 9, 21, 36, 81),
+        _split("0.9.9", 2, 4, 8, 17)]
+
+
+def _veln_groups():
+    rows, _ = cards.select_cohort(VELN, "new", "grp", cards.ITEM_SPLITS["boss"][2])
+    return cards.item_groups(rows, "boss")
+
+
+def _columns(card):
+    return next(b for b in card.blocks if isinstance(b, sc.RateColumns)).groups
+
+
+def test_the_rest_is_the_kind_without_the_item():
+    """The view's totals include the item; the rest must not, or Veln would
+    pull its own baseline toward itself."""
+    g = {x["group"]: x for x in _veln_groups()}["0.9.10"]
+    assert (g["hits"], g["n"], g["rest_hits"], g["rest_n"]) == (3, 19, 30, 58)
+
+
+def test_cohorts_are_summed_per_group_totals_included():
+    rows = VELN + [_split("0.9.10", 5, 5, 20, 30, cohort="developer")]
+    merged, _ = cards.select_cohort(rows, "all", "grp", cards.ITEM_SPLITS["boss"][2])
+    g = {x["group"]: x for x in cards.item_groups(merged, "boss")}["0.9.10"]
+    assert (g["hits"], g["n"], g["rest_hits"], g["rest_n"]) == (8, 24, 45, 83)
+
+
+def test_versions_run_in_release_order_as_columns():
+    columns = _columns(cards.item_card("Veln", "boss", _veln_groups(), "version", act=2))
+    assert [c["label"] for c in columns] == ["0.9.9", "0.9.10", "0.9.11"]
+
+
+def test_each_version_is_read_against_the_rest_that_version():
+    columns = {c["label"]: c for c in _columns(cards.item_card("Veln", "boss", _veln_groups(), act=2))}
+    assert columns["0.9.10"]["rest"] == pytest.approx(30 / 58)
+    assert columns["0.9.11"]["rest"] == pytest.approx(27 / 60)
+    assert columns["0.9.10"]["marker"] == "▼"      # 3/19 is clearly under 30/58
+    assert columns["0.9.11"]["marker"] == ""       # 9/21 against 27/60 is not
+    assert columns["0.9.9"]["faded"] and columns["0.9.9"]["marker"] == ""   # 4 fights
+
+
+def test_the_columns_wear_the_item_colour_not_the_flag():
+    """A flag is the marker: a blood card's red column is not a warning."""
+    colour = cards.item_colour("boss", {"act": 2}, 2)
+    card = cards.item_card("Veln", "boss", _veln_groups(), act=2, colour=colour)
+    chart = next(b for b in card.blocks if isinstance(b, sc.RateColumns))
+    assert chart.fill == sc.ACT_COLOURS[1]
+    assert "fill" not in chart.groups[1]
+
+
+def test_a_hero_split_is_rows_and_a_hero_is_not_split_by_hero():
+    groups = [{"group": "Lumis", "hits": 6, "n": 20, "rest_hits": 25, "rest_n": 50},
+              {"group": "Eith", "hits": 2, "n": 11, "rest_hits": 15, "rest_n": 35}]
+    card = cards.item_card("Veln", "boss", groups, "hero", act=2)
+    assert [r.label for r in _bar_rows(card)] == ["Lumis", "Eith"]
+    assert "hero" not in cards.ITEM_AXES["hero"]
+
+
+def test_only_the_latest_versions_are_drawn_and_the_footer_says_so():
+    groups = [{"group": f"0.9.{v}", "hits": 1, "n": 5, "rest_hits": 5, "rest_n": 20}
+              for v in range(10, 10 + cards.MAX_ITEM_COLUMNS + 2)]
+    labels = [c["label"] for c in _columns(cards.item_card("Veln", "boss", groups, act=2))]
+    assert len(labels) == cards.MAX_ITEM_COLUMNS and labels[-1] == "0.9.21"
+    assert f"latest {cards.MAX_ITEM_COLUMNS} of" in cards.item_footer("boss", groups)
+
+
+@pytest.mark.parametrize("kind, row, act, expected", [
+    ("boss", {}, 4, sc.ACT_COLOURS[3]),
+    ("card", {"element": "Blood"}, None, cards.ELEMENT_COLOURS["blood"]),
+    ("card", {"element": None}, None, cards.ELEMENT_COLOURS["catalyst"]),
+    ("aspect", {"image_data": {"primary_color": [236, 166, 76]}}, None, "#eca64c"),
+    ("rite", {"image_data": {"primary_color": "#C8C4B8"}}, None, "#c8c4b8"),
+    ("hero", {"color": {"r": 255, "g": 198, "b": 49}}, None, "#ffc631"),
+    ("hero", {}, None, sc.ACCENT),
+])
+def test_an_item_is_drawn_in_the_colour_the_game_gives_it(kind, row, act, expected):
+    assert cards.item_colour(kind, row, act) == expected
+
+
+def test_full_width_blocks_start_below_the_thumb():
+    thumb = Image.new("RGBA", (sc.px(100), sc.px(200)), (255, 0, 0, 255))
+    card = cards.item_card("Veln", "boss", _veln_groups(), act=2, thumb=thumb)
+    tiles = next(b for b in card.blocks if isinstance(b, sc.StatTiles))
+    assert tiles.inset_right >= 100
+    above_chart = card.head() + sum(b.height for b in card.blocks[:card.blocks.index(
+        next(b for b in card.blocks if isinstance(b, sc.SectionHeader)))])
+    assert above_chart >= 200
+
+
+@pytest.mark.parametrize("by", ["version", "hero"])
+def test_the_item_card_renders(by):
+    thumb = Image.new("RGBA", (sc.px(80), sc.px(140)), (0, 0, 0, 0))
+    groups = _veln_groups() if by == "version" else [
+        {"group": "Lumis", "hits": 6, "n": 20, "rest_hits": 25, "rest_n": 50}]
+    png = cards.item_card("Veln", "boss", groups, by, act=2, thumb=thumb).png()
+    assert Image.open(io.BytesIO(png)).width == sc.WIDTH * sc.SCALE
+
+
+def test_the_column_scale_is_the_next_quarter_above_the_tallest_mark():
+    assert sc.RateColumns([{"value": 0.16, "rest": 0.52}]).scale() == 0.75
+    assert sc.RateColumns([{"value": 0.2, "rest": 0.3}]).scale() == 0.5
+    assert sc.RateColumns([{"value": 1.0, "rest": 0.4}]).scale() == 1.0
+
+
 # --- /stats leaderboard ------------------------------------------------------------
 
 def _best(player, hero, combo, ritual=0, act=3, when="2026-09-20T10:00:00+00:00", cohort="new"):
