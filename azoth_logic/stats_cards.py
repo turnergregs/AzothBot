@@ -663,7 +663,11 @@ DRAFT_COUNTS = ("offered", "picked")
 ELEMENT_COLOURS = {"anima": "#8769e9", "blood": "#ef1212", "sol": "#f9a410",
                    "catalyst": "#e8e6dc"}
 ELEMENT_ORDER = ["anima", "blood", "sol", "catalyst"]
-TYPE_LABELS = {"card": "Cards", "aspect": "Aspects", "rite": "Rites"}
+TYPE_LABELS = {"card": "Cards", "aspect": "Aspects", "rite": "Rites", "pack": "Packs"}
+# Draft packs (game 2026-09-29, 2026-09-29_draft_packs.sql): a pack offered in a
+# draft is a `type` bucket whose `picked` means OPENED, with its kind in the
+# `pack_type` dimension. Labelled by the name printed on the pack.
+PACK_LABELS = {"card": "Atoms", "catalyst": "Catalysts", "aspect": "Aspects", "rite": "Rites"}
 KIND_LABELS = {"upgrade": "Upgraded", "attribute": "Attribute", "enhancement": "Enhanced"}
 
 
@@ -711,7 +715,8 @@ def _valence_name(bucket) -> str:
 
 
 def draft_picks_card(rows: list, population: str = "") -> sc.Card:
-    """Pick rates by type, element, valence and embellishment kind.
+    """Pick rates by type, element, valence and embellishment kind, and, once
+    draft packs have been offered, how often each kind of pack is opened.
 
     No bare-vs-embellished section (Turner's review): embellished cards are
     expected to be picked more. What is worth knowing is WHICH kind lifts a
@@ -740,6 +745,19 @@ def draft_picks_card(rows: list, population: str = "") -> sc.Card:
     order = [t for t in TYPE_LABELS if t in types] + sorted(t for t in types if t not in TYPE_LABELS)
     section("By type", [(TYPE_LABELS.get(t, t), *types[t]) for t in order])
 
+    # Draft packs: how often each kind is opened, against the rest, and how
+    # often an opened pack gave a card (the rest were Skipped). Only once packs
+    # have been offered, so a view from before them shows nothing new.
+    packs = _buckets(rows, "pack_type")
+    if packs:
+        opened = sum(p for p, _ in packs.values())
+        taken = _buckets(rows, "in_pack").get("in_pack", (0, 0))[0]
+        detail = f"{round(100 * opened / sum(o for _, o in packs.values()))}% opened"
+        if opened:
+            detail += f" · {round(100 * taken / opened)}% of opened packs gave a pick"
+        order = [k for k in PACK_LABELS if k in packs] + sorted(k for k in packs if k not in PACK_LABELS)
+        section("Packs", [(PACK_LABELS.get(k, str(k)), *packs[k]) for k in order], detail=detail)
+
     elements = _buckets(rows, "element")
     order = [e for e in ELEMENT_ORDER if e in elements] + sorted(e for e in elements if e not in ELEMENT_ORDER)
     section("By element", [(str(e).capitalize(), *elements[e]) for e in order])
@@ -759,7 +777,10 @@ def draft_picks_card(rows: list, population: str = "") -> sc.Card:
 
 def draft_picks_footer(rows: list) -> str:
     offered = sum(o for _, o in _buckets(rows, "type").values())
-    return f"version >= {CUTOFF_VERSION} · {offered:,} offers · solo · element and valence are cards only"
+    text = f"version >= {CUTOFF_VERSION} · {offered:,} offers · solo · element and valence are cards only"
+    if _buckets(rows, "pack_type"):
+        text += " · a pack is picked when opened; what is offered inside it counts as offered"
+    return text
 
 
 def _item_label(row: dict) -> str:

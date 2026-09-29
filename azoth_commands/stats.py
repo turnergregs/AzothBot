@@ -381,7 +381,7 @@ def add_stats_commands(cls):
     async def stats_draft(self, interaction: Interaction):
         pass
 
-    @stats_draft.subcommand(name="picks", description="Pick rates by type, element, valence and embellishment")
+    @stats_draft.subcommand(name="picks", description="Pick rates by type, pack, element, valence and embellishment")
     @safe_interaction(timeout=20, error_message="❌ Failed to fetch draft picks.")
     async def stats_draft_picks(
         self,

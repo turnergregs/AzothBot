@@ -55,7 +55,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
-| `/stats draft picks` | `draft_offer_view` | Pick rate by type, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
+| `/stats draft picks` | `draft_offer_view` | Pick rate by type (packs included), each kind of draft pack, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
 | `/stats draft items` | `draft_item_offer_view` | The five most and five least picked items, all types together |
 | `/stats draft pool` | `draft_deck_view` | What the draft pool holds (content, not play) |
 
@@ -447,6 +447,17 @@ in the game repo), so they take `players:`; `pool` is content and does not.
   **bare cards**, since one card can carry two kinds. The bare-vs-embellished
   split itself was cut (Turner's review): embellished cards are expected to be
   picked more; which kind lifts a card most is the useful part.
+  **Draft packs** (game 2026-09-29, `2026-09-29_draft_packs.sql`): a pack offered
+  in a draft is a `type` bucket whose `picked` means **opened**, so "By type" gains
+  a Packs row; a **Packs** section under it has an open-rate bar per kind (named
+  as printed on the pack: Atoms, Catalysts, Aspects, Rites, from `pack_type`),
+  flagged against the rest, and its header gives the share of opened packs that
+  gave a pick (`in_pack` picks over opens; the rest were Skipped). What is
+  offered inside an opened pack still counts as offered everywhere else, element
+  and valence included, and the footer says so. A view with no pack offers draws
+  the card exactly as before. `items` is unchanged: its view keeps one row per
+  item and gained `offered_in_pack` / `picked_in_pack`, which it does not read
+  yet.
 - **`items`** (`draft_item_offer_view`): the five most and five least picked
   items. Cards, aspects and rites rank together against one all-items rate,
   since a pick rate is conditional on the offer (the rite injection budget

@@ -432,7 +432,7 @@ what you would want to force. Full policy:
 | `/stats bosses` | — | `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Every boss's win rate by act, drawn as an image |
 | `/stats all` | 🔒 | `player?`* (default: most games), `daily?` (default true). Runs every report above with its defaults, then a preview of yesterday's daily report, then a summary naming every report that replied with text (an error, "not migrated" or "no data") instead of an embed. For checking the reports after a change. The daily preview never touches `daily_update_state.json`, so it cannot claim or skip a scheduled send. `stats.ALL_REPORTS` is the list; `test_command_registration` fails if a new report is missing from it |
 | `/stats scoreboard` | — | — |
-| `/stats draft picks` | — | `players?` (default New playtesters). Pick rates by type, element, valence, and each embellishment kind against bare cards. Image |
+| `/stats draft picks` | — | `players?` (default New playtesters). Pick rates by type (packs included, where picked means opened), each kind of draft pack, element, valence, and each embellishment kind against bare cards. Image |
 | `/stats draft items` | — | `players?`. The five most and five least picked items, cards, aspects and rites ranked together (5+ offers). Image |
 | `/stats draft pool` | — | — (content, no cohort). What the shipped draft decks hold, in the element colours. Image |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |

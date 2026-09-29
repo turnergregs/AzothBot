@@ -614,6 +614,38 @@ def test_the_picks_tiles_total_every_offer_once():
     assert (tiles["Offers"], tiles["Picked"], tiles["Pick rate"]) == ("1,236", "412", "33%")
 
 
+PACK_OFFERS = OFFERS + [
+    _offer("type", "pack", 60, 24),
+    _offer("pack_type", "card", 30, 14), _offer("pack_type", "aspect", 18, 6),
+    _offer("pack_type", "rite", 12, 4),
+    _offer("in_pack", "in_pack", 72, 20), _offer("in_pack", "outer", 1236, 412),
+]
+
+
+def test_packs_are_a_type_and_get_a_section_of_their_own():
+    card = cards.draft_picks_card(PACK_OFFERS)
+    heads = [b.label for b in card.blocks if isinstance(b, sc.SectionHeader)]
+    assert heads == ["By type", "Packs", "By element", "By valence", "By embellishment"]
+    assert _section_rows(card, "By type")[-1].label == "Packs"
+    rows = _section_rows(card, "Packs")
+    assert [r.label for r in rows] == ["Atoms", "Aspects", "Rites"]
+    assert rows[0].count_text == "14/30"
+
+
+def test_the_pack_section_says_how_many_opened_packs_gave_a_card():
+    """24 opened, 20 cards taken from them: the other 4 were Skipped."""
+    detail = next(b.detail for b in cards.draft_picks_card(PACK_OFFERS).blocks
+                  if isinstance(b, sc.SectionHeader) and b.label == "Packs")
+    assert detail == "40% opened · 83% of opened packs gave a pick"
+    assert "picked when opened" in cards.draft_picks_footer(PACK_OFFERS)
+
+
+def test_a_view_from_before_packs_shows_no_pack_section():
+    assert "Packs" not in [b.label for b in cards.draft_picks_card(OFFERS).blocks
+                           if isinstance(b, sc.SectionHeader)]
+    assert "opened" not in cards.draft_picks_footer(OFFERS)
+
+
 def test_cohorts_are_summed_per_bucket():
     rows, _ = cards.select_cohort(OFFERS + [_offer("type", "card", 100, 90, cohort="developer")],
                                   "all", ("dimension", "bucket"), cards.DRAFT_COUNTS)
@@ -677,6 +709,7 @@ def test_the_pool_lists_only_valences_that_exist():
 
 
 @pytest.mark.parametrize("build", [lambda: cards.draft_picks_card(OFFERS),
+                                   lambda: cards.draft_picks_card(PACK_OFFERS),
                                    lambda: cards.draft_items_card(ITEMS),
                                    lambda: cards.draft_pool_card(POOL)])
 def test_every_draft_card_renders(build):
