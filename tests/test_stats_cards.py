@@ -665,13 +665,24 @@ ITEMS = [_item("Circumvent", "card", 18, 14), _item("Veil", "aspect", 14, 9),
          _item("Fluke", "card", 1, 1)]
 
 
-def test_items_rank_cards_aspects_and_rites_together_five_each():
+def test_items_are_ranked_within_their_own_type_five_each():
     card = cards.draft_items_card(ITEMS)
-    most = [r.label for r in _section_rows(card, "Most picked")]
-    least = [r.label for r in _section_rows(card, "Least picked")]
-    assert most == ["Circumvent", "Echo", "Veil", "Bloom", "Pyre"]
-    assert least[0] == "Thorn" and len(least) == 5
-    assert not set(most) & set(least)
+    most = [r.label for r in _section_rows(card, "Most picked cards")]
+    least = [r.label for r in _section_rows(card, "Least picked cards")]
+    assert most == ["Circumvent", "Echo", "Bloom", "Kindle", "Waxix"]
+    assert least == ["Thorn", "Hush"]          # never an item twice
+    assert [r.label for r in _section_rows(card, "Most picked aspects")] == ["Veil", "Ledger"]
+    assert _section_rows(card, "Least picked aspects") == []
+    assert [r.label for r in _section_rows(card, "Most picked rites")] == ["Pyre", "Toll"]
+
+
+def test_each_item_is_read_against_its_own_type():
+    card = cards.draft_items_card(ITEMS)
+    veil = _section_rows(card, "Most picked aspects")[0]
+    echo = _section_rows(card, "Most picked cards")[1]
+    assert veil.reference == pytest.approx(11 / 27)
+    assert echo.reference == pytest.approx(65 / 134)       # Fluke's offer counts in the rate
+    assert veil.tag == "" and echo.tag == ""
 
 
 def test_an_item_offered_too_rarely_is_not_ranked_and_the_footer_says_so():
@@ -681,9 +692,10 @@ def test_an_item_offered_too_rarely_is_not_ranked_and_the_footer_says_so():
     assert "1 offered fewer than 5 times" in cards.draft_items_footer(ITEMS)
 
 
-def test_aspects_and_rites_are_tagged_cards_are_not():
-    rows = {r.label: r for r in _bar_rows(cards.draft_items_card(ITEMS))}
-    assert (rows["Veil"].tag, rows["Pyre"].tag, rows["Echo"].tag) == ("aspect", "rite", "")
+def test_a_type_with_nothing_ranked_is_not_drawn():
+    rows = [r for r in ITEMS if r["item_type"] != "rite"] + [_item("Rare", "rite", 2, 1)]
+    headers = [b.label for b in cards.draft_items_card(rows).blocks if isinstance(b, sc.SectionHeader)]
+    assert not any("rites" in h for h in headers)
 
 
 POOL = {"cards": 136, "aspects": 22, "rite_templates": 18,

@@ -787,42 +787,58 @@ def _item_label(row: dict) -> str:
     return str(row.get("item_name") or "—")
 
 
+ITEM_TYPES = ("card", "aspect", "rite")
+
+
 def draft_items_card(rows: list, population: str = "") -> sc.Card:
-    """The five most and five least picked items, cards, aspects and rites
-    ranked together, each read against the pick rate over ALL offers."""
-    offered = sum(int(r.get("offered") or 0) for r in rows)
-    picked = sum(int(r.get("picked") or 0) for r in rows)
-    average = picked / offered if offered else 0
-    ranked = [r for r in rows if int(r.get("offered") or 0) >= MIN_ITEM_OFFERS]
+    """The five most and five least picked cards, aspects and rites, one group
+    per type, each item read against its OWN type's pick rate and flagged
+    against the rest of its type.
+
+    Split by type 2026-09-29 (Turner): ranked together, one kind can fill both
+    lists, and what a designer tunes is a card against other cards. A type with
+    nothing ranked draws nothing; a type with fewer than ten ranked items
+    draws a shorter Least picked, never an item twice.
+    """
+    parts = [population, f"version ≥ {CUTOFF_VERSION}", f"items offered {MIN_ITEM_OFFERS}+ times"]
+    card = sc.Card("Draft items", " · ".join(p for p in parts if p))
 
     def rate(r):
         return int(r.get("picked") or 0) / int(r.get("offered"))
 
-    most = sorted(ranked, key=lambda r: (-rate(r), -int(r["offered"]), _item_label(r)))[:ITEMS_PER_SECTION]
-    rest = [r for r in ranked if r not in most]
-    least = sorted(rest, key=lambda r: (rate(r), -int(r["offered"]), _item_label(r)))[:ITEMS_PER_SECTION]
+    kinds = [k for k in ITEM_TYPES if any(r.get("item_type") == k for r in rows)]
+    kinds += sorted({str(r.get("item_type")) for r in rows} - set(ITEM_TYPES) - {"None"})
+    drawn = False
+    for kind in kinds:
+        group = [r for r in rows if r.get("item_type") == kind]
+        offered = sum(int(r.get("offered") or 0) for r in group)
+        picked = sum(int(r.get("picked") or 0) for r in group)
+        average = picked / offered if offered else 0
+        ranked = [r for r in group if int(r.get("offered") or 0) >= MIN_ITEM_OFFERS]
+        if not ranked:
+            continue
+        most = sorted(ranked, key=lambda r: (-rate(r), -int(r["offered"]), _item_label(r)))[:ITEMS_PER_SECTION]
+        rest = [r for r in ranked if r not in most]
+        # Least picked leads with the lowest rate; drawn in that order.
+        least = sorted(rest, key=lambda r: (rate(r), -int(r["offered"]), _item_label(r)))[:ITEMS_PER_SECTION]
 
-    parts = [population, f"version ≥ {CUTOFF_VERSION}", f"items offered {MIN_ITEM_OFFERS}+ times"]
-    card = sc.Card("Draft items", " · ".join(p for p in parts if p))
-
-    def section(title, items):
-        if not items:
-            return
-        card.add(sc.SectionHeader(title, f"all items {round(average * 100)}%"))
-        for r in items:
-            p, o = int(r.get("picked") or 0), int(r.get("offered"))
-            flag = rate_flag(p, o, (picked - p) / (offered - o)) if offered - o else None
-            kind = r.get("item_type")
-            card.add(sc.BarRow(_item_label(r), p / o, value_text=f"{round(100 * p / o)}%",
-                               count_text=f"{p}/{o}", delta=sc.signed((p / o - average) * 100),
-                               reference=average, label_w=130,
-                               tag="" if kind == "card" else str(kind or ""),
-                               **_flag_style(flag)))
-        card.add(sc.Spacer(6))
-
-    section("Most picked", most)
-    # Least picked leads with the lowest rate; drawn in that order.
-    section("Least picked", least)
+        if drawn:
+            card.add(sc.Rule(14))
+        drawn = True
+        name = TYPE_LABELS.get(kind, kind.capitalize())
+        detail = f"all {name.lower()} {round(average * 100)}% · {picked}/{offered}"
+        for title, items in ((f"Most picked {name.lower()}", most),
+                             (f"Least picked {name.lower()}", least)):
+            if not items:
+                continue
+            card.add(sc.SectionHeader(title, detail))
+            for r in items:
+                p, o = int(r.get("picked") or 0), int(r.get("offered"))
+                flag = rate_flag(p, o, (picked - p) / (offered - o)) if offered - o else None
+                card.add(sc.BarRow(_item_label(r), p / o, value_text=f"{round(100 * p / o)}%",
+                                   count_text=f"{p}/{o}", delta=sc.signed((p / o - average) * 100),
+                                   reference=average, label_w=130, **_flag_style(flag)))
+            card.add(sc.Spacer(6))
     return card
 
 

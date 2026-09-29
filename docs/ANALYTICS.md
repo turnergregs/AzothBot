@@ -56,7 +56,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
 | `/stats draft picks` | `draft_offer_view` | Pick rate by type (packs included), each kind of draft pack, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
-| `/stats draft items` | `draft_item_offer_view` | The five most and five least picked items, all types together |
+| `/stats draft items` | `draft_item_offer_view` | The five most and five least picked cards, aspects and rites, one group per type, each against its own type |
 | `/stats draft pool` | `draft_deck_view` | What the draft pool holds (content, not play) |
 
 ### Rituals in /stats (2026-09-28)
@@ -459,10 +459,13 @@ in the game repo), so they take `players:`; `pool` is content and does not.
   item and gained `offered_in_pack` / `picked_in_pack`, which it does not read
   yet.
 - **`items`** (`draft_item_offer_view`): the five most and five least picked
-  items. Cards, aspects and rites rank together against one all-items rate,
-  since a pick rate is conditional on the offer (the rite injection budget
-  divides out); aspects and rites carry a small tag. Only items offered 5+ times
-  rank, and the footer counts the rest.
+  cards, then aspects, then rites, one group per type (split 2026-09-29 at
+  Turner's request; they had ranked together against one all-items rate). Each
+  item is read against its OWN type's pick rate and flagged against the rest of
+  its type: ranked together, one kind could fill both lists, and a card is
+  tuned against other cards. Only items offered 5+ times rank, and the footer
+  counts the rest. A type with nothing ranked is not drawn; one with fewer than
+  ten ranked items draws a shorter Least picked, never an item twice.
 - **`pool`** (`draft_deck_view`): cards, aspects, rite templates and the
   estimated rite slots per run as tiles (rites beside the pool, never in it),
   then cards by element in the game's element colours and by valence.
