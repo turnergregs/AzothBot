@@ -2,6 +2,7 @@ import asyncio
 import io
 import os
 import re
+from datetime import timedelta
 import json
 import nextcord
 import aiohttp
@@ -141,17 +142,17 @@ def _resolve_item(value: str):
     return content_index.resolve(name)
 
 
-async def _send_card(interaction, card, filename, *, footer, colour=0x5865F2):
-    """A report drawn as an image, in an embed that carries a text footer.
+async def _send_card(interaction, card, filename, *, colour=0x5865F2):
+    """A report drawn as an image, in an embed with nothing else in it.
 
-    The image states everything the chart needs; the footer repeats what it
-    rests on as text so it can be copied. Drawn off the event loop: PIL blocks
-    for a noticeable moment, which would stall the gateway heartbeat.
+    The image states everything, its population and version cutoff in the
+    header. No text footer (2026-10-02, Turner): it repeated the header and
+    added notes nobody read. Drawn off the event loop: PIL blocks for a
+    noticeable moment, which would stall the gateway heartbeat.
     """
     data = await asyncio.to_thread(card.png)
     embed = nextcord.Embed(colour=colour)
     embed.set_image(url=f"attachment://{filename}")
-    embed.set_footer(text=footer)
     await interaction.followup.send(embed=embed,
                                     file=nextcord.File(io.BytesIO(data), filename=filename))
 
@@ -194,8 +195,7 @@ def add_stats_commands(cls):
 
         await _send_card(interaction,
                          stats_cards.players_card(rows, stats_cards.COHORT_LABELS[players]),
-                         "players.png", footer=stats_cards.players_footer(rows),
-                         colour=0x3498DB)
+                         "players.png", colour=0x3498DB)
 
     # --- Leaderboard ---
     # A ranked table of PLAYERS by their best run, drawn as an image
@@ -231,8 +231,7 @@ def add_stats_commands(cls):
         population = stats_cards.COHORT_LABELS[players]
         await _send_card(interaction,
                          stats_cards.leaderboard_card(rows, population, hero, limit),
-                         "leaderboard.png", footer=stats_cards.leaderboard_footer(rows, hero),
-                         colour=0xF1C40F)
+                         "leaderboard.png", colour=0xF1C40F)
 
     # --- Player ---
     # One player's profile, drawn as an image (2026-09-28): runs, act 3 wins,
@@ -265,7 +264,7 @@ def add_stats_commands(cls):
             return f"❌ No stats found for `{player}`."
 
         await _send_card(interaction, stats_cards.player_card(player, runs, summary, info),
-                         "player.png", footer=stats_cards.player_footer(runs), colour=0x5865F2)
+                         "player.png", colour=0x5865F2)
 
     # --- Breakdown ---
     # Runs grouped by hero, ritual or version, drawn as an image (2026-09-28).
@@ -301,11 +300,8 @@ def add_stats_commands(cls):
             return "❌ No runs recorded for these players yet."
 
         population = stats_cards.COHORT_LABELS[players] if filtered else "Everyone"
-        footer = stats_cards.breakdown_footer(rows, by)
-        if not filtered:
-            footer += " · player filter needs 2026-09-28_player_cohorts.sql"
         await _send_card(interaction, stats_cards.breakdown_card(rows, by, population),
-                         f"breakdown_{by}.png", footer=footer, colour=0xE67E22)
+                         f"breakdown_{by}.png", colour=0xE67E22)
 
     # --- Everything ---
     # For checking the reports after a view or formatting change: every one,
@@ -355,13 +351,13 @@ def add_stats_commands(cls):
         count = len(ALL_REPORTS)
         if daily:
             # Off the event loop: _fetch_daily_stats is a dozen blocking HTTP
-            # calls. Safe here, unlike in the scheduler, because nothing is
-            # claimed -- see the comment above _fetch_daily_stats's call site.
+            # calls. Nothing is claimed, so it never touches the scheduler.
             from azoth_commands import daily_update as du
             preview.followup.label = "daily report"
             try:
+                day = du._today_cst() - timedelta(days=1)
                 messages = await asyncio.to_thread(
-                    lambda: du._build_update_messages(du._fetch_daily_stats()))
+                    lambda: du._build_update_messages(du._fetch_daily_stats(day), day))
                 for message in messages:
                     embed = message["embed"]
                     embed.title = f"{embed.title or 'Daily report'} (preview)"
@@ -404,11 +400,8 @@ def add_stats_commands(cls):
         rows, filtered = stats_cards.select_cohort(rows, players, "boss",
                                                    stats_cards.BOSS_COUNTS)
         population = stats_cards.COHORT_LABELS[players] if filtered else "Everyone"
-        footer = stats_cards.bosses_footer(rows)
-        if not filtered:
-            footer += " · player filter needs 2026-09-28_player_cohorts.sql"
         await _send_card(interaction, stats_cards.bosses_card(rows, population), "bosses.png",
-                         footer=footer, colour=0xC0392B)
+                         colour=0xC0392B)
 
     # --- One item ---
     # 2026-09-29, after Veln: its hp was halved in 0.9.11 and /stats bosses,
@@ -464,8 +457,7 @@ def add_stats_commands(cls):
         thumb = await asyncio.to_thread(stats_thumbs.thumbnail, kind, row, colour)
         card = stats_cards.item_card(name, kind, groups, by, stats_cards.COHORT_LABELS[players],
                                      act=act, colour=colour, thumb=thumb)
-        await _send_card(interaction, card, "item.png",
-                         footer=stats_cards.item_footer(kind, groups, by), colour=int(colour[1:], 16))
+        await _send_card(interaction, card, "item.png", colour=int(colour[1:], 16))
 
     @stats_item.on_autocomplete("item")
     async def autocomplete_stats_item(self, interaction: Interaction, input: str):
@@ -500,16 +492,6 @@ def add_stats_commands(cls):
                         value=sf.scoreboard_counts(records))
         embed.add_field(name="Which axis paid", inline=False,
                         value=sf.scoreboard_paid(records))
-
-        # cutoff=False: this is the one view that does not filter on
-        # analytics_cutoff(). It filters `bonus_key is not null`
-        # instead — the columns date themselves, and bumping the cutoff for an
-        # additive change would have emptied every other /stats reply. Claiming
-        # a cutoff the view is not enforcing is worse than claiming none.
-        turns = sf.scoreboard_sample(records)
-        embed.set_footer(text=sf.footer(
-            records, note=f"{turns} regular turn{'' if turns == 1 else 's'} scored",
-            cutoff=False))
         await interaction.followup.send(embed=embed)
 
     # --- Draft ---------------------------------------------------------
@@ -545,8 +527,7 @@ def add_stats_commands(cls):
             return "❌ No draft offers recorded for these players yet."
         await _send_card(interaction,
                          stats_cards.draft_picks_card(rows, stats_cards.COHORT_LABELS[players]),
-                         "draft_picks.png", footer=stats_cards.draft_picks_footer(rows),
-                         colour=0x1ABC9C)
+                         "draft_picks.png", colour=0x1ABC9C)
 
     @stats_draft.subcommand(name="items", description="The most and least picked items")
     @safe_interaction(timeout=20, error_message="❌ Failed to fetch draft items.")
@@ -572,8 +553,7 @@ def add_stats_commands(cls):
             return "❌ No draft offers recorded for these players yet."
         await _send_card(interaction,
                          stats_cards.draft_items_card(rows, stats_cards.COHORT_LABELS[players]),
-                         "draft_items.png", footer=stats_cards.draft_items_footer(rows),
-                         colour=0x1ABC9C)
+                         "draft_items.png", colour=0x1ABC9C)
 
     @stats_draft.subcommand(name="pool", description="What the draft pool holds")
     @safe_interaction(timeout=20, error_message="❌ Failed to fetch the draft pool.")
@@ -582,7 +562,6 @@ def add_stats_commands(cls):
         if not records:
             return "❌ No draft pool data available."
         await _send_card(interaction, stats_cards.draft_pool_card(records[0]), "draft_pool.png",
-                         footer="base draft decks, not archived · rites are templates injected per run",
                          colour=0x2ECC71)
 
 

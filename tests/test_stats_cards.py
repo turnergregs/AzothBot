@@ -87,10 +87,9 @@ def test_few_fights_are_grey():
     assert not rows["Veln"].faded
 
 
-def test_unfinished_fights_are_left_out_of_the_rate_and_said_so():
+def test_unfinished_fights_are_left_out_of_the_rate():
     card = cards.bosses_card(BOSSES)
     assert next(r for r in _rows_of(card) if r.label == "Veln").count_text == "2/11"
-    assert "1 unfinished not counted" in cards.bosses_footer(BOSSES)
 
 
 def _notes(card):
@@ -462,12 +461,6 @@ def test_a_long_roster_is_capped_and_says_how_many_more():
     assert "+ 3 more players with less time" in [b.text for b in card.blocks if isinstance(b, sc.Note)]
 
 
-def test_the_footer_says_how_many_players_are_on_a_tracked_build():
-    """Ratpunzel has Codex time; Max has run time only, which every build
-    records; Jay B has neither."""
-    assert "(1 of 3 players so far)" in cards.players_footer(PLAYERS)
-
-
 def test_a_single_kind_of_time_needs_no_legend():
     assert not _legends(cards.players_card([_player("Max", 12, run_sec=27700)]))
 
@@ -637,13 +630,11 @@ def test_the_pack_section_says_how_many_opened_packs_gave_a_card():
     detail = next(b.detail for b in cards.draft_picks_card(PACK_OFFERS).blocks
                   if isinstance(b, sc.SectionHeader) and b.label == "Packs")
     assert detail == "40% opened · 83% of opened packs gave a pick"
-    assert "picked when opened" in cards.draft_picks_footer(PACK_OFFERS)
 
 
 def test_a_view_from_before_packs_shows_no_pack_section():
     assert "Packs" not in [b.label for b in cards.draft_picks_card(OFFERS).blocks
                            if isinstance(b, sc.SectionHeader)]
-    assert "opened" not in cards.draft_picks_footer(OFFERS)
 
 
 def test_cohorts_are_summed_per_bucket():
@@ -685,11 +676,10 @@ def test_each_item_is_read_against_its_own_type():
     assert veil.tag == "" and echo.tag == ""
 
 
-def test_an_item_offered_too_rarely_is_not_ranked_and_the_footer_says_so():
+def test_an_item_offered_too_rarely_is_not_ranked():
     """Fluke's one offer and one pick would otherwise top the list at 100%."""
     labels = [r.label for r in _bar_rows(cards.draft_items_card(ITEMS))]
     assert "Fluke" not in labels
-    assert "1 offered fewer than 5 times" in cards.draft_items_footer(ITEMS)
 
 
 def test_a_type_with_nothing_ranked_is_not_drawn():
@@ -795,12 +785,11 @@ def test_a_hero_split_is_rows_and_a_hero_is_not_split_by_hero():
     assert "hero" not in cards.ITEM_AXES["hero"]
 
 
-def test_only_the_latest_versions_are_drawn_and_the_footer_says_so():
+def test_only_the_latest_versions_are_drawn():
     groups = [{"group": f"0.9.{v}", "hits": 1, "n": 5, "rest_hits": 5, "rest_n": 20}
               for v in range(10, 10 + cards.MAX_ITEM_COLUMNS + 2)]
     labels = [c["label"] for c in _columns(cards.item_card("Veln", "boss", groups, act=2))]
     assert len(labels) == cards.MAX_ITEM_COLUMNS and labels[-1] == "0.9.21"
-    assert f"latest {cards.MAX_ITEM_COLUMNS} of" in cards.item_footer("boss", groups)
 
 
 @pytest.mark.parametrize("kind, row, act, expected", [

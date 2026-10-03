@@ -437,6 +437,7 @@ what you would want to force. Full policy:
 | `/stats draft items` | — | `players?`. The five most and five least picked cards, then aspects, then rites, each against its own type (5+ offers). Image |
 | `/stats draft pool` | — | — (content, no cohort). What the shipped draft decks hold, in the element colours. Image |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
+| `/daily_update_repost` | 🔒 | `date` (YYYY-MM-DD, CST, before today). Posts that day's daily report here. Touches no schedule state |
 | `/daily_reports` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 
 All `/stats` subcommands reply with an **embed** — an aligned table for the
@@ -444,19 +445,17 @@ multi-row views, labelled fields for the single-row ones. They are open to anyon
 in the guild. They dumped raw `json.dumps` into a code fence until 2026-08-27,
 which was complete and nearly unreadable.
 
-Three things the formatting fixes rather than decorates:
+What the formatting fixes rather than decorates:
 
 - **`avg_combo_log10` renders as `10^4.8`.** It is an order of magnitude, not an
   average. Printed raw as `4.78` beside `max_combo: 652298` it reads as an
   average combo of about five, which is the exact misreading
   [ANALYTICS.md](ANALYTICS.md) warns about.
-- **Every reply carries a footer** naming the cutoff and how many games are
-  behind the number. `/stats breakdown by:version` respects the cutoff too since
+- **Every image report states its population and version cutoff in its
+  header** and its counts beside its numbers. None carries a text footer since
+  2026-10-02. `/stats breakdown by:version` respects the cutoff too since
   2026-09-28: comparing the releases the current playtesters played (fixes,
   rebalances, a new wave let in) is its job, not comparing with 0.7.0.
-- **Dropped columns are named.** A table too wide for a phone loses columns from
-  the right, and the footer says which — the same rule `/search` follows when it
-  truncates.
 
 Big combos are compacted (`652.3K`, `53.3T`), playtime reads as time (`13m`,
 `2.1h`), and an empty value is `—` rather than `None`.
@@ -468,8 +467,8 @@ actually paid. Only the winner pays, never the sum, so the "which axis paid"
 row sums to 100%: an axis can clear its threshold constantly and still never pay
 because another crowds it out, which is invisible in the hit rates alone.
 
-It reads `turn_scoreboard_view` and is the one command whose footer does not
-claim the cutoff. The view filters
+It reads `turn_scoreboard_view`, the one view that does not apply the cutoff,
+and states no cutoff. The view filters
 `bonus_key is not null` rather than a version — the columns postdate `0.9.1`
 and are NULL on every earlier run, so they date themselves. An unmigrated view
 is named in the reply rather than shown as "no data": "not migrated" and "no
@@ -485,7 +484,7 @@ axis plus a rollup row, so the column totals six times the real count.
 The three draft replies were grouped under **`/stats draft`** on 2026-09-03 —
 `composition`, `rates` and `breakdown`. They are grouped, **not merged**: the
 composition is content with no games behind it and no cutoff, the two rate
-replies are games at `0.9.10`+, and one embed carries one footer. See
+replies are games at `0.9.10`+, and one reply states one population. See
 [ANALYTICS.md](ANALYTICS.md#why-these-are-three-commands-and-not-one).
 
 `/stats draft breakdown` is new: card pick rate by element and by valence, from
@@ -565,8 +564,12 @@ than drawing a partial distribution as a whole one. Full account in
 > deep, so most of these will be thin or empty until there is play at `0.9.10`+.
 
 `/daily_update` posts one image since 2026-09-29 (see ANALYTICS.md § The daily report). It is per-channel: enabling it in a channel registers that channel
-with its own send time, and the report covers the previous day (CST). Disabling
-preserves the dedup date so re-enabling the same day doesn't re-send.
+with its own send time, and the report covers the previous day (CST). Every day
+it missed (bot down, or a report that would not build) is sent late, oldest
+first, up to 7; a report that will not build is said in the channel once.
+Disabling preserves the dedup date so re-enabling the same day doesn't re-send,
+and re-enabling does not backfill the days it was off. `/daily_update_repost`
+posts any one past day by hand.
 
 The report reads the turn-grain tables for links-per-turn, boss outcomes and
 level-up pick rates. Those are **service-role only** — on an anon key those
@@ -601,7 +604,7 @@ nothing.
 of `/stats`.
 
 **Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
-`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`, `/daily_reports`.
+`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`, `/daily_update_repost`, `/daily_reports`.
 
 **Removed 2026-08-26:** all 10 commands for the two retired content types, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).

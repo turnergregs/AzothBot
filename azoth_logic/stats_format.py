@@ -183,22 +183,6 @@ def _scoreboard_acts(by_act: dict) -> list:
     return acts + ([None] if None in by_act else [])
 
 
-def scoreboard_sample(rows: list) -> int:
-    """Turns behind the whole table.
-
-    NOT `sum(turns_sampled)`. Every scored turn produces one row PER AXIS and
-    contributes to the rollup as well, so summing the column counts each turn
-    six times over. The rollup row of any single axis is the honest total --
-    all three carry the same number, because every scored turn scores all three.
-    """
-    rollup = _scoreboard_index(rows).get(None) or {}
-    for key, _ in SCOREBOARD_AXES:
-        row = rollup.get(key)
-        if row and row.get("turns_sampled") is not None:
-            return int(row["turns_sampled"])
-    return 0
-
-
 def _scoreboard_grid(rows: list, cell, tail_head: str = None, tail_cell=None):
     """Acts down the side, bonus axes across the top.
 
@@ -346,36 +330,6 @@ def scoreboard_paid(rows: list) -> str:
     another -- which reads as a healthy axis in the hits table alone.
     """
     return _scoreboard_grid(rows, _rate_cell("won_rate")) or "*no scoreboard data yet*"
-
-
-def footer(rows: list, count_column: str = "game_count", note: str = None,
-           dropped=(), cutoff: bool = True) -> str:
-    """What the numbers rest on.
-
-    Never omitted. The trustworthy dataset is a couple of runs deep, so a mean
-    here is one or two games wearing a decimal point. See docs/ANALYTICS.md.
-
-    `cutoff` is NOT always true: turn_scoreboard_view filters on
-    `bonus_key is not null` rather than `analytics_cutoff()`, and claiming a
-    cutoff a view is not enforcing is worse than claiming none. (The version
-    breakdown used to be the other exception; since 2026-09-28 it lists only
-    versions at the cutoff or above.)
-    """
-    games = 0
-    for row in rows:
-        try:
-            games += int(row.get(count_column) or 0)
-        except (TypeError, ValueError):
-            pass
-
-    parts = [f"version >= {CUTOFF_VERSION}"] if cutoff else ["all versions"]
-    if games:
-        parts.append(f"{games} game{'' if games == 1 else 's'}")
-    if note:
-        parts.append(note)
-    if dropped:
-        parts.append("not shown: " + ", ".join(heading(c).lower() for c in dropped))
-    return " · ".join(parts)
 
 
 def block(text: str) -> str:

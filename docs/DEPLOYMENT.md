@@ -22,12 +22,14 @@ Worth knowing, since the bot being down is a normal state:
 | Capability | Impact |
 |---|---|
 | All slash commands | Unavailable. Discord shows them as failing to respond |
-| `daily_update` reports | Missed. **They catch up on next start** — a startup pass sends any report that was due while the bot was down |
+| `daily_update` reports | Late, not lost. **They catch up on next start** — a startup pass sends every report that was due while the bot was down, oldest first |
 | Bulk ingest | Blocked. Use direct SQL if a content change is urgent |
 | Anything the game does | **Unaffected.** The game talks to Supabase directly and does not go through the bot |
 
-The catch-up pass sends at most one report per channel per day; a multi-day outage
-does not produce a backlog of reports, only the most recent day's.
+Since 2026-10-02 the catch-up sends one report per missed day, up to the last 7
+(`MAX_BACKFILL_DAYS`); an outage longer than that loses the older days, which
+`/daily_update_repost date:` can post by hand. Before, only the most recent
+day's report was ever sent.
 
 ## Running it
 

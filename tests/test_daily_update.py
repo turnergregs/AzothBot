@@ -9,6 +9,8 @@ import asyncio
 import json
 import math
 
+from datetime import date, timedelta
+
 import pytest
 
 import azoth_commands.daily_update as du
@@ -226,6 +228,9 @@ def test_query_failure_is_reported_not_swallowed(monkeypatch):
 # _claim_and_send  --  the June 19 flood
 # ---------------------------------------------------------------------------
 
+DAY = date(2026, 6, 18)          # the report date; it is sent on the 19th
+
+
 class _FlakyChannel:
     """Emits the first embed, then fails -- the June 19 failure mode."""
     def __init__(self):
@@ -234,6 +239,15 @@ class _FlakyChannel:
     async def send(self, embed=None, file=None):
         self.sent.append(embed)
         raise RuntimeError("Discord 500 mid-send")
+
+
+class _Channel:
+    """Records every message it is sent."""
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, embed=None, file=None):
+        self.sent.append(embed)
 
 
 class _Bot:
@@ -245,9 +259,10 @@ class _Bot:
 
 
 def _stub_report(monkeypatch):
-    monkeypatch.setattr(du, "_fetch_daily_stats", lambda: {"total_games": 0})
+    monkeypatch.setattr(du, "_fetch_daily_stats", lambda day: {"total_games": 0})
     monkeypatch.setattr(du, "_build_update_messages",
-                        lambda s: [{"embed": "e1"}, {"embed": "e2"}, {"embed": "e3"}])
+                        lambda s, day: [{"embed": f"{day}:1"}, {"embed": f"{day}:2"},
+                                        {"embed": f"{day}:3"}])
 
 
 def test_failed_send_does_not_re_fire(monkeypatch, tmp_path):
@@ -258,17 +273,13 @@ def test_failed_send_does_not_re_fire(monkeypatch, tmp_path):
     stayed out, nothing was claimed, and the 10-minute loop retried forever.
     """
     monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(du, "_today_cst", lambda: DAY + timedelta(days=1))
     _stub_report(monkeypatch)
     channel = _FlakyChannel()
-    bot = _Bot(channel)
-    du._save_state({"channels": {"123": {"send_hour_utc": 0, "send_minute_utc": 0}}})
+    du._save_state({"channels": {"123": _due()}})
 
     for _ in range(6):                                   # six 10-minute cycles
-        state = du._load_state()
-        cfg = state["channels"]["123"]
-        if cfg.get("last_sent_date") == "2026-06-19":
-            continue
-        asyncio.run(du._claim_and_send(bot, state, "123", cfg, "2026-06-19"))
+        asyncio.run(du._send_due_channels(_Bot(channel), "loop"))
 
     assert len(channel.sent) == 1, "one attempt, then the day is claimed"
     assert du._load_state()["channels"]["123"]["last_sent_date"] == "2026-06-19"
@@ -283,11 +294,11 @@ def test_claim_is_persisted_before_the_first_send(monkeypatch, tmp_path):
 
     class Channel:
         async def send(self, embed=None):
-            observed["on_disk"] = json.loads(state_file.read_text())
+            observed.setdefault("on_disk", json.loads(state_file.read_text()))
 
     du._save_state({"channels": {"1": {"send_hour_utc": 0, "send_minute_utc": 0}}})
     state = du._load_state()
-    asyncio.run(du._claim_and_send(_Bot(Channel()), state, "1", state["channels"]["1"], "2026-06-19"))
+    asyncio.run(du._claim_and_send(Channel(), state, "1", state["channels"]["1"], DAY))
     assert observed["on_disk"]["channels"]["1"]["last_sent_date"] == "2026-06-19"
 
 
@@ -298,27 +309,23 @@ def test_unresolvable_channel_makes_no_claim(monkeypatch, tmp_path):
     _stub_report(monkeypatch)
     du._save_state({"channels": {"1": {}}})
     state = du._load_state()
-    attempted = asyncio.run(
-        du._claim_and_send(_Bot(None), state, "1", state["channels"]["1"], "2026-06-19"))
-    assert attempted is False
+    sent = asyncio.run(du._send_backlog(_Bot(None), state, "1", state["channels"]["1"],
+                                        DAY + timedelta(days=1), True))
+    assert sent is None
     assert "last_sent_date" not in du._load_state()["channels"]["1"]
 
 
 def test_report_error_does_not_consume_the_day(monkeypatch, tmp_path):
     """Stats are built BEFORE the claim, so a data error stays retryable."""
     monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
-    def boom():
+    def boom(day):
         raise RuntimeError("bad data")
     monkeypatch.setattr(du, "_fetch_daily_stats", boom)
     du._save_state({"channels": {"1": {}}})
     state = du._load_state()
 
-    class Channel:
-        async def send(self, embed=None):
-            pass
-
     with pytest.raises(RuntimeError):
-        asyncio.run(du._claim_and_send(_Bot(Channel()), state, "1", state["channels"]["1"], "2026-06-19"))
+        asyncio.run(du._claim_and_send(_Channel(), state, "1", state["channels"]["1"], DAY))
     assert "last_sent_date" not in du._load_state()["channels"]["1"]
 
 
@@ -384,7 +391,7 @@ def test_a_day_with_runs_is_one_image_message():
     messages = du._build_update_messages({
         "total_games": 1, "unique_players": 1, "new_players": 0, "total_playtime_sec": 60,
         "act_distribution": {1: 1}, "turn_grain": {}, "draft": {},
-    })
+    }, DAY)
     assert len(messages) == 1
     assert messages[0]["file"].filename == "daily.png"
     assert messages[0]["embed"].image.url == "attachment://daily.png"
@@ -393,7 +400,7 @@ def test_a_day_with_runs_is_one_image_message():
 def test_quiet_day_produces_one_embed():
     # "games" -> "runs" (2026-09-08): tutorial rows are no longer counted as
     # runs, so the report says which population it means everywhere.
-    messages = du._build_update_messages({"total_games": 0})
+    messages = du._build_update_messages({"total_games": 0}, DAY)
     assert len(messages) == 1 and "No runs were played" in messages[0]["embed"].description
     assert "file" not in messages[0]
 
@@ -409,38 +416,41 @@ def _due(**overrides):
     return cfg
 
 
+TODAY = date(2026, 9, 1)
+
+
+def _sweep_day(monkeypatch, tmp_path, today=TODAY):
+    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(du, "_today_cst", lambda: today)
+
+
 def test_a_failing_channel_does_not_kill_the_sweep(monkeypatch, tmp_path):
     """REGRESSION (2026-09-01): the daily report stopped without a word.
 
-    `_claim_and_send` raises on a build error deliberately, so the day stays
-    unclaimed and retryable -- see test_report_error_does_not_consume_the_day.
-    But the raise reached nextcord's tasks.Loop, whose `_valid_exception` tuple
-    covers only OSError/GatewayNotFound/ConnectionClosed/ClientError/TimeoutError.
-    A RuntimeError was printed to stderr and RE-RAISED, ending the loop for the
-    life of the process: the retry the unclaimed day was waiting for no longer
-    existed, so every later report was lost too.
+    An error from one channel reached nextcord's tasks.Loop, whose
+    `_valid_exception` tuple covers only OSError/GatewayNotFound/
+    ConnectionClosed/ClientError/TimeoutError. A RuntimeError was printed to
+    stderr and RE-RAISED, ending the loop for the life of the process: the retry
+    the unclaimed day was waiting for no longer existed, so every later report
+    was lost too.
 
     The sweep must absorb it and keep going.
     """
-    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
-    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
-
+    _sweep_day(monkeypatch, tmp_path)
     calls = []
 
-    async def claim(bot, state, channel_id, config, today):
+    async def backlog(bot, state, channel_id, config, today, past):
         calls.append(channel_id)
         if channel_id == "bad":
             raise RuntimeError("PostgREST 500")
-        return True
+        return 1
 
-    monkeypatch.setattr(du, "_claim_and_send", claim)
+    monkeypatch.setattr(du, "_send_backlog", backlog)
     du._save_state({"channels": {"bad": _due(), "good": _due()}})
 
     asyncio.run(du._send_due_channels(_Bot(object()), "loop"))   # must not raise
 
     assert calls == ["bad", "good"], "the failing channel must not skip the next one"
-    assert "last_sent_date" not in du._load_state()["channels"]["bad"], \
-        "a raised error still leaves the day unclaimed and retryable"
 
 
 def test_the_sweep_retries_on_the_next_cycle_after_a_failure(monkeypatch, tmp_path):
@@ -449,25 +459,21 @@ def test_the_sweep_retries_on_the_next_cycle_after_a_failure(monkeypatch, tmp_pa
     Under the old code cycle 2 never ran at all, because cycle 1 took the loop
     down with it.
     """
-    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
-    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
-
+    _sweep_day(monkeypatch, tmp_path)
+    _stub_report(monkeypatch)
     attempts = []
 
-    async def claim(bot, state, channel_id, config, today):
-        attempts.append(today)
+    def stats(day):
+        attempts.append(day)
         if len(attempts) == 1:
             raise RuntimeError("transient")
-        config["last_sent_date"] = today
-        state["channels"][channel_id] = config
-        du._save_state(state)
-        return True
+        return {"total_games": 0}
 
-    monkeypatch.setattr(du, "_claim_and_send", claim)
+    monkeypatch.setattr(du, "_fetch_daily_stats", stats)
     du._save_state({"channels": {"1": _due()}})
 
     for _ in range(3):
-        asyncio.run(du._send_due_channels(_Bot(object()), "loop"))
+        asyncio.run(du._send_due_channels(_Bot(_Channel()), "loop"))
 
     assert len(attempts) == 2, "failed, retried, then stopped once the day was claimed"
     assert du._load_state()["channels"]["1"]["last_sent_date"] == "2026-09-01"
@@ -480,16 +486,14 @@ def test_a_malformed_state_entry_reads_as_config_not_as_a_crash(monkeypatch, tmp
     other half: it must be reported as the bad *config* it is, not as a stack
     trace, or whoever reads that console goes looking for a bug in the bot.
     """
-    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
-    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
-
+    _sweep_day(monkeypatch, tmp_path)
     sent = []
 
-    async def claim(bot, state, channel_id, config, today):
+    async def backlog(bot, state, channel_id, config, today, past):
         sent.append(channel_id)
-        return True
+        return 1
 
-    monkeypatch.setattr(du, "_claim_and_send", claim)
+    monkeypatch.setattr(du, "_send_backlog", backlog)
     du._save_state({"channels": {"junk": "not a dict", "ok": _due()}})
 
     asyncio.run(du._send_due_channels(_Bot(object()), "loop"))
@@ -513,26 +517,161 @@ def test_an_unreadable_state_file_does_not_kill_the_sweep(monkeypatch, tmp_path)
 def test_the_sweep_still_honours_every_skip_rule(monkeypatch, tmp_path):
     """Disabled, already-sent and not-yet-due channels stay skipped -- the
     dedup rules survived being moved into the shared sweep."""
-    monkeypatch.setattr(du, "STATE_FILE", str(tmp_path / "state.json"))
-    monkeypatch.setattr(du, "_today_cst_str", lambda: "2026-09-01")
-
+    _sweep_day(monkeypatch, tmp_path)
+    _stub_report(monkeypatch)
+    du._save_state({"channels": {
+        "1": _due(disabled=True),                                   # off
+        "2": _due(last_sent_date="2026-09-01"),                     # already sent
+        "3": {"send_hour_utc": 23, "send_minute_utc": 59,
+              "last_sent_date": "2026-08-31"},                      # not yet due
+        "4": _due(),                                                # due
+    }})
     sent = []
 
-    async def claim(bot, state, channel_id, config, today):
+    async def claim(channel, state, channel_id, config, day):
         sent.append(channel_id)
-        return True
 
     monkeypatch.setattr(du, "_claim_and_send", claim)
-    du._save_state({"channels": {
-        "off":       _due(disabled=True),
-        "sent":      _due(last_sent_date="2026-09-01"),
-        "not_yet":   {"send_hour_utc": 23, "send_minute_utc": 59},
-        "due":       _due(),
-    }})
+    asyncio.run(du._send_due_channels(_Bot(_Channel()), "loop"))
 
-    asyncio.run(du._send_due_channels(_Bot(object()), "loop"))
+    assert sent == ["4"]
 
-    assert sent == ["due"]
+
+# ---------------------------------------------------------------------------
+# The backlog  --  2026-09-29 and -30 never arrived
+# ---------------------------------------------------------------------------
+#
+# A pack offer made the report raise on 2026-09-29 and -30. The schedule did
+# its job and retried every 10 minutes, but the day it was retrying moved on
+# at midnight and nothing ever went back: only the most recent day was ever
+# sent, and the failure was a console line nobody saw.
+
+def test_only_the_newest_report_is_due_on_an_ordinary_day():
+    cfg = {"last_sent_date": "2026-09-30"}
+    assert du._reports_due(cfg, date(2026, 10, 1), True) == [date(2026, 9, 30)]
+    assert du._reports_due(cfg, date(2026, 10, 1), False) == []
+
+
+def test_every_missed_day_is_owed_oldest_first():
+    """Last sent on the 29th (covering the 28th); today is 10-02, past send time."""
+    cfg = {"last_sent_date": "2026-09-29"}
+    assert du._reports_due(cfg, date(2026, 10, 2), True) == [
+        date(2026, 9, 29), date(2026, 9, 30), date(2026, 10, 1)]
+
+
+def test_a_missed_day_is_owed_before_todays_send_time():
+    """Down all of yesterday: yesterday's report goes out as soon as the bot is
+    back, not at today's send time."""
+    cfg = {"last_sent_date": "2026-09-30"}
+    assert du._reports_due(cfg, date(2026, 10, 2), False) == [date(2026, 9, 30)]
+
+
+def test_the_backlog_is_capped():
+    cfg = {"last_sent_date": "2026-08-01"}
+    due = du._reports_due(cfg, date(2026, 10, 2), True)
+    assert len(due) == du.MAX_BACKFILL_DAYS
+    assert due[-1] == date(2026, 10, 1)
+
+
+def test_a_new_channel_is_not_owed_history():
+    assert du._reports_due({}, date(2026, 10, 2), True) == [date(2026, 10, 1)]
+    assert du._reports_due({}, date(2026, 10, 2), False) == []
+
+
+def test_the_backlog_sends_each_day_in_order_and_claims_each(monkeypatch, tmp_path):
+    _sweep_day(monkeypatch, tmp_path, today=date(2026, 10, 2))
+    _stub_report(monkeypatch)
+    channel = _Channel()
+    du._save_state({"channels": {"1": _due(last_sent_date="2026-09-29")}})
+
+    asyncio.run(du._send_due_channels(_Bot(channel), "startup"))
+    asyncio.run(du._send_due_channels(_Bot(channel), "loop"))   # nothing left
+
+    assert [e.split(":")[0] for e in channel.sent[::3]] == ["2026-09-29", "2026-09-30", "2026-10-01"]
+    assert len(channel.sent) == 9
+    assert du._load_state()["channels"]["1"]["last_sent_date"] == "2026-10-02"
+
+
+def test_a_report_that_will_not_build_holds_the_later_days_and_says_so(monkeypatch, tmp_path):
+    """The failure is posted ONCE, the day stays owed, and the days after it
+    wait rather than jumping the watermark past it."""
+    _sweep_day(monkeypatch, tmp_path, today=date(2026, 10, 1))
+    _stub_report(monkeypatch)
+    broken = {date(2026, 9, 29)}
+
+    def stats(day):
+        if day in broken:
+            raise RuntimeError("Could not find the table 'public.packs'")
+        return {"total_games": 0}
+
+    monkeypatch.setattr(du, "_fetch_daily_stats", stats)
+    channel = _Channel()
+    du._save_state({"channels": {"1": _due(last_sent_date="2026-09-29")}})
+
+    for _ in range(3):
+        asyncio.run(du._send_due_channels(_Bot(channel), "loop"))
+
+    assert len(channel.sent) == 1, "one failure notice, nothing else, across three cycles"
+    assert "2026-09-29 failed" in channel.sent[0].title
+    assert "public.packs" in channel.sent[0].description
+    assert du._load_state()["channels"]["1"]["last_sent_date"] == "2026-09-29"
+
+    broken.clear()                                          # the fix ships
+    asyncio.run(du._send_due_channels(_Bot(channel), "loop"))
+    assert [e.split(":")[0] for e in channel.sent[1::3]] == ["2026-09-29", "2026-09-30"]
+
+
+def test_two_passes_at_once_do_not_send_a_day_twice(monkeypatch, tmp_path):
+    """The loop and the startup pass both run at ready. A backlog awaits between
+    reports, so without the lock the second pass reads the state mid-backlog."""
+    _sweep_day(monkeypatch, tmp_path, today=date(2026, 10, 2))
+    _stub_report(monkeypatch)
+
+    class SlowChannel(_Channel):
+        async def send(self, embed=None, file=None):
+            await asyncio.sleep(0)
+            self.sent.append(embed)
+
+    channel = SlowChannel()
+    du._save_state({"channels": {"1": _due(last_sent_date="2026-09-29")}})
+
+    async def both():
+        await asyncio.gather(du._send_due_channels(_Bot(channel), "loop"),
+                             du._send_due_channels(_Bot(channel), "startup"))
+    asyncio.run(both())
+
+    assert len(channel.sent) == 9, "three days, three messages each, once"
+
+
+def test_re_enabling_does_not_hand_over_the_days_it_was_off():
+    state = {"channels": {"1": {"disabled": True, "last_sent_date": "2026-09-01"}}}
+    cfg = du._enable_channel(state, "1", 18, 0, date(2026, 10, 2))
+    assert "disabled" not in cfg
+    assert du._reports_due(cfg, date(2026, 10, 2), True) == [date(2026, 10, 1)]
+
+
+def test_re_enabling_the_same_day_does_not_re_send():
+    state = {"channels": {"1": {"disabled": True, "last_sent_date": "2026-10-02"}}}
+    cfg = du._enable_channel(state, "1", 18, 0, date(2026, 10, 2))
+    assert du._reports_due(cfg, date(2026, 10, 2), True) == []
+
+
+def test_changing_the_send_time_keeps_a_live_backlog():
+    """Only a DISABLED channel's watermark moves; re-running the command on a
+    live channel must not throw away days it genuinely missed."""
+    state = {"channels": {"1": {"last_sent_date": "2026-09-29"}}}
+    cfg = du._enable_channel(state, "1", 18, 0, date(2026, 10, 2))
+    assert len(du._reports_due(cfg, date(2026, 10, 2), True)) == 3
+
+
+@pytest.mark.parametrize("text", ["2026-10-02", "2026-10-03", "yesterday", "10/01/2026"])
+def test_a_repost_needs_a_finished_past_day(text):
+    with pytest.raises(ValueError):
+        du._parse_report_date(text, date(2026, 10, 2))
+
+
+def test_a_repost_takes_an_iso_day():
+    assert du._parse_report_date(" 2026-09-29 ", date(2026, 10, 2)) == date(2026, 9, 29)
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +803,7 @@ def test_a_tutorial_only_day_is_not_reported_as_a_quiet_day():
         "unique_players": 3, "new_players": 1, "total_playtime_sec": 0,
         "turn_grain": {}, "draft": {},
     }
-    messages = du._build_update_messages(stats)
+    messages = du._build_update_messages(stats, DAY)
     assert "file" in messages[0], "a tutorial-only day is drawn, not reported as quiet"
     tiles = dict(t for b in stats_cards.daily_card(stats, "2026-09-28").blocks
                  if isinstance(b, sc.StatTiles) for t in b.tiles)
@@ -716,7 +855,7 @@ def test_daily_stats_derives_every_number_from_the_regular_population(monkeypatc
     monkeypatch.setattr(du, "_fetch_draft_stats",
                         lambda uuids, by: seen.setdefault("draft", list(uuids)) and {} or {})
 
-    stats = du._fetch_daily_stats()
+    stats = du._fetch_daily_stats(DAY)
 
     assert stats["total_games"] == 1              # the tutorial rows are not runs
     assert stats["tutorial_games"] == 1           # 'tut' -- 'bail' was dropped first
@@ -767,7 +906,7 @@ def test_the_day_is_bucketed_on_started_at_not_finished_at(monkeypatch):
             return type("R", (), {"data": []})()
 
     monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
-    du._fetch_daily_stats()
+    du._fetch_daily_stats(DAY)
 
     assert filtered_on == ["started_at", "started_at"]
     assert "finished_at" not in filtered_on
@@ -839,6 +978,51 @@ def test_a_name_shared_by_a_card_and_a_rite_is_not_pooled(monkeypatch):
     assert dict(stats["most_picked_cards"])["Echo"]["picked"] == 2
     assert dict(stats["most_picked_rites"])["Echo"]["picked"] == 0
 
+
+
+def test_a_pack_is_named_by_its_kind_and_never_looked_up(monkeypatch):
+    """REGRESSION (2026-09-29/30): two daily reports never arrived.
+
+    A booster pack is a draft item with `item_type 'pack'` and `item_id` NULL.
+    The name lookup built a table from the type and asked PostgREST for
+    `public.packs`, which raised on every cycle of every day a pack was offered.
+    The fake raises on any table it does not hold, as PostgREST does.
+    """
+    data = {"drafts": [{"uuid": "d1", "game_uuid": "g1"}],
+            "draft_items": [
+                {"id": 1, "draft_uuid": "d1", "item_type": "pack", "item_id": None,
+                 "pack_type": "card", "picked": True},
+                {"id": 2, "draft_uuid": "d1", "item_type": "pack", "item_id": None,
+                 "pack_type": "card", "picked": False},
+                {"id": 3, "draft_uuid": "d1", "item_type": "shopreward", "item_id": None,
+                 "pack_type": None, "picked": True},
+                {"id": 4, "draft_uuid": "d1", "item_type": "shopreward", "item_id": None,
+                 "pack_type": None, "picked": True},
+                {"id": 5, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": True},
+                {"id": 6, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": False}],
+            "cards": [{"id": 10, "name": "Salvage"}]}
+
+    class Q:
+        def __init__(self, t):
+            if t not in data:
+                raise RuntimeError(f"Could not find the table 'public.{t}'")
+            self.rows = data[t]
+        def select(self, *a, **k):
+            return self
+        def in_(self, col, vals):
+            self.rows = [r for r in self.rows if r[col] in vals]
+            return self
+        def execute(self):
+            return type("R", (), {"data": self.rows})()
+
+    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+
+    stats = du._fetch_draft_stats(["g1"], {"g1": {"uuid": "g1", "highest_combo": "1"}})
+
+    rates = {(i["item_type"], i["item_name"]): (i["picked"], i["offered"])
+             for i in stats["item_rates"]}
+    assert rates == {("pack", "Atoms"): (1, 2), ("card", "Salvage"): (1, 2)}, \
+        "packs ranked by their printed name; a shop level-up is a reward, not a pick"
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import math
@@ -5,7 +6,7 @@ import os
 import tempfile
 import traceback
 import nextcord
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from nextcord import Interaction, SlashOption
 from nextcord.ext import tasks
 from azoth_commands.helpers import safe_interaction, AUTHORIZED_USER_IDS
@@ -20,7 +21,9 @@ from supabase_client import supabase, SUPABASE_ROLE
 #     "<channel_id>": {
 #       "send_hour_utc": 18,
 #       "send_minute_utc": 0,
-#       "last_sent_date": "2026-03-19"
+#       "last_sent_date": "2026-03-19",       # CST day the last report was SENT;
+#                                             # it covered the day before
+#       "failure_notice_for": "2026-03-17"    # report date whose failure was posted
 #     }
 #   }
 # }
@@ -65,25 +68,60 @@ def _atomic_write_json(path: str, data: dict):
         raise
 
 
-def _yesterday_range_utc():
-    """Return (start, end) ISO strings for yesterday in CST, converted to UTC."""
-    now_utc = datetime.now(timezone.utc)
-    cst = timezone(timedelta(hours=-6))
-    now_cst = now_utc.astimezone(cst)
-    yesterday_cst = now_cst.date() - timedelta(days=1)
-    start = datetime(yesterday_cst.year, yesterday_cst.month, yesterday_cst.day, tzinfo=cst)
+CST = timezone(timedelta(hours=-6))
+
+# How far back a missed report is still sent. A report covers one CST day, and
+# every day the bot missed is sent on recovery, oldest first -- but not without
+# limit: a channel disabled for a month, or a bot down for one, would otherwise
+# post a month of reports in a row. Older days are dropped with a console line.
+MAX_BACKFILL_DAYS = 7
+
+
+def _day_range_utc(day: date):
+    """Return (start, end) ISO strings for one CST day."""
+    start = datetime(day.year, day.month, day.day, tzinfo=CST)
     end = start + timedelta(days=1)
     return start.isoformat(), end.isoformat()
 
 
+def _today_cst() -> date:
+    return datetime.now(timezone.utc).astimezone(CST).date()
+
+
 def _today_cst_str():
-    cst = timezone(timedelta(hours=-6))
-    return datetime.now(timezone.utc).astimezone(cst).strftime("%Y-%m-%d")
+    return _today_cst().isoformat()
 
 
-def _yesterday_cst_str():
-    cst = timezone(timedelta(hours=-6))
-    return (datetime.now(timezone.utc).astimezone(cst) - timedelta(days=1)).strftime("%Y-%m-%d")
+def _reports_due(config: dict, today: date, past_send_time: bool) -> list[date]:
+    """The report dates this channel is owed, oldest first.
+
+    `last_sent_date` is the CST day a report was SENT, covering the day before
+    it, so the last report date covered is `last_sent_date - 1`. Today's report
+    (covering yesterday) is due once the send time has passed; before that the
+    newest one due is yesterday's.
+
+    Every date between the last one covered and the newest due is owed, so a
+    bot that was down, or a report that would not build, catches up on ALL the
+    days it missed rather than only the most recent. Capped at
+    MAX_BACKFILL_DAYS.
+
+    A channel with no `last_sent_date` (just registered) is owed only today's
+    report, and only once the send time has passed: registering is not a
+    request for history.
+    """
+    newest = today - timedelta(days=1 if past_send_time else 2)
+    try:
+        last_covered = date.fromisoformat(config["last_sent_date"]) - timedelta(days=1)
+    except (KeyError, TypeError, ValueError):
+        return [newest] if past_send_time else []
+
+    first = last_covered + timedelta(days=1)
+    oldest_kept = newest - timedelta(days=MAX_BACKFILL_DAYS - 1)
+    if first < oldest_kept:
+        print(f"Daily update: {(oldest_kept - first).days} report(s) from {first} on are "
+              f"older than {MAX_BACKFILL_DAYS} days and will not be sent")
+        first = oldest_kept
+    return [first + timedelta(days=i) for i in range((newest - first).days + 1)]
 
 
 def _is_past_send_time_utc(hour_utc: int, minute_utc: int) -> bool:
@@ -138,11 +176,43 @@ def _to_number(value, default=0):
             return default
 
 
+def _content_item_types() -> set[str]:
+    """The `draft_items.item_type` values that name a row in a `<type>s` table.
+
+    Not every draft item is content. A booster pack (2026-09-29) is
+    `item_type 'pack'` with `item_id` NULL, and a shop level-up (2026-09-30) is
+    `'shopreward'`, also with no id. Building a table name from those asked
+    PostgREST for `public.packs`, which raised on every cycle: the report was
+    lost on every day anyone was offered a pack (2026-09-29 and -30).
+    """
+    return {"card", "aspect", "ritual"} | set(rite_schema.CONTENT_TYPES)
+
+
+def _item_name(item: dict, name_map: dict) -> str | None:
+    """A draft item's display name, or None for a kind the report does not rank.
+
+    A pack is named by its kind, as printed on it (the type tag says it is a
+    pack). A shop level-up is a reward, not a draft pick, and is left out.
+    """
+    kind = item["item_type"]
+    if kind == "pack":
+        return stats_cards.PACK_LABELS.get(item.get("pack_type"), item.get("pack_type") or "Unknown")
+    if kind not in _content_item_types() or item.get("item_id") is None:
+        return None
+    return name_map.get((kind, item["item_id"]), f"{kind}#{item['item_id']}")
+
+
 def _resolve_item_names(items: list[dict]) -> dict[tuple[str, int], str]:
-    """Given draft_items rows, resolve (item_type, item_id) -> display name."""
+    """Given draft_items rows, resolve (item_type, item_id) -> display name.
+
+    Content types only (see _content_item_types); anything else is never looked
+    up, so a new kind of draft item cannot take the report down again.
+    """
+    content = _content_item_types()
     grouped = {}
     for item in items:
-        grouped.setdefault(item["item_type"], set()).add(item["item_id"])
+        if item["item_type"] in content and item.get("item_id") is not None:
+            grouped.setdefault(item["item_type"], set()).add(item["item_id"])
 
     name_map = {}
     for item_type, ids in grouped.items():
@@ -215,7 +285,7 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
         chunk = draft_uuids[i:i + 50]
         rows = (
             supabase.table("draft_items")
-            .select("id, draft_uuid, item_type, item_id, picked")
+            .select("id, draft_uuid, item_type, item_id, picked, pack_type")
             .in_("draft_uuid", chunk)
             .execute()
         ).data or []
@@ -235,7 +305,9 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     offer_count = {}   # (item_type, name) -> times offered
     pick_count = {}    # (item_type, name) -> times picked
     for item in all_items:
-        name = name_map.get((item["item_type"], item["item_id"]), f"{item['item_type']}#{item['item_id']}")
+        name = _item_name(item, name_map)
+        if name is None:
+            continue
         key = (item["item_type"], name)
         offer_count[key] = offer_count.get(key, 0) + 1
         if item.get("picked"):
@@ -288,7 +360,7 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     for item in all_items:
         if not item.get("picked"):
             continue
-        name = name_map.get((item["item_type"], item["item_id"]))
+        name = name_map.get((item["item_type"], item.get("item_id")))
         if not name:
             continue
         game_uuid = draft_to_game.get(item["draft_uuid"])
@@ -537,15 +609,15 @@ def _count_runs(games: list[dict]) -> tuple[int, int, int]:
     return solo, coop, legacy
 
 
-def _fetch_daily_stats():
-    """Query supabase for yesterday's game activity stats.
+def _fetch_daily_stats(day: date):
+    """Query supabase for one CST day's game activity stats.
 
     Bucketed on `games.started_at` -- runs STARTED in the CST day. See the
     comment on the query itself for why not `finished_at`.
     """
-    start, end = _yesterday_range_utc()
+    start, end = _day_range_utc(day)
 
-    # Runs STARTED yesterday, bucketed on `started_at`.
+    # Runs STARTED that day, bucketed on `started_at`.
     #
     # This used to filter on `finished_at`, which was never a finish time. The
     # game wrote nothing to that column until 2026-09-08 and it carries
@@ -723,16 +795,16 @@ def _format_duration(seconds):
     return f"{hours}h {mins}m"
 
 
-def _build_update_messages(stats: dict) -> list[dict]:
+def _build_update_messages(stats: dict, day: date) -> list[dict]:
     """The daily report as `channel.send(**message)` keyword sets.
 
-    One image since 2026-09-29 (stats_cards.daily_card), in an embed whose
-    footer repeats what it rests on as text. A quiet day stays one line of
+    One image since 2026-09-29 (stats_cards.daily_card), with no text under
+    it: who it counts is in the image's header. A quiet day stays one line of
     text: there is nothing to draw, and an empty card would be the empty
     legend again. Built -- image rendered included -- BEFORE the day is
     claimed, so a drawing failure never uses up the day's send.
     """
-    yesterday = _yesterday_cst_str()
+    yesterday = day.isoformat()     # the day reported on; "yesterday" when on schedule
     color = 0x7B2D8E
 
     # "Nothing happened" has to consider the split-out populations too. A day of
@@ -740,7 +812,7 @@ def _build_update_messages(stats: dict) -> list[dict]:
     # total_games == 0 and is NOT a quiet day -- reporting one would hide the
     # very rows this split exists to make visible.
     if stats["total_games"] == 0 and not stats.get("tutorial_games"):
-        lines = ["No runs were played yesterday."]
+        lines = ["No runs were played that day."]
         if stats.get("dropped_opening_turn"):
             lines.append(
                 f"({stats['dropped_opening_turn']} restart"
@@ -753,63 +825,118 @@ def _build_update_messages(stats: dict) -> list[dict]:
     data = stats_cards.daily_card(stats, yesterday).png()
     embed = nextcord.Embed(color=color)
     embed.set_image(url="attachment://daily.png")
-    footer = "everyone, developers included · act and boss sections are solo runs"
-    if stats.get("dropped_opening_turn"):
-        footer += f" · {stats['dropped_opening_turn']} opening-turn restarts excluded"
-    embed.set_footer(text=footer)
     return [{"embed": embed, "file": nextcord.File(io.BytesIO(data), filename="daily.png")}]
 
 
 # ---------------------------------------------------------------------------
-# Sending helper
+# Sending
 # ---------------------------------------------------------------------------
 
-async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today: str) -> bool:
-    """Send the daily report to a channel, claiming the day BEFORE sending.
+# The loop and the startup catch-up both run as soon as the bot is ready, each
+# loading its own copy of the state, and a backlog sends several reports with an
+# await between each. Without this, the second pass can load the state while the
+# first is mid-backlog and send the same day again. Held across load -> claim ->
+# send -> save for the whole sweep. (Until the backlog, the claim relied on
+# _fetch_daily_stats being synchronous; that was enough for one report and is
+# not for several.) Same lock, same reason, as daily_reports._SEND_LOCK.
+_SEND_LOCK = asyncio.Lock()
 
-    The dedup field (last_sent_date) is persisted *before* the first channel.send,
-    so a partial or failed send can never cause the next loop/startup pass to
-    re-send the report (the cause of the duplicate-message flood). Trade-off: a
-    genuine send failure means that day's report is skipped rather than retried —
-    a safe failure mode for a single-instance bot.
+FAILURE_COLOR = 0xC0392B
 
-    Returns True if a send was attempted (channel was available), False if the
-    channel could not be resolved (no claim made, safe to retry next cycle).
+
+async def _claim_and_send(channel, state: dict, channel_id: str, config: dict, day: date) -> None:
+    """Send the report for one CST day, claiming it BEFORE sending.
+
+    The claim (`last_sent_date`, the day after `day`: the day it would normally
+    have been sent) is persisted before the first channel.send, so a partial or
+    failed send can never cause the next cycle to re-send it (the cause of the
+    duplicate-message flood). Trade-off: a genuine send failure means that
+    report is skipped rather than retried -- a safe failure mode for a
+    single-instance bot.
+
+    Raises on a data or build error BEFORE claiming, so that day stays owed
+    and is retried next cycle.
     """
-    channel = bot.get_channel(int(channel_id))
-    if not channel:
-        print(f"Daily update: channel {channel_id} not found; will retry next cycle")
-        return False
+    stats = _fetch_daily_stats(day)
+    messages = _build_update_messages(stats, day)
 
-    # Build the report first so a data/build error doesn't consume the day's claim.
-    #
-    # ⚠️ _fetch_daily_stats() is SYNCHRONOUS, and that is load-bearing. It blocks
-    # the event loop, so nothing can interleave between a caller's _load_state()
-    # and the _save_state() below. That is what stops daily_update_task and
-    # _check_missed_updates -- which both run at startup and each load their own
-    # copy of the state -- from claiming the same day and double-sending.
-    #
-    # If this is ever made async (natural enough; it is a dozen blocking HTTP
-    # calls), that window opens and the claim must be moved behind a real lock,
-    # e.g. an asyncio.Lock held across load -> claim -> save.
-    stats = _fetch_daily_stats()
-    messages = _build_update_messages(stats)
-
-    # Claim the day and persist it before sending anything.
-    config["last_sent_date"] = today
+    config["last_sent_date"] = (day + timedelta(days=1)).isoformat()
     state["channels"][channel_id] = config
     _save_state(state)
 
     try:
         for message in messages:
             await channel.send(**message)
-        print(f"Daily update sent to channel {channel_id} for {_yesterday_cst_str()}")
+        print(f"Daily update sent to channel {channel_id} for {day}")
     except Exception as e:
-        print(
-            f"Daily update send FAILED for channel {channel_id} after claiming {today}; "
-            f"will NOT retry today to avoid duplicate spam: {e}"
-        )
-    return True
+        print(f"Daily update send FAILED for channel {channel_id} for {day} after "
+              f"claiming it; will NOT retry, to avoid duplicate spam: {e}")
+
+
+async def _post_failure(channel, state: dict, channel_id: str, config: dict,
+                        day: date, error: Exception) -> None:
+    """Say in the channel that a report would not build, once per report date.
+
+    A report that will not build is retried every 10 minutes and the reason is
+    printed to the console -- which nobody watches, so the report for
+    2026-09-29 and -30 simply never appeared and nobody knew why. The notice
+    is claimed before it is sent, like the report, so it cannot repeat.
+    """
+    if config.get("failure_notice_for") == day.isoformat():
+        return
+    config["failure_notice_for"] = day.isoformat()
+    state["channels"][channel_id] = config
+    _save_state(state)
+
+    reason = f"{type(error).__name__}: {error}".replace("`", "'")[:400]
+    embed = nextcord.Embed(
+        title=f"Daily Report — {day} failed",
+        description=(f"The report would not build:\n```{reason}```\n"
+                     f"It is retried every 10 minutes and posts as soon as it builds. "
+                     f"Later days wait behind it so they stay in order."),
+        color=FAILURE_COLOR)
+    try:
+        await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Daily update: could not post the failure notice for {day} to "
+              f"channel {channel_id}: {e}")
+
+
+async def _send_backlog(bot, state: dict, channel_id: str, config: dict,
+                        today: date, past_send_time: bool) -> int | None:
+    """Send every report this channel is owed, oldest first. Caller holds _SEND_LOCK.
+
+    Returns how many were sent, or None when the channel could not be resolved
+    (nothing claimed; retried next cycle).
+
+    A report that fails to BUILD stops the backlog for this cycle: it is posted
+    as a failure once, left unclaimed, and retried next cycle with every later
+    day queued behind it. Skipping past it would advance `last_sent_date` and
+    lose it for good; waiting keeps the reports in order and loses nothing,
+    and the failure notice is what makes the wait visible.
+    """
+    days = _reports_due(config, today, past_send_time)
+    if not days:
+        return 0
+
+    channel = bot.get_channel(int(channel_id))
+    if not channel:
+        print(f"Daily update: channel {channel_id} not found; will retry next cycle")
+        return None
+
+    sent = 0
+    for day in days:
+        try:
+            await _claim_and_send(channel, state, channel_id, config, day)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"Daily update: the report for {day} would not build for channel "
+                  f"{channel_id} ({type(e).__name__}: {e}). It was NOT claimed; the "
+                  f"next cycle will retry it.")
+            await _post_failure(channel, state, channel_id, config, day, e)
+            break
+        sent += 1
+    return sent
 
 
 # ---------------------------------------------------------------------------
@@ -817,21 +944,19 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
 # ---------------------------------------------------------------------------
 
 async def _send_due_channels(bot, source: str) -> None:
-    """Send the report to every channel whose send time has passed today.
+    """Send every channel the reports it is owed.
 
-    Shared by the 10-minute loop and the startup catch-up pass, which were
-    near-identical copies of this decision.
+    Shared by the 10-minute loop, the startup catch-up pass, and enabling a
+    channel.
 
     ⚠️ NOTHING may propagate out of here, and that is load-bearing.
 
-    `_claim_and_send` raises on a data or build error ON PURPOSE -- raising is
-    what leaves the day unclaimed and therefore retryable next cycle
-    (test_report_error_does_not_consume_the_day). But nextcord's `tasks.Loop`
-    only tolerates the five connection-ish types in its `_valid_exception`
-    tuple; anything else is printed to stderr and **re-raised**, which ends the
-    loop for the life of the process. So an escaping error did not postpone one
-    report -- it silently stopped every future one, because the retry the
-    unclaimed day was waiting for no longer existed.
+    nextcord's `tasks.Loop` only tolerates the five connection-ish types in its
+    `_valid_exception` tuple; anything else is printed to stderr and
+    **re-raised**, which ends the loop for the life of the process. So an
+    escaping error did not postpone one report -- it silently stopped every
+    future one, because the retry the unclaimed day was waiting for no longer
+    existed (2026-09-01).
 
     Caught per channel as well as per cycle, so one unreachable or misconfigured
     channel cannot take the others down with it.
@@ -840,49 +965,67 @@ async def _send_due_channels(bot, source: str) -> None:
     cancels this cleanly.
     """
     try:
-        state = _load_state()
-        channels = state.get("channels") or {}
-        if not channels:
-            return
+        async with _SEND_LOCK:
+            state = _load_state()
+            channels = state.get("channels") or {}
+            today = _today_cst()
 
-        today = _today_cst_str()
+            for channel_id, config in list(channels.items()):
+                try:
+                    # A hand-edited or partially-written state file can hold
+                    # something that is not a dict; .get() on it would be an
+                    # AttributeError that used to kill the loop.
+                    if not isinstance(config, dict):
+                        print(f"Daily update [{source}]: channel {channel_id} has a "
+                              f"malformed state entry ({type(config).__name__}); skipping")
+                        continue
+                    if config.get("disabled"):
+                        continue
 
-        for channel_id, config in list(channels.items()):
-            try:
-                # A hand-edited or partially-written state file can hold
-                # something that is not a dict; .get() on it would be an
-                # AttributeError that used to kill the loop.
-                if not isinstance(config, dict):
-                    print(f"Daily update [{source}]: channel {channel_id} has a "
-                          f"malformed state entry ({type(config).__name__}); skipping")
-                    continue
-
-                # Skip disabled channels
-                if config.get("disabled"):
-                    continue
-
-                # Skip if already sent today
-                if config.get("last_sent_date") == today:
-                    continue
-
-                # Skip if not past this channel's send time
-                hour_utc = config.get("send_hour_utc", 18)
-                minute_utc = config.get("send_minute_utc", 0)
-                if not _is_past_send_time_utc(hour_utc, minute_utc):
-                    continue
-
-                # Claims today (persisted) before sending, so a failed/partial
-                # send can never re-fire on the next cycle.
-                await _claim_and_send(bot, state, channel_id, config, today)
-            except Exception as e:
-                traceback.print_exc()
-                print(f"Daily update [{source}]: channel {channel_id} failed with "
-                      f"{type(e).__name__}: {e}. The day was NOT claimed; the next "
-                      f"cycle will retry it.")
+                    past = _is_past_send_time_utc(config.get("send_hour_utc", 18),
+                                                  config.get("send_minute_utc", 0))
+                    await _send_backlog(bot, state, channel_id, config, today, past)
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f"Daily update [{source}]: channel {channel_id} failed with "
+                          f"{type(e).__name__}: {e}. The next cycle will retry it.")
     except Exception as e:
         traceback.print_exc()
         print(f"Daily update [{source}]: cycle aborted with {type(e).__name__}: {e}. "
               f"The schedule is intact; the next cycle will retry.")
+
+
+def _enable_channel(state: dict, channel_id: str, hour_utc: int, minute_utc: int,
+                    today: date) -> dict:
+    """Register (or re-enable) a channel. Returns its config.
+
+    Re-enabling keeps `last_sent_date`, so toggling off and on the same day does
+    not re-send. But a channel that was off for a while must not be handed the
+    backlog of the days it was off for -- those were not missed, they were
+    declined -- so its watermark moves up to yesterday at the earliest: it is
+    owed today's report and nothing older.
+    """
+    config = state["channels"].get(channel_id)
+    if not isinstance(config, dict):
+        config = {}
+    if config.pop("disabled", None) and config.get("last_sent_date"):
+        floor = (today - timedelta(days=1)).isoformat()
+        config["last_sent_date"] = max(config["last_sent_date"], floor)
+    config["send_hour_utc"] = hour_utc
+    config["send_minute_utc"] = minute_utc
+    state["channels"][channel_id] = config
+    return config
+
+
+def _parse_report_date(text: str, today: date) -> date:
+    """A past CST day from 'YYYY-MM-DD'. Today has not finished, so it is refused."""
+    try:
+        day = date.fromisoformat(text.strip())
+    except ValueError:
+        raise ValueError("Use a date like 2026-09-29.")
+    if day >= today:
+        raise ValueError(f"Pick a day before today ({today}); a report covers a finished day.")
+    return day
 
 
 # ---------------------------------------------------------------------------
@@ -911,44 +1054,65 @@ def add_daily_update_commands(cls):
         ),
     ):
         channel_id = str(interaction.channel_id)
-        state = _load_state()
 
         if enabled:
-            # Parse and validate time
             try:
                 hour_utc, minute_utc = _parse_send_time(send_time, utc_offset)
             except (ValueError, IndexError):
                 return "Invalid time format. Use HH:MM (e.g. 12:00, 14:30)."
 
-            # Register this channel (preserve last_sent_date if re-enabling)
-            channel_config = state["channels"].get(channel_id, {})
-            channel_config["send_hour_utc"] = hour_utc
-            channel_config["send_minute_utc"] = minute_utc
-            channel_config.pop("disabled", None)
-            state["channels"][channel_id] = channel_config
-            _save_state(state)
+            async with _SEND_LOCK:
+                state = _load_state()
+                _enable_channel(state, channel_id, hour_utc, minute_utc, _today_cst())
+                _save_state(state)
 
-            # Check if we missed today's update for this channel
-            today = _today_cst_str()
-            already_sent = channel_config.get("last_sent_date") == today
-
-            if not already_sent and _is_past_send_time_utc(hour_utc, minute_utc):
-                attempted = await _claim_and_send(self.bot, state, channel_id, channel_config, today)
-                if attempted:
-                    return f"Daily updates **enabled** for this channel. Sent catch-up update for {_yesterday_cst_str()}."
+            # Anything already due goes out through the ordinary sweep, in the
+            # background: a backlog of several reports can outlast this
+            # command's timeout, and the sweep is what holds the lock and
+            # catches every error.
+            asyncio.get_running_loop().create_task(_send_due_channels(self.bot, "enable"))
 
             local_time = _format_utc_to_local(hour_utc, minute_utc, utc_offset)
-            return f"Daily updates **enabled** for this channel. Reports will be sent daily at {local_time} (UTC{utc_offset:+d})."
+            return (f"Daily updates **enabled** for this channel. Reports will be sent daily at "
+                    f"{local_time} (UTC{utc_offset:+d}); one already due posts in a moment.")
         else:
             # Mark channel as disabled but preserve last_sent_date to prevent
             # re-sending if toggled back on the same day
-            config = state["channels"].get(channel_id, {})
-            state["channels"][channel_id] = {
-                "disabled": True,
-                "last_sent_date": config.get("last_sent_date"),
-            }
-            _save_state(state)
+            async with _SEND_LOCK:
+                state = _load_state()
+                config = state["channels"].get(channel_id)
+                config = config if isinstance(config, dict) else {}
+                state["channels"][channel_id] = {
+                    "disabled": True,
+                    "last_sent_date": config.get("last_sent_date"),
+                }
+                _save_state(state)
             return "Daily updates **disabled** for this channel."
+
+    @nextcord.slash_command(name="daily_update_repost",
+                            description="Post the daily report for one past day here",
+                            guild_ids=[DEV_GUILD_ID])
+    @safe_interaction(timeout=90, error_message="Failed to build that day's report.", require_authorized=True)
+    async def daily_update_repost_cmd(
+        self,
+        interaction: Interaction,
+        day: str = SlashOption(name="date", description="The day to report on (YYYY-MM-DD, CST)",
+                               required=True),
+    ):
+        # For a day the schedule lost: a report that was skipped after a failed
+        # send, or days older than the backlog keeps. Touches no state, so it
+        # can neither re-send nor block the scheduled report.
+        try:
+            report_day = _parse_report_date(day, _today_cst())
+        except ValueError as e:
+            return str(e)
+        # Off the event loop, as /stats all does: a dozen blocking HTTP calls,
+        # and nothing is claimed, so no lock is needed.
+        messages = await asyncio.to_thread(
+            lambda: _build_update_messages(_fetch_daily_stats(report_day), report_day))
+        for message in messages:
+            await interaction.followup.send(**message)
+        return None
 
     # Background task — runs every 10 minutes to check all registered channels.
     #
@@ -976,5 +1140,6 @@ def add_daily_update_commands(cls):
     cls.__init__ = new_init
 
     cls.daily_update_cmd = daily_update_cmd
+    cls.daily_update_repost_cmd = daily_update_repost_cmd
     cls._daily_update_task_func = daily_update_task
     cls._check_missed_updates = _check_missed_updates

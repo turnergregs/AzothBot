@@ -227,19 +227,10 @@ def bosses_card(rows: list, population: str = "") -> sc.Card:
 
     # No legend. A first draft carried three lines of footnotes (the line, the
     # colours, what dim means); Turner's review: the chart reads without them.
-    # What it cannot show -- unfinished fights -- is in bosses_footer instead.
+    # Unfinished fights are not counted and not mentioned: no report carries
+    # a text footer since 2026-10-02 (Turner).
     return card
 
-
-def bosses_footer(rows: list) -> str:
-    """The embed footer: what the card rests on, as copyable text, including
-    the unfinished fights the win rates leave out."""
-    finished = sum(_finished(r) for r in rows)
-    unfinished = sum(int(r.get("unfinished") or 0) for r in rows)
-    footer = f"version >= {CUTOFF_VERSION} · {finished} finished fights · solo"
-    if unfinished:
-        footer += f" · {unfinished} unfinished not counted"
-    return footer
 
 
 # ---------------------------------------------------------------------------
@@ -387,10 +378,6 @@ def breakdown_card(rows: list, by: str, population: str = "") -> sc.Card:
     return card
 
 
-def breakdown_footer(rows: list, by: str) -> str:
-    runs = sum(g["runs"] for g in breakdown_groups(rows, by))
-    return f"version >= {CUTOFF_VERSION} · {runs} solo runs · grouped by {by}"
-
 
 # ---------------------------------------------------------------------------
 # /stats players
@@ -404,7 +391,7 @@ def breakdown_footer(rows: list, by: str) -> str:
 # runs, the Codex and the art tools exist only in the tracker's active time
 # (engagement_spans), from the first build carrying EngagementTracker. Idle
 # counts on one side and not the other, so the tools' share reads slightly
-# low; the footer says so.
+# low.
 
 # Where time goes, as (label, view column, colour). The dataviz palette's
 # first four slots, which pass the colour-blindness checks as neighbours on
@@ -434,12 +421,6 @@ def duration(seconds) -> str:
 def _tracked(row: dict) -> int:
     """All the time a row has, runs included."""
     return sum(int(row.get(col) or 0) for _, col, _ in TIME_SURFACES)
-
-
-def _on_tracker(row: dict) -> bool:
-    """Has this player run a build carrying EngagementTracker? The view's
-    tracker columns are NULL until they have."""
-    return any(row.get(col) is not None for col in ("custom_run_sec", "codex_sec", "art_sec"))
 
 
 def _plural(noun: str) -> str:
@@ -530,13 +511,6 @@ def players_card(rows: list, population: str = "") -> sc.Card:
         card.add(*sc.tile_rows([(label, str(n)) for label, n in made]))
     return card
 
-
-def players_footer(rows: list) -> str:
-    listed = [r for r in rows if int(r.get("runs") or 0) or _tracked(r)]
-    on_tracker = sum(1 for r in listed if _on_tracker(r))
-    return (f"version >= {CUTOFF_VERSION} · {len(listed)} player{'' if len(listed) == 1 else 's'}"
-            f" · run time includes idle; Codex time is active, from tracked builds"
-            f" ({on_tracker} of {len(listed)} players so far)")
 
 
 # ---------------------------------------------------------------------------
@@ -630,9 +604,6 @@ def player_card(name: str, runs: list, summary: dict | None, info: dict | None) 
     return card
 
 
-def player_footer(runs: list) -> str:
-    return f"version >= {CUTOFF_VERSION} · {len(runs)} solo run{'' if len(runs) == 1 else 's'}"
-
 
 # ---------------------------------------------------------------------------
 # /stats draft picks, items and pool
@@ -667,7 +638,8 @@ TYPE_LABELS = {"card": "Cards", "aspect": "Aspects", "rite": "Rites", "pack": "P
 # Draft packs (game 2026-09-29, 2026-09-29_draft_packs.sql): a pack offered in a
 # draft is a `type` bucket whose `picked` means OPENED, with its kind in the
 # `pack_type` dimension. Labelled by the name printed on the pack.
-PACK_LABELS = {"card": "Atoms", "catalyst": "Catalysts", "aspect": "Aspects", "rite": "Rites"}
+PACK_LABELS = {"card": "Atoms", "catalyst": "Catalysts", "aspect": "Aspects", "rite": "Rites",
+               "upgrade": "Upgrade"}
 KIND_LABELS = {"upgrade": "Upgraded", "attribute": "Attribute", "enhancement": "Enhanced"}
 
 
@@ -775,13 +747,6 @@ def draft_picks_card(rows: list, population: str = "") -> sc.Card:
     return card
 
 
-def draft_picks_footer(rows: list) -> str:
-    offered = sum(o for _, o in _buckets(rows, "type").values())
-    text = f"version >= {CUTOFF_VERSION} · {offered:,} offers · solo · element and valence are cards only"
-    if _buckets(rows, "pack_type"):
-        text += " · a pack is picked when opened; what is offered inside it counts as offered"
-    return text
-
 
 def _item_label(row: dict) -> str:
     return str(row.get("item_name") or "—")
@@ -841,13 +806,6 @@ def draft_items_card(rows: list, population: str = "") -> sc.Card:
             card.add(sc.Spacer(6))
     return card
 
-
-def draft_items_footer(rows: list) -> str:
-    unranked = sum(1 for r in rows if int(r.get("offered") or 0) < MIN_ITEM_OFFERS)
-    footer = f"version >= {CUTOFF_VERSION} · {len(rows)} items offered · solo"
-    if unranked:
-        footer += f" · {unranked} offered fewer than {MIN_ITEM_OFFERS} times, not ranked"
-    return footer
 
 
 def draft_pool_card(row: dict) -> sc.Card:
@@ -1059,16 +1017,6 @@ def item_card(name: str, kind: str, groups: list, by: str = "version",
     return card
 
 
-def item_footer(kind: str, groups: list, by: str = "version") -> str:
-    _, unit, _, minimum = ITEM_MEASURES[kind]
-    live = [g for g in groups if g["n"]]
-    n = sum(g["n"] for g in live)
-    text = (f"version >= {CUTOFF_VERSION} · {n:,} {unit} · solo · grouped by {by}"
-            f" · grey under {minimum} {unit}")
-    if by in ITEM_COLUMN_AXES and len(live) > MAX_ITEM_COLUMNS:
-        text += f" · the latest {MAX_ITEM_COLUMNS} of {len(live)} drawn; the tiles count all"
-    return text
-
 
 # ---------------------------------------------------------------------------
 # The daily report
@@ -1087,7 +1035,10 @@ DAILY_MOST, DAILY_LEAST = 3, 2
 
 
 def daily_card(stats: dict, day: str) -> sc.Card:
-    card = sc.Card("Yesterday", f"{day} · Central time")
+    # Who it counts goes in the header, as every report's does: everyone,
+    # developers included, and no version cutoff (yesterday's builds are
+    # current by definition).
+    card = sc.Card("Daily Report", f"{day} · Central time · {COHORT_LABELS['all']}")
 
     tiles = [("Players", str(stats.get("unique_players") or 0)),
              ("New", str(stats.get("new_players") or 0)),
@@ -1226,6 +1177,3 @@ def leaderboard_card(rows: list, population: str = "", hero: str | None = None,
     return card
 
 
-def leaderboard_footer(rows: list, hero: str | None = None) -> str:
-    players = len(leaderboard_rows(rows, hero))
-    return f"version >= {CUTOFF_VERSION} · {players} player{'' if players == 1 else 's'} ranked · solo"

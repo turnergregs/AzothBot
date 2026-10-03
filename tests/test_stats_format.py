@@ -6,8 +6,8 @@ points that these tests pin:
 
   * `avg_combo_log10` is an ORDER OF MAGNITUDE. Printed raw as `4.78` next to
     `max_combo: 652298` it reads as an average combo of about five.
-  * The dataset is tiny. A footer stating what the numbers rest on is not
-    decoration — `docs/ANALYTICS.md` opens by saying not to quote these as fact.
+  * The dataset is tiny. Every table carries its counts — `docs/ANALYTICS.md`
+    opens by saying not to quote these as fact.
 """
 
 import pytest
@@ -92,38 +92,6 @@ def test_trailing_zeros_are_trimmed():
 # ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# Footer
-# ---------------------------------------------------------------------------
-
-def test_the_footer_counts_the_games_behind_the_numbers():
-    assert "3 games" in sf.footer(ROWS)
-
-
-def test_one_game_is_singular():
-    assert "1 game" in sf.footer([ROWS[1]]) and "1 games" not in sf.footer([ROWS[1]])
-
-
-def test_the_cutoff_is_stated_by_default():
-    assert f"version >= {sf.CUTOFF_VERSION}" in sf.footer(ROWS)
-
-
-def test_the_cutoff_can_be_denied():
-    """`version_info_view` is the one view with no cutoff — comparing versions
-    is its whole job. Claiming the cutoff on a table visibly showing 0.7.0 rows
-    is worse than claiming nothing."""
-    text = sf.footer(ROWS, cutoff=False)
-    assert sf.CUTOFF_VERSION not in text
-    assert "all versions" in text
-
-
-def test_a_missing_count_column_does_not_break_the_footer():
-    assert sf.footer([{"deck_name": "Total Draft Pool"}])
-
-
-def test_a_non_numeric_count_is_skipped_rather_than_raising():
-    assert sf.footer([{"game_count": "lots"}, {"game_count": 2}]).endswith("2 games")
-
 
 # ---------------------------------------------------------------------------
 # Combo and ritual values (value(), which formats every table cell)
@@ -204,16 +172,6 @@ def test_the_scoreboard_carries_its_denominator():
     carries its counts; this one does it in the caption, for width."""
     out = sf.scoreboard_hits(SCOREBOARD)
     assert "1: 22" in out and "3: 9" in out and "all: 31" in out
-
-
-def test_the_scoreboard_sample_is_not_a_sum_of_the_column():
-    """Every scored turn produces one row PER AXIS and one more in the rollup,
-    so summing `turns_sampled` counts each turn six times. 31, not 186."""
-    assert sf.scoreboard_sample(SCOREBOARD) == 31
-
-
-def test_the_scoreboard_sample_is_zero_without_a_rollup_row():
-    assert sf.scoreboard_sample([_sb(1, "precision", 5, 1.0, 0, 20.0, 20.0)]) == 0
 
 
 def test_the_thresholds_are_shown_as_measured_not_as_defaults():

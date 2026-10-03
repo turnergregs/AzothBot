@@ -2,9 +2,11 @@
 
 > **The `/stats` commands render embeds, not raw JSON** (2026-08-27).
 > `azoth_logic/stats_format.py` does the formatting; the commands do the I/O.
-> `avg_combo_log10` displays as `10^x` because that is what it means, and every
-> reply footers the cutoff and the game count so no number arrives without its
-> denominator.
+> `avg_combo_log10` displays as `10^x` because that is what it means. Every
+> image report states its population and version cutoff in its header, and its
+> counts beside its numbers, so no number arrives without its denominator. No
+> report carries a text footer since 2026-10-02 (Turner: it repeated the header
+> and added notes nobody needed).
 
 What AzothBot reports, where those numbers come from, and which of them you can
 currently trust.
@@ -28,8 +30,8 @@ return zero rows with an HTTP 200 under an anon key — not an error. See
 release that let in the new playtesters; `0.8.2` → `0.9.0` was 2026-08-28), and as of
 the 2026-08-26 rebuild every game-facing view enforces it via
 `analytics_cutoff()`. Bump that one function to move the cutoff; don't edit WHERE
-clauses. `azoth_logic/stats_format.CUTOFF_VERSION` mirrors it for the footer and
-must move with it, or the footer states a threshold the views aren't enforcing.
+clauses. `azoth_logic/stats_format.CUTOFF_VERSION` mirrors it for the report headers
+and must move with it, or they state a threshold the views aren't enforcing.
 
 **3. The trustworthy dataset restarted at the 0.9.10 bump.** The figures below
 are from **before** it and describe the `0.9.0` cutoff; the 0.9.10 population
@@ -38,7 +40,7 @@ games at those versions before the `restart` and co-op filters), carrying 590
 card draft offers. It was **2 games** when the cutoff was raised on 2026-08-28,
 so this is real growth — but 21 runs still means a per-hero or per-player split
 is one or two runs wide, and any `/stats` number that looks substantial is
-worth checking against its footer before it is quoted.
+worth checking against its counts before it is quoted.
 
 ---
 
@@ -88,7 +90,7 @@ being redrawn as images, one at a time, each reviewed in Discord before the next
 - `azoth_logic/stats_cards.py` holds one function per report, rows in, `Card`
   out: what comes first, what is grey, what each number is read against.
 - `stats._send_card` draws off the event loop and sends the image in an embed
-  whose footer repeats what it rests on, as copyable text.
+  with nothing else in it. Population and cutoff go in the card's header.
 
 The rules, from the dataviz guidance the reports were audited against: pick the
 chart from the data's job; label values directly (an image has no hover); one
@@ -124,8 +126,8 @@ Caleb), `veteran` (any game below the cutoff) or `new`, from the game repo's
 `stats_cards.select_cohort` sums the ones asked for: `players:` is New
 playtesters (the default), Everyone but us, or Everyone. A boss only other
 cohorts fought still appears, as unfought. On a view without the column the
-filter is skipped and the footer says so, rather than labelling everyone as
-new playtesters.
+filter is skipped and the header says Everyone, rather than labelling everyone
+as new playtesters.
 
 ### Players (2026-09-28)
 
@@ -149,8 +151,7 @@ the way back. Custom runs, Codex and art tools exist only in the tracker's
 active time (`engagement_spans`), from the first build carrying
 `EngagementTracker`. The tracker's own `run` spans are ignored so runs are not
 counted twice. Idle counts on one side only, so the tools' share reads slightly
-low (the cautious direction), and the footer says so along with how many
-players are on a tracked build. A roster with no time at all drops its bars and
+low (the cautious direction). A roster with no time at all drops its bars and
 time column.
 
 **The legend rule** (Turner, 2026-09-28) applies to every image report: a
@@ -459,7 +460,7 @@ the same item split by version can.
   group in the item's colour, a white tick at the rest of its kind, the value on
   the column (lifted over the tick only when the tick would cut it). The scale
   tops at the next 25% above the tallest mark. A low sample is an outline. The
-  latest 10 versions are drawn; the footer says when there are more. `by:hero`
+  latest 10 versions are drawn; the tiles count all of them. `by:hero`
   stays as horizontal bars: heroes have no order, and names fit rows better.
 - **The item's own colour** (`stats_cards.item_colour`): a boss's act colour, a
   card's element, an aspect's art accent (`primary_color`: aspect colours are
@@ -501,7 +502,7 @@ in the game repo), so they take `players:`; `pool` is content and does not.
   flagged against the rest, and its header gives the share of opened packs that
   gave a pick (`in_pack` picks over opens; the rest were Skipped). What is
   offered inside an opened pack still counts as offered everywhere else, element
-  and valence included, and the footer says so. A view with no pack offers draws
+  and valence included. A view with no pack offers draws
   the card exactly as before. `items` is unchanged: its view keeps one row per
   item and gained `offered_in_pack` / `picked_in_pack`, which it does not read
   yet.
@@ -510,8 +511,8 @@ in the game repo), so they take `players:`; `pool` is content and does not.
   Turner's request; they had ranked together against one all-items rate). Each
   item is read against its OWN type's pick rate and flagged against the rest of
   its type: ranked together, one kind could fill both lists, and a card is
-  tuned against other cards. Only items offered 5+ times rank, and the footer
-  counts the rest. A type with nothing ranked is not drawn; one with fewer than
+  tuned against other cards. Only items offered 5+ times rank (the header
+  says so). A type with nothing ranked is not drawn; one with fewer than
   ten ranked items draws a shorter Least picked, never an item twice.
 - **`pool`** (`draft_deck_view`): cards, aspects, rite templates and the
   estimated rite slots per run as tiles (rites beside the pool, never in it),
@@ -531,7 +532,7 @@ one reply**. They are neighbours, but they do not rest on the same thing:
 | `composition` | content — 136 cards, 54 aspects | none; a deck has no version |
 | `rates`, `breakdown` | games at `0.9.10`+ | `analytics_cutoff()` |
 
-**One embed carries one footer.** A merged reply would have to either claim
+**One reply states one population.** A merged reply would have to either claim
 `version >= 0.9.10` over the composition numbers, which are not version-filtered
 at all, or drop the cutoff over the rate numbers — the thing this document opens
 by saying not to do. Grouping gets the tidiness without the lie.
@@ -580,9 +581,11 @@ The bucket order comes from the same functions that order the composition charts
 (`_element_order` / `_valence_order`), so the two line up row for row — which is
 what makes *"27% of the pool, 38% of picks"* legible at a glance.
 
-⚠️ The offer count in the footer is read off **one** dimension. Every offer is
+⚠️ The offer count in the header is read off **one** dimension. Every offer is
 counted once under its element and again under its valence, so a sum over the
-view is exactly double — the same trap `scoreboard_sample` documents.
+view is exactly double. (`turn_scoreboard_view` has the same trap: every scored
+turn is one row per axis plus the rollup, so summing `turns_sampled` counts each
+turn six times.)
 
 #### Rites: templates, not pool members
 
@@ -841,29 +844,46 @@ own send time and its own dedup date.
 ### Scheduling
 
 - A `tasks.loop(minutes=10)` checks every registered channel.
-- A channel fires when the current UTC time is past its `send_hour_utc` /
-  `send_minute_utc` and it hasn't already sent today.
-- A startup pass catches up on reports missed while the bot was down — which
-  matters, because [the bot is not reliably always-on](DEPLOYMENT.md).
+- A channel is owed every report from the day after the last one it got up to
+  the newest one due (`_reports_due`): yesterday's, once today's send time has
+  passed, and the day before until then. They go out **oldest first**, each
+  claimed before it is sent. So a bot that was down, or a report that would not
+  build, catches up on **every** day it missed, not only the most recent
+  (2026-10-02; before that a gap of two days lost two reports for good).
+- The backlog is capped at `MAX_BACKFILL_DAYS` (7). Older missed days are
+  dropped with a console line; post one by hand with `/daily_update_repost`.
+- A channel with no `last_sent_date` (just registered) is owed only today's
+  report, at the send time: registering is not a request for history.
+- A startup pass runs the same sweep, so a report missed while the bot was down
+  goes out as soon as it is back, without waiting for the send time.
 - Disabling preserves `last_sent_date`, so toggling off and on the same day
-  doesn't re-send.
+  doesn't re-send. Re-enabling moves it up to yesterday at the earliest: the
+  days a channel was off were declined, not missed, and are not backfilled.
+  Re-running the command on a live channel (to change the time) keeps its
+  backlog.
+- `/daily_update_repost date:` posts one past day's report to the current
+  channel without touching the state, so it can neither re-send nor block the
+  schedule.
 
-State lives in `daily_update_state.json` at the repo root (gitignored):
+State lives in `daily_update_state.json` at the repo root (gitignored).
+`last_sent_date` is the CST day a report was SENT; it covered the day before.
 
 ```json
 {"channels": {"<channel_id>": {
-  "send_hour_utc": 18, "send_minute_utc": 0, "last_sent_date": "2026-08-25"
+  "send_hour_utc": 18, "send_minute_utc": 0, "last_sent_date": "2026-08-25",
+  "failure_notice_for": "2026-08-20"
 }}}
 ```
 
-### Three deliberate design decisions
+### Four deliberate design decisions
 
-All three fix real bugs. Don't undo them without understanding why they're there.
+All four fix real bugs. Don't undo them without understanding why they're there.
 
 **The day is claimed *before* the send.** `_claim_and_send` writes
 `last_sent_date` and persists it, then sends. A failed or partial send therefore
 skips that day rather than retrying — the trade-off that stopped a duplicate
 message flood. For a single-instance bot, skipping beats spamming.
+`/daily_update_repost` is the way back for a day skipped like that.
 
 **The state file is written atomically** — `mkstemp` in the same directory, then
 `os.replace`. A crash mid-write would otherwise truncate the file, which
@@ -877,11 +897,27 @@ exception reaching `tasks.Loop` **stops the loop for the life of the process**,
 so absorbing it here is what keeps the schedule alive. See the third bug
 below.
 
+**A report that will not build is said in the channel, once, and holds the
+days after it.** The day stays unclaimed and is retried every cycle; the
+channel gets one red "Daily Report — <date> failed" embed with the error
+(`failure_notice_for` stops it repeating). Later days wait behind it rather
+than skipping past, because sending them would advance `last_sent_date` past
+the broken day and lose it. Once the fix ships, the whole backlog goes out in
+order. Before this, a build error was a console line nobody watches.
+
+**The sweep holds `_SEND_LOCK`** across load → claim → send → save. The loop
+and the startup pass both run as soon as the bot is ready, each with its own
+copy of the state, and a backlog awaits between reports, so without it the
+second pass reads the state mid-backlog and sends a day twice. (One report at
+a time relied on `_fetch_daily_stats` being synchronous instead; that stops
+being enough at two.) Enabling a channel goes through the same sweep.
+
 ### Drawn as one image (2026-09-29)
 
-The report is one image (`stats_cards.daily_card`) in an embed whose footer
-says it counts everyone, developers included, and how many opening-turn
-restarts were excluded. `daily_update._build_update_messages` returns the
+The report is one image (`stats_cards.daily_card`), titled "Daily Report", with
+the day and "Everyone" (developers included) in its header and no text under it
+(2026-10-02; it had a footer, and was titled "Yesterday", until then).
+`daily_update._build_update_messages` returns the
 `channel.send` keyword sets, rendered before the day is claimed so a drawing
 failure never uses the day up. A quiet day is still one line of text.
 
@@ -1055,7 +1091,7 @@ there — an abandoned run's completed turns are perfectly good data.
 Embeds split automatically at 5,800 characters (Discord's limit is 6,000) and
 field values truncate at 1,024.
 
-### Three bugs, all fixed
+### Four bugs, all fixed
 
 **June 30 — `unsupported operand type(s) for +: 'int' and 'str'`.** The draft
 score was `level_reached + highest_combo`. `level_reached` is `bigint` → `int`;
@@ -1095,6 +1131,24 @@ handler cancels the task from within itself, and a failure that recurs every
 iteration turns into a hot restart loop. Making the body total is simpler and
 has no such edge.
 
+**2026-09-29 and -30 — two reports never arrived, with the bot up.** Draft
+packs shipped that day. A pack offer is a `draft_items` row with
+`item_type 'pack'` and `item_id` NULL, and `_resolve_item_names` built a table
+name from the type, so the report asked PostgREST for `public.packs` and
+raised. The schedule worked as designed: the day stayed unclaimed and was
+retried every 10 minutes. But every retry raised the same way, the day being
+retried moved on at midnight, and only the most recent day was ever sent, so
+both reports were lost and the only trace was a console line. 10-01's report
+built only because the shop builds recorded no drafts at all that day (their
+migration was not yet applied).
+
+Three fixes (2026-10-02): only content types (`card`, `aspect`, `ritual`,
+`rite`/`event`) are ever looked up, a pack is named by `pack_type` as printed
+on it (`stats_cards.PACK_LABELS`) and ranked with the type tag "pack", and
+anything else (a shop level-up, `shopreward`) is left out, so a new kind of
+draft item cannot take the report down again; a build failure is posted to the
+channel once; and every missed day is backfilled.
+
 ### Fixed 2026-08-26
 
 | Was | Now |
@@ -1118,10 +1172,8 @@ has no such edge.
   played yesterday, and yesterday's builds are current by definition.
 - **Draft batching is capped at 50 ids per request** to keep URLs short, so a
   heavy day makes many round trips.
-- **The claim-before-send window depends on `_fetch_daily_stats` being
-  synchronous.** It blocks the event loop, which is what stops the startup task
-  and the catch-up pass from both claiming the same day. Making it async without
-  adding a lock reintroduces a double-send.
+- **`_SEND_LOCK` is what stops a double-send,** not `_fetch_daily_stats` being
+  synchronous (it still is). A new path that claims a day must hold it.
 
 ---
 

@@ -17,14 +17,14 @@ Added 2026-08-26. Before that there was no suite at all.
 | `tests/test_fate_render.py` | 58 | Aspects and rites: backgrounds, mask recolouring, the reversed aspect palette, and that `rites.py` binds no table name |
 | `tests/test_rite_schema.py` | 12 | Which side of the `events` -> `rites` rename the database is on: a missing-table error (PGRST205 or 42P01) means before, any other failure raises rather than guessing old, the answer is cached yet a migration applied while running is picked up, a change of side is printed, and both spellings map to the current one |
 | `tests/test_supabase_helpers.py` | 46 | The access layer: the RLS pre-flight guard, raise-don't-swallow, query construction, deck item refs |
-| `tests/test_daily_update.py` | 45 | The daily report: turn-grain aggregation, send/claim ordering, state file, scheduling, embed limits, and the due-channel sweep surviving a failure |
+| `tests/test_daily_update.py` | 87 | The daily report: turn-grain aggregation, send/claim ordering, state file, scheduling, embed limits, the due-channel sweep surviving a failure, the backlog of missed days, the failure notice, and draft packs |
 | `tests/test_helpers.py` | 35 | Key-role detection, autocomplete degradation, filename slugging, embed packing, missing-asset guidance |
 | `tests/test_search.py` | 30 | `/search` filters, the deep `actions`/`triggers`/`properties` scan, sort orders |
 | `tests/test_bulk_report.py` | 45 | Bulk diffs: changed-fields-only, jsonb shape not contents, announced truncation |
 | `tests/test_command_registration.py` | 35 | **What the cog actually exposes**, and that no name in it is undefined at runtime |
 | `tests/test_art_cache.py` | 32 | Both caches: content-hash render keys, art TTL, invalidation after a re-upload |
 | `tests/test_content_get.py` | 31 | The `/show` embed: which fields show, which are deliberately omitted — plus `/rules`, which carries exactly the four `jsonb` fields `/show` drops |
-| `tests/test_stats_format.py` | 79 | `/stats` rendering: `avg_combo_log10` as an order of magnitude, compacted combos, and a footer that never omits the denominator |
+| `tests/test_stats_format.py` | 36 | `/stats` rendering: `avg_combo_log10` as an order of magnitude, compacted combos, the scoreboard carrying its denominator |
 | `tests/test_holo.py` | 18 | The holographic sheen: constants taken from the MATERIAL not the shader defaults, `_metallicness` extrapolating past 1, white tinting (the catalyst bug) while staying weaker than saturated colour |
 | `tests/test_upgrades.py` | 33 | The engine's upgrade rules, transcribed: tier selection and gaps, `_added` append semantics, replace-before-add ordering, and cards that upgrade into aspects |
 | `tests/test_taxonomy.py` | 26 | The vocabularies that were six tables: canonical lists match the game, in-use values are unioned in, a failed read never loses the hardcoded list |
@@ -38,13 +38,14 @@ Added 2026-08-26. Before that there was no suite at all.
 ## What these tests are for
 
 Most are **regression tests for specific production bugs**, each named at its
-site with the date and the failure. Three came from real incidents:
+site with the date and the failure. Four came from real incidents:
 
 | Incident | Pinned by |
 |---|---|
 | **2026-06-30** — `unsupported operand type(s) for +: 'int' and 'str'` when enabling the daily update. `level_reached` (bigint) + `highest_combo` (**text**) | `test_draft_stats_survives_a_text_combo_end_to_end` |
 | **2026-06-19** — ~30 duplicate messages. The day was claimed only *after* a successful send, so a send that failed partway left nothing claimed and the 10-minute loop retried forever | `test_failed_send_does_not_re_fire` |
 | **2026-09-01** — the daily report stopped silently and permanently. An exception out of `_claim_and_send` reached `tasks.Loop`, which prints and **re-raises** anything outside its five connection-ish types, ending the loop for the life of the process | `test_a_failing_channel_does_not_kill_the_sweep`, `test_the_sweep_retries_on_the_next_cycle_after_a_failure` |
+| **2026-09-29/30** — two reports never arrived with the bot up. A pack offer (`item_type 'pack'`, no `item_id`) made the name lookup query `public.packs`; every retry raised, the day moved on at midnight, and only the newest day was ever sent | `test_a_pack_is_named_by_its_kind_and_never_looked_up`, `test_a_report_that_will_not_build_holds_the_later_days_and_says_so`, `test_every_missed_day_is_owed_oldest_first` |
 
 The rest guard invariants that are easy to break while producing plausible
 numbers — zero-node turns staying in the denominator, skips not counting as
