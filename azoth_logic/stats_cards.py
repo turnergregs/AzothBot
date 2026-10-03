@@ -1177,3 +1177,150 @@ def leaderboard_card(rows: list, population: str = "", hero: str | None = None,
     return card
 
 
+
+
+# ---------------------------------------------------------------------------
+# /stats links
+# ---------------------------------------------------------------------------
+# 2026-10-02. How many links a turn holds, which types they are, and how long.
+# Reads the game repo's 2026-10-02_link_views.sql: link_turn_view (turns per
+# links played, zero-link turns included) and link_type_view (links per type
+# key and size). Both are counts per cohort, so select_cohort sums them.
+#
+# A one-card link satisfies all three types (docs/LINK_VALIDATION.md), so it
+# is its own row: counted under "all three" it would make that the biggest
+# type by far and say nothing about what players link.
+
+LINK_TURN_COUNTS = ("turns",)
+LINK_TYPE_COUNTS = ("links",)
+LINK_TYPE_ORDER = ("group", "set", "sequence")
+LINK_TYPE_NAMES = {"group": "Group", "set": "Set", "sequence": "Sequence"}
+# Below this many links a type's average length is grey.
+MIN_TYPE_LINKS = 10
+# The most rows a links-per-turn chart draws before it buckets.
+MAX_TURN_ROWS = 6
+# Wide enough for "Group + Sequence".
+LINK_LABEL_W = 150
+_NICE_WIDTHS = (1, 2, 3, 5, 10, 20, 25, 50, 100)
+
+
+def link_type_label(key: str, size: int) -> str:
+    if size == 1:
+        return "One card"
+    types = [t for t in (key or "").split("+") if t]
+    if not types:
+        return "No type"
+    if len(types) == len(LINK_TYPE_ORDER):
+        return "All three"
+    return " + ".join(LINK_TYPE_NAMES.get(t, t) for t in types)
+
+
+def _type_order(label: str) -> tuple:
+    """Single types first, then pairs, then all three, each in the game's
+    order (group, set, sequence), then one-card links and anything untyped."""
+    if label in ("One card", "No type"):
+        return (9, (), label)
+    names = [LINK_TYPE_NAMES[t] for t in LINK_TYPE_ORDER]
+    parts = names if label == "All three" else label.split(" + ")
+    index = tuple(names.index(p) if p in names else len(names) for p in parts)
+    return (len(parts), index, label)
+
+
+def link_types(rows: list) -> list:
+    """`[(label, links, cards)]` from link_type_view rows, merged over turn
+    type, in display order. `cards` is the sum of sizes, for averages."""
+    merged: dict = {}
+    for r in rows:
+        size = int(r.get("link_size") or 0)
+        label = link_type_label(r.get("link_types") or "", size)
+        n = int(r.get("links") or 0)
+        entry = merged.setdefault(label, [0, 0])
+        entry[0] += n
+        entry[1] += n * size
+    return sorted(((k, n, c) for k, (n, c) in merged.items() if n),
+                  key=lambda t: _type_order(t[0]))
+
+
+def links_per_turn(rows: list, turn_type: str) -> dict:
+    """`{links: turns}` for one turn type, from link_turn_view rows."""
+    out: dict = {}
+    for r in rows:
+        if r.get("turn_type") == turn_type and int(r.get("turns") or 0):
+            k = int(r.get("links") or 0)
+            out[k] = out.get(k, 0) + int(r["turns"])
+    return out
+
+
+def turn_buckets(dist: dict) -> list:
+    """`[(label, turns)]`: one row per link count when they fit in
+    MAX_TURN_ROWS, otherwise even ranges at the narrowest round width that
+    fits. Empty rows between the first and last are kept: a gap in a
+    distribution is information."""
+    if not dist:
+        return []
+    top = max(dist)
+    width = next((w for w in _NICE_WIDTHS if top // w + 1 <= MAX_TURN_ROWS), _NICE_WIDTHS[-1])
+    rows = []
+    for lo in range(0, top + 1, width):
+        hi = lo + width - 1
+        n = sum(t for k, t in dist.items() if lo <= k <= hi)
+        rows.append((str(lo) if width == 1 else f"{lo}–{hi}", n))
+    return rows
+
+
+def _mean(dist: dict):
+    turns = sum(dist.values())
+    return sum(k * t for k, t in dist.items()) / turns if turns else None
+
+
+def links_card(turn_rows: list, type_rows: list, population: str = "") -> sc.Card:
+    regular = links_per_turn(turn_rows, "regular")
+    boss = links_per_turn(turn_rows, "boss")
+    types = link_types(type_rows)
+    links = sum(n for _, n, _ in types)
+    cards = sum(c for _, _, c in types)
+
+    parts = [population, f"version ≥ {CUTOFF_VERSION}", f"{links:,} links"]
+    card = sc.Card("Links", " · ".join(p for p in parts if p))
+
+    def per(dist):
+        m = _mean(dist)
+        return "—" if m is None else f"{m:.1f}"
+    card.add(*sc.tile_rows([("Per regular turn", per(regular)),
+                            ("Per boss turn", per(boss)),
+                            ("Average length", f"{cards / links:.1f}" if links else "—"),
+                            ("Links", f"{links:,}")]))
+    card.add(sc.Spacer(4))
+
+    for title, dist in (("Links per regular turn", regular), ("Links per boss turn", boss)):
+        if not dist:
+            continue
+        turns = sum(dist.values())
+        card.add(sc.SectionHeader(title, f"{turns:,} turns"))
+        for label, n in turn_buckets(dist):
+            card.add(sc.BarRow(label, n / turns, value_text=f"{round(100 * n / turns)}%",
+                               count_text=f"{n:,}", fill=sc.NEUTRAL))
+        card.add(sc.Spacer(4))
+
+    if types:
+        card.add(sc.SectionHeader("Link types", "share of links"))
+        for label, n, _ in types:
+            card.add(sc.BarRow(label, n / links, value_text=f"{round(100 * n / links)}%",
+                               count_text=f"{n:,}", label_w=LINK_LABEL_W, fill=sc.NEUTRAL))
+        card.add(sc.Spacer(4))
+
+        # Length per type, against every multi-card link's average: a
+        # one-card link is length 1 by definition, so it is left out of both.
+        longer = [(label, n, c) for label, n, c in types if label != "One card"]
+        n_all = sum(n for _, n, _ in longer)
+        if n_all:
+            average = sum(c for _, _, c in longer) / n_all
+            scale = max(c / n for _, n, c in longer) * 1.25
+            card.add(sc.SectionHeader("Length by type", f"{average:.1f} cards on average"))
+            for label, n, c in longer:
+                mean = c / n
+                card.add(sc.BarRow(label, mean / scale, value_text=f"{mean:.1f}",
+                                   count_text=f"{n:,}", delta=f"{mean - average:+.1f}",
+                                   reference=average / scale, faded=n < MIN_TYPE_LINKS,
+                                   label_w=LINK_LABEL_W, fill=sc.NEUTRAL))
+    return card
