@@ -246,3 +246,22 @@ def test_players_replaced_active_players_and_engagement():
     registered = _registered_command_names()
     assert "players" in registered
     assert not {"active_players", "engagement"} & registered
+
+
+def test_every_stats_report_is_run_by_stats_all():
+    """`/stats all` runs the reports listed in `stats.ALL_REPORTS`, so a report
+    missing from it is never checked after a view change. /stats links shipped
+    as a card with no command (2026-10-02); this is the list it joined."""
+    from azoth_commands.stats import ALL_REPORTS
+
+    def leaves(command):
+        if command.children:
+            for child in command.children.values():
+                yield from leaves(child)
+        else:
+            yield command
+
+    listed = {attr for _, attr, _ in ALL_REPORTS}
+    reports = {c.callback.__name__ for c in leaves(AzothCommands.stats_cmd)} - {"stats_all"}
+    assert reports - listed == set(), "reports /stats all never runs"
+    assert listed - reports == set(), "ALL_REPORTS names a report that does not exist"

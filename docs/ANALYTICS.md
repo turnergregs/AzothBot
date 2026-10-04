@@ -57,6 +57,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
+| `/stats links` | `link_turn_view` + `link_type_view` | Links per regular and boss turn (zero-link turns included), the share of each link type, and each type's average length against every multi-card link's. `players:` cohort filter. See [Links](#links-2026-10-03) |
 | `/stats item` | `boss_split_view` / `draft_item_split_view` / `hero_split_view` | One boss, card, aspect, rite or hero, its rate per version (or ritual, or hero), each against the rest of its kind in that group. Drawn in the item's colour beside its face or art. See [One item](#one-item-2026-09-29) |
 | `/stats draft picks` | `draft_offer_view` | Pick rate by type (packs included), each kind of draft pack, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
 | `/stats draft items` | `draft_item_offer_view` | The five most and five least picked cards, aspects and rites, one group per type, each against its own type |
@@ -481,6 +482,29 @@ Adding version, ritual and hero to `boss_fight_view` or
 fetches, and at the time `fetch_all` did not page past PostgREST's 1000-row
 cap. It does now (2026-09-29, ARCHITECTURE.md), but a lookup of one item's
 rows is still one small request rather than several pages.
+
+### Links (2026-10-03)
+
+How many links a turn holds, which types they are, and how long they run.
+The game repo's `2026-10-02_link_views.sql` adds two count views, both per
+cohort so the bot sums the cohorts asked for (`select_cohort`):
+`link_turn_view` (turns per regular/boss and links played) and
+`link_type_view` (links per regular/boss, type key and size). Both read
+`turns` / `turn_nodes`, so service_role only.
+
+- **Zero-link turns are counted.** The link count is a correlated subquery, not
+  an inner join to `turn_nodes`, for the reason under *Links per turn* above.
+- **A one-card link is its own row.** It is valid as all three types
+  (`LINK_VALIDATION.md` in the game repo), so it arrives as
+  `group+set+sequence` at size 1. Counted under "All three" it would be the
+  biggest type by far and say nothing about what players link. It is left out
+  of the length section too: its length is 1 by definition.
+- **Link types merge regular and boss turns**; links per turn keeps them apart,
+  since a boss turn is a different turn.
+- A type with fewer than 10 links has its average length greyed.
+
+The card was drawn on 2026-10-02 and the command added the next day; it shipped
+without one, which `test_every_stats_report_is_run_by_stats_all` now catches.
 
 ### Draft reports (2026-09-29)
 

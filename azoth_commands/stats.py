@@ -30,6 +30,7 @@ ALL_REPORTS = [
     ("breakdown by:ritual", "stats_breakdown", {"by": "ritual", "players": "new"}),
     ("breakdown by:version", "stats_breakdown", {"by": "version", "players": "new"}),
     ("bosses", "stats_bosses", {"players": "new"}),
+    ("links", "stats_links", {"players": "new"}),
     ("item", "stats_item", {"by": "version", "players": "new"}),   # item filled in at run time
     ("scoreboard", "stats_scoreboard", {}),
     ("draft picks", "stats_draft_picks", {"players": "new"}),
@@ -403,6 +404,42 @@ def add_stats_commands(cls):
         await _send_card(interaction, stats_cards.bosses_card(rows, population), "bosses.png",
                          colour=0xC0392B)
 
+    # --- Links ---
+    # 2026-10-03. How many links a turn holds (regular vs boss, zero-link
+    # turns included), which types they are, and how long each type runs.
+    # Two count views, summed over the cohorts asked for. See stats_cards
+    # § /stats links and docs/ANALYTICS.md § Links.
+    @stats_cmd.subcommand(name="links", description="Links per turn, link types and length")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch link stats.")
+    async def stats_links(
+        self,
+        interaction: Interaction,
+        players: str = SlashOption(
+            description="Whose turns to count (default: new playtesters)",
+            required=False,
+            default="new",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
+    ):
+        try:
+            turn_rows = fetch_all("link_turn_view")
+            type_rows = fetch_all("link_type_view")
+        except SupabaseError:
+            return ("❌ `link_turn_view` / `link_type_view` are not migrated — run "
+                    "`db/migrations/2026-10-02_link_views.sql`.")
+
+        turn_rows, filtered = stats_cards.select_cohort(
+            turn_rows, players, ("turn_type", "links"), stats_cards.LINK_TURN_COUNTS)
+        type_rows, _ = stats_cards.select_cohort(
+            type_rows, players, ("turn_type", "link_types", "link_size"),
+            stats_cards.LINK_TYPE_COUNTS)
+        if not any(int(r.get("turns") or 0) for r in turn_rows):
+            return "❌ No turns recorded for these players yet."
+
+        population = stats_cards.COHORT_LABELS[players] if filtered else "Everyone"
+        await _send_card(interaction, stats_cards.links_card(turn_rows, type_rows, population),
+                         "links.png", colour=0x1ABC9C)
+
     # --- One item ---
     # 2026-09-29, after Veln: its hp was halved in 0.9.11 and /stats bosses,
     # pooling every version, still ranked it the hardest. One boss, card,
@@ -586,6 +623,7 @@ def add_stats_commands(cls):
     cls.stats_breakdown = stats_breakdown
     cls.stats_all = stats_all
     cls.stats_bosses = stats_bosses
+    cls.stats_links = stats_links
     cls.stats_item = stats_item
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would

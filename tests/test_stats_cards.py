@@ -894,3 +894,51 @@ def test_the_limit_caps_the_board():
 def test_the_leaderboard_renders():
     assert Image.open(io.BytesIO(cards.leaderboard_card(BOARD, "Everyone").png())).width \
         == sc.WIDTH * sc.SCALE
+
+
+# --- /stats links -------------------------------------------------------------
+
+def _turns(turn_type, links, turns, cohort="new"):
+    return {"cohort": cohort, "turn_type": turn_type, "links": links, "turns": turns}
+
+
+def _links(key, size, links, turn_type="regular", cohort="new"):
+    return {"cohort": cohort, "turn_type": turn_type, "link_types": key,
+            "link_size": size, "links": links}
+
+
+LINK_TURNS = [_turns("regular", 0, 4), _turns("regular", 2, 10), _turns("regular", 3, 6),
+              _turns("boss", 1, 5), _turns("boss", 4, 3)]
+LINK_TYPES = [_links("group", 3, 12), _links("set", 4, 8), _links("group+sequence", 5, 6),
+              _links("group+set+sequence", 1, 9), _links("group+set+sequence", 3, 2),
+              _links("sequence", 2, 4, turn_type="boss")]
+
+
+def test_a_one_card_link_is_its_own_row_not_all_three():
+    labels = [label for label, _, _ in cards.link_types(LINK_TYPES)]
+    assert labels.count("One card") == 1 and labels.count("All three") == 1
+    assert labels.index("All three") < labels.index("One card")
+
+
+def test_link_types_merge_regular_and_boss_turns():
+    merged = {label: n for label, n, _ in cards.link_types(
+        LINK_TYPES + [_links("group", 3, 5, turn_type="boss")])}
+    assert merged["Group"] == 17
+
+
+def test_zero_link_turns_count_toward_links_per_turn():
+    regular = cards.links_per_turn(LINK_TURNS, "regular")
+    assert regular[0] == 4 and sum(regular.values()) == 20
+
+
+def test_link_cohorts_are_summed_per_bucket():
+    rows, filtered = cards.select_cohort(
+        LINK_TURNS + [_turns("regular", 2, 7, cohort="developer")],
+        "new", ("turn_type", "links"), cards.LINK_TURN_COUNTS)
+    two = next(r for r in rows if r["turn_type"] == "regular" and r["links"] == 2)
+    assert filtered and two["turns"] == 10
+
+
+def test_the_links_card_renders():
+    assert Image.open(io.BytesIO(cards.links_card(LINK_TURNS, LINK_TYPES, "New playtesters").png())).width \
+        == sc.WIDTH * sc.SCALE
