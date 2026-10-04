@@ -734,8 +734,39 @@ def draft_picks_card(rows: list, population: str = "") -> sc.Card:
     order = [e for e in ELEMENT_ORDER if e in elements] + sorted(e for e in elements if e not in ELEMENT_ORDER)
     section("By element", [(str(e).capitalize(), *elements[e]) for e in order])
 
+    # Valence is an ordered axis, so its rates are columns read left to right
+    # (2026-10-03): the question is the slope, whether heavier cards are
+    # picked less, which a list of rows makes you work out from the numbers.
     valences = _buckets(rows, "valence")
-    section("By valence", [(_valence_name(v), *valences[v]) for v in sorted(valences, key=_valence_key)])
+    if valences:
+        entries = [(v, *valences[v]) for v in sorted(valences, key=_valence_key)]
+        # Every valence up to the top one printed, offered or not, as the
+        # pool chart does: a valence the pool has none of is an empty column.
+        numbered = [int(v) for v, _, _ in entries if str(v).isdigit()]
+        top = max([MAX_VALENCE, *numbered])
+        shown = {str(v): (v, vp, vo) for v, vp, vo in entries}
+        p = sum(e[1] for e in entries)
+        o = sum(e[2] for e in entries)
+        average = p / o if o else 0
+        columns = []
+        for key in ["none"] * ("none" in shown) + [str(v) for v in range(1, top + 1)]:
+            if key not in shown:
+                columns.append({"label": key, "value": None})
+                continue
+            v, vp, vo = shown[key]
+            rest_p, rest_o = p - vp, o - vo
+            flag = (rate_flag(vp, vo, rest_p / rest_o)
+                    if vo >= MIN_OFFERS and rest_o >= MIN_OFFERS else None)
+            style = _flag_style(flag)
+            columns.append({"label": _valence_name(v).removesuffix("v"), "value": vp / vo,
+                            # Offers only: "70/190" under twelve columns ran together.
+                            "count_text": f"{vo:,}",
+                            "faded": vo < MIN_OFFERS, "marker": style["marker"],
+                            "marker_fill": style["marker_fill"]})
+        card.add(sc.SectionHeader("By valence", f"{round(100 * average)}% overall · offers under each"))
+        card.add(sc.RateColumns(columns, fill=sc.NEUTRAL, baseline=average))
+        card.add(sc.Legend([("Overall pick rate", sc.REFERENCE, "line")], indent=0))
+        card.add(sc.Spacer(4))
 
     bare = _buckets(rows, "embellished").get("bare")
     kinds = _buckets(rows, "kind")
@@ -808,6 +839,11 @@ def draft_items_card(rows: list, population: str = "") -> sc.Card:
 
 
 
+# The highest valence a card is printed at: the pool chart runs to here even
+# when nothing in the pool does, so an empty top end reads as empty.
+MAX_VALENCE = 10
+
+
 def draft_pool_card(row: dict) -> sc.Card:
     """What the draft pool holds: content, not play, so no cohort."""
     from azoth_logic import stats_format as sf
@@ -831,12 +867,24 @@ def draft_pool_card(row: dict) -> sc.Card:
             card.add(sc.BarRow(str(name).capitalize(), n / top, value_text=str(n), count_w=0,
                                fill=ELEMENT_COLOURS.get(name, sc.NEUTRAL)))
         card.add(sc.Spacer(4))
-    valences, _ = sf._valence_buckets(row)
-    if valences:
-        top = max(n for _, n in valences)
+    # A histogram over 1-10 with every valence drawn, empty ones included, so
+    # a hole in the pool (no 7s, no 10s) shows as a hole (2026-10-03).
+    # Cards with no valence lead, apart from the scale.
+    counts = row.get("valence_counts")
+    if isinstance(counts, dict) and counts:
+        valued = {int(k): int(v or 0) for k, v in counts.items() if str(k).isdigit()}
+        top = max([MAX_VALENCE, *valued])
         card.add(sc.SectionHeader("Cards by valence"))
-        for label, n in valences:
-            card.add(sc.BarRow(label, n / top, value_text=str(n), count_w=0, fill=sc.NEUTRAL))
+        card.add(sc.Histogram([int(counts.get("none") or 0)] + [valued.get(v, 0) for v in range(1, top + 1)],
+                              labels=["—"] + [str(v) for v in range(1, top + 1)],
+                              show="count", label_all=True))
+    else:
+        valences, _ = sf._valence_buckets(row)
+        if valences:
+            top = max(n for _, n in valences)
+            card.add(sc.SectionHeader("Cards by valence"))
+            for label, n in valences:
+                card.add(sc.BarRow(label, n / top, value_text=str(n), count_w=0, fill=sc.NEUTRAL))
     return card
 
 

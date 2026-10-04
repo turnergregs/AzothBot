@@ -596,10 +596,21 @@ def test_an_element_is_flagged_against_the_rest_of_its_section():
     assert rows["Sol"].marker == ""
 
 
-def test_valence_is_in_numeric_order_with_none_first():
-    rows = _section_rows(cards.draft_picks_card(OFFERS), "By valence")
-    assert [r.label for r in rows] == ["—", "2v", "10v"]
-    assert rows[2].faded                   # 6 offers
+def _blocks(card, kind):
+    return [b for b in card.blocks if isinstance(b, kind)]
+
+
+def test_valence_is_in_numeric_order_with_none_first_and_gaps_kept():
+    """Columns since 2026-10-03: every valence to 10, one never offered empty."""
+    groups = _blocks(cards.draft_picks_card(OFFERS), sc.RateColumns)[0].groups
+    assert [g["label"] for g in groups] == ["—"] + [str(v) for v in range(1, 11)]
+    by = {g["label"]: g for g in groups}
+    assert by["5"]["value"] is None and by["10"]["faded"]     # 6 offers
+
+
+def test_valence_columns_share_one_baseline():
+    columns = _blocks(cards.draft_picks_card(OFFERS), sc.RateColumns)[0]
+    assert columns.baseline is not None and all("rest" not in g for g in columns.groups)
 
 
 def test_the_picks_tiles_total_every_offer_once():
@@ -705,9 +716,10 @@ def test_rites_are_counted_beside_the_pool_never_in_it():
     assert tiles["Rite slots / run"].startswith("~")
 
 
-def test_the_pool_lists_only_valences_that_exist():
-    rows = _section_rows(cards.draft_pool_card(POOL), "Cards by valence")
-    assert [r.label for r in rows] == ["—", "2v", "9v"]
+def test_the_pool_shows_every_valence_so_holes_show():
+    hist = _blocks(cards.draft_pool_card(POOL), sc.Histogram)[0]
+    assert hist.labels == ["—"] + [str(v) for v in range(1, 11)]
+    assert hist.counts == [24, 0, 26, 0, 0, 0, 0, 0, 0, 3, 0]
 
 
 @pytest.mark.parametrize("build", [lambda: cards.draft_picks_card(OFFERS),

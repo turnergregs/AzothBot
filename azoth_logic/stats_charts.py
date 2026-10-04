@@ -556,9 +556,14 @@ class RateColumns(Block):
     tops out at the next 25% above the tallest mark (50% at the least),
     labelled in a right margin no column enters: rates mostly sit under 60%,
     and a fixed 0-100% left half of every chart empty.
+
+    `baseline`, in place of each group's `rest`, is ONE line across the plot
+    for groups all read against the same rate (a section's overall pick rate).
+    A tick per column at the same height reads as a row of dashes.
     """
     groups: list
     fill: str = ACCENT
+    baseline: float | None = None
     height: float = 180
 
     PLOT_H = 104      # the height of a column at the top of the scale
@@ -571,7 +576,7 @@ class RateColumns(Block):
 
     def scale(self) -> float:
         tallest = max([v for g in self.groups for v in (g.get("value"), g.get("rest"))
-                       if v is not None], default=0)
+                       if v is not None] + [self.baseline or 0], default=0)
         return min(max(0.5, math.ceil(tallest * 4 - 1e-9) / 4), 1.0)
 
     def draw(self, d, top):
@@ -593,19 +598,26 @@ class RateColumns(Block):
         def height_of(value):
             return self.PLOT_H * min(max(value, 0), scale) / scale
 
+        if self.baseline is not None:
+            y = base - px(height_of(self.baseline))
+            d.line([(px(PAD), y), (right, y)], fill=REFERENCE, width=px(1))
+
         for i, g in enumerate(self.groups):
             centre = x0 + slot * (i + 0.5)
             faded = g.get("faded", False)
             value, rest = g.get("value"), g.get("rest")
+            # A shared baseline runs behind every column and breaks round each
+            # value instead (below), so it never lifts a value off its column.
+            line = rest
             x_a, x_b = px(centre - col_w / 2), px(centre + col_w / 2)
             peak = 0
             if value is not None:
                 h = max(height_of(value), 2)
                 peak = h
-                # The value sits on its column. Only a tick that would cut
+                # The value sits on its column. Only a line that would cut
                 # through the number (just above the column) lifts it over.
-                if rest is not None and 0 <= height_of(rest) - h <= self.LABEL_CLEAR:
-                    peak = height_of(rest)
+                if line is not None and 0 <= height_of(line) - h <= self.LABEL_CLEAR:
+                    peak = height_of(line)
                 box = [x_a, base - px(h), x_b, base]
                 if faded:
                     d.rounded_rectangle(box, radius=px(3), outline=dim(self.fill, 0.75), width=px(1.25))
@@ -622,6 +634,10 @@ class RateColumns(Block):
                 text = f"{round(value * 100)}"
                 text_y = base - px(peak) - px(6)
                 f = font(13, True)
+                if self.baseline is not None:
+                    box = d.textbbox((px(centre), text_y), text, font=f, anchor="mb")
+                    d.rectangle([box[0] - px(3), box[1] - px(2), box[2] + px(3), box[3] + px(2)],
+                                fill=SURFACE)
                 d.text((px(centre), text_y), text, font=f, fill=INK_2 if faded else INK, anchor="mb")
                 if g.get("marker"):
                     x = px(centre) - d.textlength(text, font=f) / 2 - px(3)
@@ -646,9 +662,18 @@ class Histogram(Block):
     rest, and the axis is numbered every AXIS_EVERY. A value that occurred at
     all is at least MIN_H tall, so a long tail of single turns stays visible.
     `mean` draws a reference line at that position, labelled above the plot.
+
+    `labels` names the columns when they are not 0, 1, 2... (a "—" column for
+    cards with no valence ahead of 1-10). `show="count"` labels each column
+    with its count rather than its share, for content (how many cards), where
+    a count is the number that matters; the gridlines, which are shares, go.
+    `label_all` overrides the LABEL_ALL rule.
     """
     counts: list
     mean: float | None = None
+    labels: list | None = None
+    show: str = "share"
+    label_all: bool | None = None
     fill: str = NEUTRAL
     height: float = 170
 
@@ -683,7 +708,7 @@ class Histogram(Block):
         right = px(WIDTH - PAD - self.AXIS_W + 6)
         scale, step = self.scale(), self.step()
 
-        for k in range(1, round(scale / step) + 1):
+        for k in range(1, round(scale / step) + 1 if self.show == "share" else 1):
             y = base - px(self.PLOT_H * k * step / scale)
             d.line([(px(PAD), y), (right, y)], fill=TRACK, width=px(0.5))
             d.text((px(WIDTH - PAD), y), f"{round(k * step * 100)}%", font=font(10),
@@ -693,7 +718,7 @@ class Histogram(Block):
             return PAD + slot * (value + 0.5)
 
         tallest = max(range(n), key=lambda i: self.counts[i]) if self.counts else None
-        label_all = n <= self.LABEL_ALL
+        label_all = n <= self.LABEL_ALL if self.label_all is None else self.label_all
         for i, c in enumerate(self.counts):
             centre = x_of(i)
             if c:
@@ -704,10 +729,12 @@ class Histogram(Block):
                                     corners=(True, True, False, False))
                 if label_all or i == tallest:
                     pct = round(100 * c / total)
-                    d.text((px(centre), base - px(h) - px(5)), f"{pct}%" if pct else "<1%",
+                    text = str(c) if self.show == "count" else f"{pct}%" if pct else "<1%"
+                    d.text((px(centre), base - px(h) - px(5)), text,
                            font=font(12 if label_all else 11, True), fill=INK, anchor="mb")
             if label_all or i % self.AXIS_EVERY == 0:
-                d.text((px(centre), base + px(12)), str(i), font=font(12 if label_all else 11),
+                name = self.labels[i] if self.labels else str(i)
+                d.text((px(centre), base + px(12)), name, font=font(12 if label_all else 11),
                        fill=INK_2, anchor="mm")
         d.line([(px(PAD), base), (right, base)], fill=MUTED, width=px(0.75))
 

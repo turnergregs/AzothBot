@@ -530,7 +530,7 @@ Redrawn as images, three subcommands where there were four. The views behind
 in the game repo), so they take `players:`; `pool` is content and does not.
 
 - **`picks`** (`draft_offer_view`): tiles for offers, picks and pick rate, then
-  a pick-rate bar per bucket by type, element and valence, each against its
+  a pick-rate bar per bucket by type and element, each against its
   section's pooled rate with the `rate_flag` red/blue flags and 10+ offers to be
   flagged; then each embellishment kind (upgraded, attribute, enhanced) against
   **bare cards**, since one card can carry two kinds. The bare-vs-embellished
@@ -544,7 +544,13 @@ in the game repo), so they take `players:`; `pool` is content and does not.
   gave a pick (`in_pack` picks over opens; the rest were Skipped). What is
   offered inside an opened pack still counts as offered everywhere else, element
   and valence included. A view with no pack offers draws
-  the card exactly as before. `items` is unchanged: its view keeps one row per
+  the card exactly as before.
+  **Valence is columns** (2026-10-03, `RateColumns` with one shared `baseline`
+  line at the section's pooled rate): an ordered axis, and the question is the
+  slope, whether heavier cards are picked less. Every valence to 10 is a
+  column, "—" first; one never offered is empty. Same flags and 10-offer floor
+  as the rows. Only the offer count sits under each column: picked/offered
+  under twelve columns ran together, and the rate is on the column. `items` is unchanged: its view keeps one row per
   item and gained `offered_in_pack` / `picked_in_pack`, which it does not read
   yet.
 - **`items`** (`draft_item_offer_view`): the five most and five least picked
@@ -557,7 +563,10 @@ in the game repo), so they take `players:`; `pool` is content and does not.
   ten ranked items draws a shorter Least picked, never an item twice.
 - **`pool`** (`draft_deck_view`): cards, aspects, rite templates and the
   estimated rite slots per run as tiles (rites beside the pool, never in it),
-  then cards by element in the game's element colours and by valence.
+  then cards by element in the game's element colours and by valence, the
+  last a **histogram** since 2026-10-03 (`stats_charts.Histogram`, counts on
+  the columns): every valence 1-10 drawn, "—" first, so a hole in the pool
+  shows as one. The live pool had none at 7 or 10 when it was drawn.
 
 It retired `draft_dimension_rates_view`, `draft_embellishment_rates_view` and
 `draft_rates_view` from the bot, and the text formatting helpers with them.
@@ -788,6 +797,9 @@ be running either side of the migration, but a partial distribution must never
 be drawn as a whole one.
 
 #### Two rules the rendering keeps
+
+*(These two rules came from the row chart; the histogram keeps both: a column
+for a count of one is at least `MIN_H` tall, and "—" leads.)*
 
 - **A non-zero count always gets at least one bar cell.** Scaled to the largest
   bucket, a rare valence rounds to nothing, and a bar that renders empty says
