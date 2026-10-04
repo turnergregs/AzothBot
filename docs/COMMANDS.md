@@ -587,6 +587,16 @@ ones that don't fit wait for the next update. `report_type =
 all** when nothing is unsent. A channel enabled for the first time starts at id 0
 and works through the whole history.
 
+**Survey comments** follow the reports as a second message (2026-10-04): rows
+of `survey_responses` with a comment, posted the same way (ten a day, oldest
+first, a footer for the rest) on their own watermark `last_survey_id`. Each
+field is named by the question, then holds the comment and answer · player ·
+version · date. Questions and answers come from `SURVEY_QUESTIONS` /
+`SURVEY_ANSWERS` in `daily_reports.py`; **add a new game question there**, or it
+shows as its raw id. One-click answers are never posted. A database without the
+table (migration not applied) posts the reports alone and says so in the
+console.
+
 It keeps its own state (`daily_reports_state.json`) with two fields that fail in
 opposite directions on purpose: the day is claimed *before* sending, so a failed
 send never re-fires every 10 minutes, while `last_report_id` advances only past

@@ -20,6 +20,9 @@ class _FakeReports:
     def __init__(self, tables):
         self.tables = tables
         self.fail = False
+        # Tables that do not exist yet, as a database before a migration.
+        self.missing = set()
+        self.columns = {}
 
     def table(self, name):
         fake = self
@@ -36,6 +39,12 @@ class _FakeReports:
 
             def gt(self, col, v):
                 self.rows = [r for r in self.rows if r[col] > v]
+                return self
+
+            def eq(self, col, v):
+                if col not in fake.columns.get(name, {col}):
+                    raise RuntimeError(f"column {col} does not exist")
+                self.rows = [r for r in self.rows if r.get(col) == v]
                 return self
 
             def neq(self, col, v):
@@ -58,6 +67,8 @@ class _FakeReports:
             def execute(self):
                 if fake.fail:
                     raise RuntimeError("PostgREST 503")
+                if name in fake.missing:
+                    raise RuntimeError(f"relation public.{name} does not exist")
                 count = len(self.rows) if self.want_count else None
                 data = self.rows[:self.cap] if self.cap is not None else self.rows
                 return type("R", (), {"data": data, "count": count})()
@@ -69,6 +80,14 @@ def _report(i, report_type="feature_request", **kw):
     row = {"id": i, "player_uuid": "p1", "report_type": report_type, "category": "Feature Request",
            "description": f"idea {i}", "contact_info": None, "game_version": "0.9.1",
            "created_at": "2026-09-20T12:00:00+00:00"}
+    row.update(kw)
+    return row
+
+
+def _survey(i, comment="the boss took forever", **kw):
+    row = {"id": i, "player_uuid": "p1", "question_id": "difficulty", "answer": "too_hard",
+           "comment": comment, "has_comment": bool(comment and comment.strip()),
+           "version": "0.9.12", "created_at": "2026-10-04T12:00:00+00:00"}
     row.update(kw)
     return row
 
@@ -99,7 +118,8 @@ class _Bot:
 def env(monkeypatch, tmp_path):
     monkeypatch.setattr(dr, "STATE_FILE", str(tmp_path / "reports_state.json"))
     monkeypatch.setattr(supabase_helpers, "SUPABASE_ROLE", "service_role")
-    fake = _FakeReports({"reports": [], "players": [{"uuid": "p1", "name": "Mira"}]})
+    fake = _FakeReports({"reports": [], "survey_responses": [],
+                         "players": [{"uuid": "p1", "name": "Mira"}]})
     monkeypatch.setattr(dr, "supabase", fake)
     day = {"today": "2026-09-25"}
     monkeypatch.setattr(dr, "_today_cst_str", lambda: day["today"])
@@ -334,3 +354,97 @@ def test_disabled_channel_is_skipped(env):
     channel = _Channel()
     _run_day(_Bot(channel))
     assert channel.calls == 0
+
+
+# --- Survey comments ---------------------------------------------------------
+
+def _survey_message(channel):
+    return [m for m in channel.sent if "survey comment" in m["embed"].title]
+
+
+def test_survey_comments_follow_the_reports_as_their_own_message(env):
+    fake, _ = env
+    fake.tables["reports"] = [_report(1)]
+    fake.tables["survey_responses"] = [_survey(1), _survey(2, comment=None, answer="just_right")]
+    channel = _Channel()
+    _run_day(_Bot(channel))
+
+    assert len(channel.sent) == 2
+    survey = _survey_message(channel)[0]["embed"]
+    assert survey.title == "1 new survey comment"     # one-click answers are not posted
+    field = survey.fields[0]
+    assert field.name == "That run's difficulty felt: #1"
+    assert "the boss took forever" in field.value and "Too hard" in field.value
+    assert "Mira" in field.value and "v0.9.12" in field.value
+    state = dr._load_state()["channels"]["123"]
+    assert state["last_report_id"] == 1 and state["last_survey_id"] == 1
+
+
+def test_a_score_answer_reads_as_a_score(env):
+    fake, _ = env
+    fake.tables["survey_responses"] = [_survey(1, question_id="fun", answer="2")]
+    channel = _Channel()
+    _run_day(_Bot(channel))
+    field = _survey_message(channel)[0]["embed"].fields[0]
+    assert field.name == "How fun was that run? #1"
+    assert "2/5" in field.value
+
+
+def test_an_unknown_question_shows_its_id(env):
+    fake, _ = env
+    fake.tables["survey_responses"] = [_survey(1, question_id="brand_new", answer="maybe")]
+    channel = _Channel()
+    _run_day(_Bot(channel))
+    field = _survey_message(channel)[0]["embed"].fields[0]
+    assert field.name.startswith("brand")
+    assert "maybe" in field.value
+
+
+def test_survey_comments_drain_on_their_own_watermark(env):
+    fake, day = env
+    fake.tables["survey_responses"] = [_survey(i) for i in range(1, 14)]
+    channel = _Channel()
+    bot = _Bot(channel)
+    _run_day(bot)
+    assert len(_survey_message(channel)[0]["embed"].fields) == 10
+    assert dr._load_state()["channels"]["123"]["last_survey_id"] == 10
+
+    day["today"] = "2026-09-26"
+    _run_day(bot)
+    assert [f.name.rsplit("#", 1)[1] for f in _survey_message(channel)[1]["embed"].fields] == ["11", "12", "13"]
+
+
+def test_a_database_without_the_survey_table_still_posts_reports(env):
+    fake, _ = env
+    fake.missing.add("survey_responses")
+    fake.tables["reports"] = [_report(1)]
+    channel = _Channel()
+    _run_day(_Bot(channel))
+    assert _posted_ids(channel) == [1]
+    assert dr._load_state()["channels"]["123"].get("last_survey_id", 0) == 0
+
+
+def test_a_failed_survey_send_does_not_hold_back_the_reports_watermark(env):
+    fake, day = env
+    fake.tables["reports"] = [_report(1)]
+    fake.tables["survey_responses"] = [_survey(1)]
+    channel = _Channel(fail_on={2})
+    _run_day(_Bot(channel))
+    state = dr._load_state()["channels"]["123"]
+    assert state["last_report_id"] == 1
+    assert state.get("last_survey_id", 0) == 0          # retried tomorrow
+
+    day["today"] = "2026-09-26"
+    _run_day(_Bot(channel))
+    assert len(_survey_message(channel)) == 1
+
+
+def test_survey_comments_cannot_ping_or_restyle(env):
+    fake, _ = env
+    fake.tables["survey_responses"] = [_survey(1, comment="@everyone **look** " + "x" * 2000)]
+    channel = _Channel()
+    _run_day(_Bot(channel))
+    value = _survey_message(channel)[0]["embed"].fields[0].value
+    comment = value.split("\n")[0]
+    assert "@everyone" not in comment and "**look**" not in comment
+    assert comment.endswith("…")

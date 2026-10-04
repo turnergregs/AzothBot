@@ -865,6 +865,7 @@ policy change as a security change.
 | `players` | SELECT + INSERT | ⚠️ World-readable, though it holds no PII beyond a display name |
 | `reports` | INSERT only | ✅ **The correct pattern** |
 | `turns`, `turn_nodes`, `levelups` | INSERT only | ✅ Follows `reports` |
+| `survey_responses` | INSERT only | ✅ Follows `reports` (2026-10-04). `/daily_reports` posts its comments |
 
 No UPDATE or DELETE policy exists anywhere except the narrow `games` one, so
 anon can add and read but never modify or destroy.
@@ -1116,6 +1117,7 @@ popular purely because they're offered more.
 
 | Date | Change |
 |---|---|
+| 2026-10-04 | **`survey_responses`** (game repo `2026-10-04_survey_responses.sql`). **Applied 2026-10-04.** One row per in-game survey question shown: `question_id`, `answer`, `comment`, `has_comment` (generated from `comment`), `outcome`, `moment`, and the run's context. bigint `id` plus a unique client `uuid`. INSERT-only for anon. `/daily_reports` posts the rows with `has_comment` as a second message on their own watermark, `last_survey_id`; until the table exists it posts the reports alone. Full column notes: the game repo's `docs/SURVEYS.md`. |
 | 2026-09-25 | **Analytics cutoff `0.9.0` → `0.9.10`** (`2026-09-25_bump_analytics_cutoff.sql`), the release that let in new playtesters. `analytics_cutoff()` alone; no view touched. Eligible population not measured at apply time. |
 | 2026-09-14 | **Dropped `rites.foresight`** (by hand in the SQL editor; no migration file). Nothing in the game read it. The Codex Rite templates, the content validator and AzothBot's `/create_rite` / `/update_rite` stopped writing it in the same change, so a payload carrying it is now rejected by `bulk_apply` as an unknown column. The old values are kept in `events_archive`. |
 | 2026-09-14 | **Renamed `events` to `rites`** (`2026-09-14_rename_events_to_rites.sql`). **Applied 2026-09-14.** In place, so ids survive; snapshots `events_archive` first. Backfills `deck_contents.content_type` and `draft_items.item_type` from `'event'` to `'rite'`, rewrites content payloads (`"zone": "events"`, `max_events`, `{last_event.`), the views' `'event'` literal and the `bulk_apply` allowlist. Safe to re-run. The `riteimages` bucket is `2026-09-14_riteimages_bucket.sql`; Rites carry no image files, so none were copied. The bot handles both sides through `azoth_logic/rite_schema.py`. |

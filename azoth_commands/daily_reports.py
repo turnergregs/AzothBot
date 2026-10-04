@@ -22,6 +22,14 @@ purpose:
 The schedule (send time, UTC offset, CST day boundary) is shared with
 daily_update.py; the state file is not, so the two can be pointed at different
 channels and toggled independently.
+
+SURVEY COMMENTS ride along (2026-10-04): the in-game one-click survey writes
+`survey_responses`, and the rows a player typed a comment on are posted as a
+second message, the same way -- up to REPORT_LIMIT a day, oldest first, with
+their own watermark `last_survey_id`. One-click answers are not posted. A
+database without the table (2026-10-04_survey_responses.sql not yet applied)
+posts the reports alone and says so in the console. See the game repo's
+docs/SURVEYS.md.
 """
 import asyncio
 import json
@@ -43,7 +51,7 @@ from azoth_commands.daily_update import (
 from azoth_commands.helpers import safe_interaction
 from constants import DEV_GUILD_ID
 from supabase_client import supabase
-from supabase_helpers import SupabaseQueryError, _assert_readable
+from supabase_helpers import SupabaseQueryError, SupabaseUnreadableError, _assert_readable
 
 # State file stores per-channel config:
 # {
@@ -71,6 +79,32 @@ REPORT_COLUMNS = ["id", "player_uuid", "report_type", "category", "description",
                   "contact_info", "game_version", "created_at"]
 
 EMBED_COLOR = 0x3498DB
+SURVEY_EMBED_COLOR = 0x9B59B6
+
+SURVEY_TABLE = "survey_responses"
+SURVEY_COLUMNS = ["id", "player_uuid", "question_id", "answer", "comment",
+                  "version", "created_at"]
+SURVEY_MIGRATION = "2026-10-04_survey_responses.sql"
+
+# The game's English for each question and answer (assets/surveys/questions.json
+# and translations.csv in the game repo). A question the bot does not know yet
+# shows its raw id rather than nothing.
+SURVEY_QUESTIONS = {
+    "understood": "I understood how to play.",
+    "fun": "How fun was that run?",
+    "loss": "That loss felt like:",
+    "difficulty": "That run's difficulty felt:",
+    "choices": "My choices mattered.",
+    "length": "That run's length felt:",
+    "variety": "Do runs feel different from each other?",
+    "fight_fun": "How fun was that fight?",
+    "fight_difficulty": "That fight's difficulty felt:",
+}
+SURVEY_ANSWERS = {
+    "yes": "Yes", "mostly": "Mostly", "no": "No",
+    "bad_luck": "Bad luck", "my_fault": "My fault", "unfair": "Unfair",
+    "too_easy": "Too easy", "just_right": "Just right", "too_hard": "Too hard",
+}
 
 # The loop and the startup catch-up both run as soon as the bot is ready, each
 # with its own copy of the state. A send is an await, so without this the second
@@ -122,6 +156,27 @@ def _fetch_unsent_reports(after_id: int, limit: int = REPORT_LIMIT) -> tuple[lis
         )
     except Exception as e:
         raise SupabaseQueryError(f"select on `reports` failed: {e}") from e
+    rows = response.data or []
+    total = response.count if response.count is not None else len(rows)
+    return rows, total
+
+
+def _fetch_unsent_survey_comments(after_id: int, limit: int = REPORT_LIMIT) -> tuple[list[dict], int]:
+    """The oldest `limit` survey responses with a comment and id > after_id, and
+    how many exist in total. Raises on failure, like _fetch_unsent_reports."""
+    _assert_readable(SURVEY_TABLE)
+    try:
+        response = (
+            supabase.table(SURVEY_TABLE)
+            .select(",".join(SURVEY_COLUMNS), count="exact")
+            .gt("id", after_id)
+            .eq("has_comment", True)
+            .order("id")
+            .limit(limit)
+            .execute()
+        )
+    except Exception as e:
+        raise SupabaseQueryError(f"select on `{SURVEY_TABLE}` failed: {e}") from e
     rows = response.data or []
     total = response.count if response.count is not None else len(rows)
     return rows, total
@@ -204,6 +259,36 @@ def _summary_field(report: dict, player_names: dict[str, str]) -> tuple[str, str
     return name, body
 
 
+def _survey_field(row: dict, player_names: dict[str, str]) -> tuple[str, str]:
+    """(name, value) for one survey comment.
+
+    Name: the question and its id. Value: the comment, then a line of the
+    answer / who / which version / when. Only the comment is player text; the
+    question and answer are the game's own words.
+    """
+    question_id = str(row.get("question_id") or "")
+    question = SURVEY_QUESTIONS.get(question_id, question_id or "Survey")
+    name = f"{_clean(question, META_LIMIT * 2)} #{row['id']}"
+    body = _clean(row.get("comment") or "", SUMMARY_LIMIT) or "*(no comment)*"
+
+    meta = []
+    answer = row.get("answer")
+    if answer is not None and str(answer).strip():
+        answer = str(answer)
+        meta.append(f"{answer}/5" if answer.isdigit() else SURVEY_ANSWERS.get(answer, _clean(answer, META_LIMIT)))
+    player = player_names.get(row.get("player_uuid"))
+    if player:
+        meta.append(_clean(player, META_LIMIT))
+    if row.get("version"):
+        meta.append(f"v{_clean(row['version'], META_LIMIT)}")
+    created = _parse_timestamp(row.get("created_at"))
+    if created:
+        meta.append(f"<t:{int(created.timestamp())}:d>")
+    if meta:
+        body += "\n" + " · ".join(meta)
+    return name, body
+
+
 def _build_reports_embed(reports: list[dict], total: int,
                          player_names: dict[str, str]) -> tuple[nextcord.Embed, int]:
     """One embed summarising `reports`, and the highest id it actually carries.
@@ -212,12 +297,23 @@ def _build_reports_embed(reports: list[dict], total: int,
     the rest are left for the next update. The returned id is how far the
     watermark may move once this is sent -- never past a report left out.
     """
-    embed = nextcord.Embed(color=EMBED_COLOR)
     fields = [_summary_field(r, player_names) for r in reports]
+    return _fill_embed(reports, fields, total, _title, EMBED_COLOR)
 
+
+def _build_survey_embed(rows: list[dict], total: int,
+                        player_names: dict[str, str]) -> tuple[nextcord.Embed, int]:
+    """The survey comments' embed, built and capped as the reports' is."""
+    fields = [_survey_field(r, player_names) for r in rows]
+    return _fill_embed(rows, fields, total, _survey_title, SURVEY_EMBED_COLOR)
+
+
+def _fill_embed(rows: list[dict], fields: list[tuple[str, str]], total: int,
+                title_for, color: int) -> tuple[nextcord.Embed, int]:
+    embed = nextcord.Embed(color=color)
     # The title and footer depend on how many fit, so size them for the worst
     # case (as long as they can get) before choosing.
-    reserve = len(_title(len(reports))) + len(_footer(len(reports), total) or "") + 10
+    reserve = len(title_for(len(rows))) + len(_footer(len(rows), total) or "") + 10
     used, shown = reserve, 0
     for name, value in fields:
         if used + len(name) + len(value) > EMBED_CHAR_LIMIT:
@@ -226,16 +322,20 @@ def _build_reports_embed(reports: list[dict], total: int,
         used += len(name) + len(value)
         shown += 1
 
-    embed.title = _title(shown)
+    embed.title = title_for(shown)
     footer = _footer(shown, total)
     if footer:
         embed.set_footer(text=footer)
-    max_id = max(r["id"] for r in reports[:shown]) if shown else None
+    max_id = max(r["id"] for r in rows[:shown]) if shown else None
     return embed, max_id
 
 
 def _title(shown: int) -> str:
     return f"{shown} new player report" + ("" if shown == 1 else "s")
+
+
+def _survey_title(shown: int) -> str:
+    return f"{shown} new survey comment" + ("" if shown == 1 else "s")
 
 
 def _footer(shown: int, total: int):
@@ -250,12 +350,14 @@ def _footer(shown: int, total: int):
 # ---------------------------------------------------------------------------
 
 async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today: str) -> int | None:
-    """Post this channel's unsent reports. Caller must hold _SEND_LOCK.
+    """Post this channel's unsent reports, then its unsent survey comments.
+    Caller must hold _SEND_LOCK.
 
-    Returns the number of reports posted (0 when there were none -- the day is
+    Returns the number of items posted (0 when there were none -- the day is
     still claimed, so a quiet day is checked once, not every 10 minutes), or
     None when the channel could not be resolved (nothing claimed, retried next
-    cycle). Raises on a data error BEFORE claiming, so that day stays retryable.
+    cycle). Raises on a reports data error BEFORE claiming, so that day stays
+    retryable.
     """
     channel = bot.get_channel(int(channel_id))
     if not channel:
@@ -264,32 +366,54 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
 
     after_id = int(config.get("last_report_id") or 0)
     reports, total = _fetch_unsent_reports(after_id)
+    survey_after_id = int(config.get("last_survey_id") or 0)
+    surveys, survey_total = _fetch_survey_comments_or_none(survey_after_id)
+
+    names = _fetch_player_names([r.get("player_uuid") for r in reports + surveys])
+    batches = []
     if reports:
-        names = _fetch_player_names([r.get("player_uuid") for r in reports])
         embed, max_id = _build_reports_embed(reports, total, names)
+        batches.append(("last_report_id", after_id, embed, max_id, total, "reports"))
+    if surveys:
+        embed, max_id = _build_survey_embed(surveys, survey_total, names)
+        batches.append(("last_survey_id", survey_after_id, embed, max_id, survey_total, "survey comments"))
 
     # Claim the day before sending anything (see the module docstring).
     config["last_sent_date"] = today
     state["channels"][channel_id] = config
     _save_state(state)
 
-    if not reports:
-        return 0
+    posted = 0
+    for watermark, previous, embed, max_id, unsent, what in batches:
+        try:
+            await channel.send(embed=embed, allowed_mentions=nextcord.AllowedMentions.none())
+        except Exception as e:
+            print(f"Daily reports send FAILED for channel {channel_id} after claiming {today}; "
+                  f"{what} after #{previous} will be retried with the next update: {e}")
+            continue
 
-    try:
-        await channel.send(embed=embed, allowed_mentions=nextcord.AllowedMentions.none())
-    except Exception as e:
-        print(f"Daily reports send FAILED for channel {channel_id} after claiming {today}; "
-              f"reports after #{after_id} will be retried with the next update: {e}")
-        return 0
-
-    # Advance past exactly what the message carried -- not past reports that
-    # did not fit in it.
-    config["last_report_id"] = max(after_id, max_id)
-    _save_state(state)
-    posted = len(embed.fields)
-    print(f"Daily reports: posted {posted} of {total} unsent to channel {channel_id}")
+        # Advance past exactly what the message carried -- not past rows that
+        # did not fit in it.
+        config[watermark] = max(previous, max_id)
+        _save_state(state)
+        posted += len(embed.fields)
+        print(f"Daily reports: posted {len(embed.fields)} of {unsent} unsent {what} to channel {channel_id}")
     return posted
+
+
+def _fetch_survey_comments_or_none(after_id: int) -> tuple[list[dict], int]:
+    """The survey comments, or none when they cannot be read.
+
+    Deliberately softer than the reports fetch: the survey table arrived with
+    its own migration, and a database that does not have it yet must not stop
+    the reports from posting. The console names the file to run.
+    """
+    try:
+        return _fetch_unsent_survey_comments(after_id)
+    except (SupabaseQueryError, SupabaseUnreadableError) as e:
+        print(f"Daily reports: survey comments skipped ({e}). If `{SURVEY_TABLE}` does not "
+              f"exist yet, run {SURVEY_MIGRATION}.")
+        return [], 0
 
 
 async def _send_due_channels(bot, source: str) -> None:
@@ -378,6 +502,7 @@ def add_daily_reports_commands(cls):
             # A new channel starts at id 0, i.e. it works through the whole
             # history REPORT_LIMIT a day. An existing one keeps its watermark.
             config.setdefault("last_report_id", 0)
+            config.setdefault("last_survey_id", 0)
             config["send_hour_utc"] = hour_utc
             config["send_minute_utc"] = minute_utc
             config.pop("disabled", None)
@@ -388,7 +513,8 @@ def add_daily_reports_commands(cls):
             if config.get("last_sent_date") != today and _is_past_send_time_utc(hour_utc, minute_utc):
                 posted = await _claim_and_send(self.bot, state, channel_id, config, today)
                 if posted is not None:
-                    detail = f"Posted {posted} report(s) now." if posted else "No unsent reports right now."
+                    detail = (f"Posted {posted} report(s) and survey comment(s) now." if posted
+                              else "No unsent reports or survey comments right now.")
                     return f"Daily reports **enabled** for this channel. {detail}"
 
         local_time = _format_utc_to_local(hour_utc, minute_utc, utc_offset)
