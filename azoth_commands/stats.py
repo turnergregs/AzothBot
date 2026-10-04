@@ -12,7 +12,7 @@ from nextcord import SlashOption, Interaction
 from azoth_commands.helpers import safe_interaction, record_to_json
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID
-from supabase_helpers import fetch_all, SupabaseError
+from supabase_helpers import fetch_all, SupabaseError, SupabaseUnreadableError
 from azoth_logic import stats_format as sf
 from azoth_logic import stats_cards
 
@@ -424,6 +424,10 @@ def add_stats_commands(cls):
         try:
             turn_rows = fetch_all("link_turn_view")
             type_rows = fetch_all("link_type_view")
+        except SupabaseUnreadableError as e:
+            # The loaded key cannot read them, which is not the same as their
+            # being missing. Say which, or a local anon run reads as "migrate".
+            return f"❌ {e}"
         except SupabaseError:
             return ("❌ `link_turn_view` / `link_type_view` are not migrated — run "
                     "`db/migrations/2026-10-02_link_views.sql`.")

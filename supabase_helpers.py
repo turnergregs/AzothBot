@@ -71,6 +71,8 @@ SERVICE_ROLE_ONLY_VIEWS = frozenset({
 	# 2026-09-29_item_split_views.sql, for /stats item. Read `turns` or sit on
 	# player_cohort_view.
 	"boss_split_view", "draft_item_split_view", "hero_split_view",
+	# 2026-10-02_link_views.sql, for /stats links. Read `turns` and `turn_nodes`.
+	"link_turn_view", "link_type_view",
 })
 
 # The six taxonomy tables that used to live here -- `card_attributes`,
