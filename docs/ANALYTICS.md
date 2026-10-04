@@ -494,14 +494,31 @@ cohort so the bot sums the cohorts asked for (`select_cohort`):
 
 - **Zero-link turns are counted.** The link count is a correlated subquery, not
   an inner join to `turn_nodes`, for the reason under *Links per turn* above.
-- **A one-card link is its own row.** It is valid as all three types
+- **A one-card link is its own row ("All"),** and every link valid as all three types is
+  folded into it (2026-10-03). A one-card link is valid as all three
   (`LINK_VALIDATION.md` in the game repo), so it arrives as
-  `group+set+sequence` at size 1. Counted under "All three" it would be the
-  biggest type by far and say nothing about what players link. It is left out
-  of the length section too: its length is 1 by definition.
+  `group+set+sequence` at size 1. A longer all-three link is the same thing
+  padded: Group (equal valences) and Sequence (consecutive ones) cannot both
+  hold for two cards that count, so it is one card plus Inert or valence-less
+  cards (catalysts). Only Transmutable, or Inert scoped to one link type, could
+  make it otherwise, and no shipped card has either. The row is left out of the
+  length section and the average-length tile, which are the same number.
+- **None** is a link with no type: Circumvent's ("next link ignores
+  link requirements") replaces `valid` but not the types validation found, so a
+  link of cards matching nothing resolves with none. Real play, not a dev
+  setting: a run with `ignore_link_requirements` on is a testing run and never
+  uploads. A Circumvent link that happens to match a type counts under that type.
+- **Links per turn is a histogram** (2026-10-03, `stats_charts.Histogram`):
+  one column per link count, gaps kept, with a line at the average. As rows it
+  had to bucket boss turns in fives to fit; columns fit every count to ~30.
+  Up to 10 columns each carries its share; past that only the tallest does
+  and the gridlines carry the rest.
 - **Link types merge regular and boss turns**; links per turn keeps them apart,
   since a boss turn is a different turn.
-- A type with fewer than 10 links has its average length greyed.
+- A type with fewer than 10 links has its average length greyed, and does not
+  set the length chart's scale (3 links averaging 10.7 cards once squeezed every
+  other bar into the first quarter); a greyed row past the scale runs full.
+- A share that rounds to 0 reads `<1%`.
 
 The card was drawn on 2026-10-02 and the command added the next day; it shipped
 without one, which `test_every_stats_report_is_run_by_stats_all` now catches.

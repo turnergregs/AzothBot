@@ -1189,7 +1189,18 @@ def leaderboard_card(rows: list, population: str = "", hero: str | None = None,
 #
 # A one-card link satisfies all three types (docs/LINK_VALIDATION.md), so it
 # is its own row: counted under "all three" it would make that the biggest
-# type by far and say nothing about what players link.
+# type by far and say nothing about what players link. A longer link valid as
+# all three is folded into it (2026-10-03, Turner): Group (equal valences) and
+# Sequence (consecutive ones) cannot both hold for two cards that count, so
+# with shipped content such a link is one card plus Inert or valence-less
+# cards (catalysts). Only Transmutable, or Inert scoped to one link type, could
+# make it otherwise, and no shipped card has either.
+#
+# A link with no type at all is Circumvent's: "ignores link requirements"
+# replaces `valid` but not the types validation found, so a link of cards
+# matching nothing resolves with none. Real play, not a dev setting (a run
+# with ignore_link_requirements on never uploads). A Circumvent link that
+# happens to match a type is counted under that type.
 
 LINK_TURN_COUNTS = ("turns",)
 LINK_TYPE_COUNTS = ("links",)
@@ -1197,31 +1208,30 @@ LINK_TYPE_ORDER = ("group", "set", "sequence")
 LINK_TYPE_NAMES = {"group": "Group", "set": "Set", "sequence": "Sequence"}
 # Below this many links a type's average length is grey.
 MIN_TYPE_LINKS = 10
-# The most rows a links-per-turn chart draws before it buckets.
-MAX_TURN_ROWS = 6
 # Wide enough for "Group + Sequence".
 LINK_LABEL_W = 150
-_NICE_WIDTHS = (1, 2, 3, 5, 10, 20, 25, 50, 100)
+
+
+ONE_CARD = "All"
+NO_TYPE = "None"
 
 
 def link_type_label(key: str, size: int) -> str:
-    if size == 1:
-        return "One card"
     types = [t for t in (key or "").split("+") if t]
+    if size == 1 or len(types) == len(LINK_TYPE_ORDER):
+        return ONE_CARD
     if not types:
-        return "No type"
-    if len(types) == len(LINK_TYPE_ORDER):
-        return "All three"
+        return NO_TYPE
     return " + ".join(LINK_TYPE_NAMES.get(t, t) for t in types)
 
 
 def _type_order(label: str) -> tuple:
-    """Single types first, then pairs, then all three, each in the game's
-    order (group, set, sequence), then one-card links and anything untyped."""
-    if label in ("One card", "No type"):
-        return (9, (), label)
+    """Single types first, then pairs, each in the game's order (group, set,
+    sequence), then links that ignored the requirements, then one-card links."""
+    if label in (NO_TYPE, ONE_CARD):
+        return (9, label == ONE_CARD, label)
     names = [LINK_TYPE_NAMES[t] for t in LINK_TYPE_ORDER]
-    parts = names if label == "All three" else label.split(" + ")
+    parts = label.split(" + ")
     index = tuple(names.index(p) if p in names else len(names) for p in parts)
     return (len(parts), index, label)
 
@@ -1251,21 +1261,10 @@ def links_per_turn(rows: list, turn_type: str) -> dict:
     return out
 
 
-def turn_buckets(dist: dict) -> list:
-    """`[(label, turns)]`: one row per link count when they fit in
-    MAX_TURN_ROWS, otherwise even ranges at the narrowest round width that
-    fits. Empty rows between the first and last are kept: a gap in a
-    distribution is information."""
-    if not dist:
-        return []
-    top = max(dist)
-    width = next((w for w in _NICE_WIDTHS if top // w + 1 <= MAX_TURN_ROWS), _NICE_WIDTHS[-1])
-    rows = []
-    for lo in range(0, top + 1, width):
-        hi = lo + width - 1
-        n = sum(t for k, t in dist.items() if lo <= k <= hi)
-        rows.append((str(lo) if width == 1 else f"{lo}–{hi}", n))
-    return rows
+def _share(n: int, total: int) -> str:
+    """A whole percent, but never 0% for something that happened."""
+    pct = round(100 * n / total)
+    return "<1%" if n and not pct else f"{pct}%"
 
 
 def _mean(dist: dict):
@@ -1278,9 +1277,14 @@ def links_card(turn_rows: list, type_rows: list, population: str = "") -> sc.Car
     boss = links_per_turn(turn_rows, "boss")
     types = link_types(type_rows)
     links = sum(n for _, n, _ in types)
-    cards = sum(c for _, _, c in types)
+    # Length is read over links of more than one card that counts: a
+    # one-card link's length is padding, not a choice of how long to go. The
+    # tile and the length section's baseline are the same number.
+    longer = [(label, n, c) for label, n, c in types if label != ONE_CARD]
+    n_longer = sum(n for _, n, _ in longer)
+    average = sum(c for _, _, c in longer) / n_longer if n_longer else None
 
-    parts = [population, f"version ≥ {CUTOFF_VERSION}", f"{links:,} links"]
+    parts = [population, f"version ≥ {CUTOFF_VERSION}"]
     card = sc.Card("Links", " · ".join(p for p in parts if p))
 
     def per(dist):
@@ -1288,7 +1292,7 @@ def links_card(turn_rows: list, type_rows: list, population: str = "") -> sc.Car
         return "—" if m is None else f"{m:.1f}"
     card.add(*sc.tile_rows([("Per regular turn", per(regular)),
                             ("Per boss turn", per(boss)),
-                            ("Average length", f"{cards / links:.1f}" if links else "—"),
+                            ("Average length", "—" if average is None else f"{average:.1f}"),
                             ("Links", f"{links:,}")]))
     card.add(sc.Spacer(4))
 
@@ -1297,25 +1301,24 @@ def links_card(turn_rows: list, type_rows: list, population: str = "") -> sc.Car
             continue
         turns = sum(dist.values())
         card.add(sc.SectionHeader(title, f"{turns:,} turns"))
-        for label, n in turn_buckets(dist):
-            card.add(sc.BarRow(label, n / turns, value_text=f"{round(100 * n / turns)}%",
-                               count_text=f"{n:,}", fill=sc.NEUTRAL))
+        card.add(sc.Histogram([dist.get(k, 0) for k in range(max(dist) + 1)], _mean(dist)))
         card.add(sc.Spacer(4))
 
     if types:
         card.add(sc.SectionHeader("Link types", "share of links"))
         for label, n, _ in types:
-            card.add(sc.BarRow(label, n / links, value_text=f"{round(100 * n / links)}%",
+            card.add(sc.BarRow(label, n / links, value_text=_share(n, links),
                                count_text=f"{n:,}", label_w=LINK_LABEL_W, fill=sc.NEUTRAL))
         card.add(sc.Spacer(4))
 
-        # Length per type, against every multi-card link's average: a
-        # one-card link is length 1 by definition, so it is left out of both.
-        longer = [(label, n, c) for label, n, c in types if label != "One card"]
-        n_all = sum(n for _, n, _ in longer)
-        if n_all:
-            average = sum(c for _, _, c in longer) / n_all
-            scale = max(c / n for _, n, c in longer) * 1.25
+        # Length per type, against the average above. The scale is set by
+        # the types with enough links to trust: 3 Circumvent links averaging
+        # 10.7 cards squeezed every other bar into the first quarter
+        # (2026-10-03). A greyed row past the scale runs to the full track.
+        if average is not None:
+            trusted = [c / n for _, n, c in longer if n >= MIN_TYPE_LINKS] \
+                or [c / n for _, n, c in longer]
+            scale = max(trusted) * 1.25
             card.add(sc.SectionHeader("Length by type", f"{average:.1f} cards on average"))
             for label, n, c in longer:
                 mean = c / n

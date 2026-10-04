@@ -632,3 +632,92 @@ class RateColumns(Block):
             if g.get("count_text"):
                 d.text((px(centre), base + px(33)), g["count_text"], font=font(11),
                        fill=MUTED, anchor="mm")
+
+
+@dataclass
+class Histogram(Block):
+    """A distribution over whole numbers: one column per value, left to right,
+    its height the share of the total. For "how many X did a turn hold".
+
+    `counts[i]` is how many times the value i occurred; zeros between the first
+    and last are kept, since a gap in a distribution is information. Up to
+    LABEL_ALL columns each carries its share; past that only the tallest does
+    and the gridlines (labelled in a right margin, as RateColumns) carry the
+    rest, and the axis is numbered every AXIS_EVERY. A value that occurred at
+    all is at least MIN_H tall, so a long tail of single turns stays visible.
+    `mean` draws a reference line at that position, labelled above the plot.
+    """
+    counts: list
+    mean: float | None = None
+    fill: str = NEUTRAL
+    height: float = 170
+
+    PLOT_H = 104
+    TOP = 34          # room above the plot for a column's share, and the mean
+    AXIS_W = 30
+    COLUMN_MAX = 24   # a column never fills a wide slot: the rest is air
+    GAP = 2           # surface between neighbouring columns
+    MIN_H = 2
+    LABEL_ALL = 10
+    AXIS_EVERY = 5
+
+    def scale(self) -> float:
+        """The top gridline: the tallest share rounded up to the step."""
+        total = sum(self.counts) or 1
+        tallest = max(self.counts, default=0) / total
+        step = self.step()
+        return max(step, math.ceil(tallest / step - 1e-9) * step)
+
+    def step(self) -> float:
+        total = sum(self.counts) or 1
+        tallest = max(self.counts, default=0) / total
+        return 0.1 if tallest > 0.25 else 0.05
+
+    def draw(self, d, top):
+        n = max(len(self.counts), 1)
+        total = sum(self.counts) or 1
+        inner = WIDTH - PAD * 2 - self.AXIS_W
+        slot = inner / n
+        col_w = min(self.COLUMN_MAX, slot - self.GAP)
+        base = top + px(self.TOP + self.PLOT_H)
+        right = px(WIDTH - PAD - self.AXIS_W + 6)
+        scale, step = self.scale(), self.step()
+
+        for k in range(1, round(scale / step) + 1):
+            y = base - px(self.PLOT_H * k * step / scale)
+            d.line([(px(PAD), y), (right, y)], fill=TRACK, width=px(0.5))
+            d.text((px(WIDTH - PAD), y), f"{round(k * step * 100)}%", font=font(10),
+                   fill=MUTED, anchor="rm")
+
+        def x_of(value: float) -> float:
+            return PAD + slot * (value + 0.5)
+
+        tallest = max(range(n), key=lambda i: self.counts[i]) if self.counts else None
+        label_all = n <= self.LABEL_ALL
+        for i, c in enumerate(self.counts):
+            centre = x_of(i)
+            if c:
+                h = max(self.PLOT_H * (c / total) / scale, self.MIN_H)
+                d.rounded_rectangle([px(centre - col_w / 2), base - px(h),
+                                     px(centre + col_w / 2), base],
+                                    radius=px(min(3, col_w / 2, h / 2)), fill=self.fill,
+                                    corners=(True, True, False, False))
+                if label_all or i == tallest:
+                    pct = round(100 * c / total)
+                    d.text((px(centre), base - px(h) - px(5)), f"{pct}%" if pct else "<1%",
+                           font=font(12 if label_all else 11, True), fill=INK, anchor="mb")
+            if label_all or i % self.AXIS_EVERY == 0:
+                d.text((px(centre), base + px(12)), str(i), font=font(12 if label_all else 11),
+                       fill=INK_2, anchor="mm")
+        d.line([(px(PAD), base), (right, base)], fill=MUTED, width=px(0.75))
+
+        if self.mean is not None:
+            x = px(x_of(self.mean))
+            y_top = top + px(self.TOP - 6)
+            d.line([(x, y_top), (x, base)], fill=SURFACE, width=px(3))
+            d.line([(x, y_top), (x, base)], fill=REFERENCE, width=px(1))
+            # Beside the line's top, on the side away from the tallest
+            # column, whose share is labelled at about the same height.
+            away_left = tallest is not None and tallest >= self.mean
+            d.text((x + px(-4 if away_left else 4), y_top), f"avg {self.mean:.1f}",
+                   font=font(11), fill=INK_2, anchor="rt" if away_left else "lt")

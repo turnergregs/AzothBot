@@ -914,10 +914,38 @@ LINK_TYPES = [_links("group", 3, 12), _links("set", 4, 8), _links("group+sequenc
               _links("sequence", 2, 4, turn_type="boss")]
 
 
-def test_a_one_card_link_is_its_own_row_not_all_three():
-    labels = [label for label, _, _ in cards.link_types(LINK_TYPES)]
-    assert labels.count("One card") == 1 and labels.count("All three") == 1
-    assert labels.index("All three") < labels.index("One card")
+def test_a_link_valid_as_all_three_is_a_one_card_link():
+    """Group and Sequence cannot both hold for two cards that count, so a
+    longer all-three link is one card plus catalysts or Inert cards."""
+    labels = {label: n for label, n, _ in cards.link_types(LINK_TYPES)}
+    assert labels[cards.ONE_CARD] == 11 and "All three" not in labels
+    assert list(labels)[-1] == cards.ONE_CARD
+
+
+def test_a_link_with_no_type_ignored_the_requirements():
+    labels = [label for label, _, _ in cards.link_types(LINK_TYPES + [_links("", 11, 3)])]
+    assert labels[-2:] == [cards.NO_TYPE, cards.ONE_CARD]
+
+
+def test_one_card_links_are_left_out_of_length():
+    card = cards.links_card(LINK_TURNS, LINK_TYPES)
+    length = [b.label for b in card.blocks[card.blocks.index(next(
+        b for b in card.blocks if isinstance(b, sc.SectionHeader) and b.label == "Length by type")):]
+        if isinstance(b, sc.BarRow)]
+    assert cards.ONE_CARD not in length and length
+
+
+def test_a_rare_long_type_does_not_set_the_length_scale():
+    """3 links averaging 11 cards once squeezed every other bar to a sliver."""
+    rows = [_links("group", 3, 40), _links("set", 4, 20), _links("", 11, 3)]
+    bars = {b.label: b for b in cards.links_card(LINK_TURNS, rows).blocks
+            if isinstance(b, sc.BarRow) and b.delta}
+    assert bars["Set"].value == pytest.approx(1 / 1.25)
+    assert bars[cards.NO_TYPE].faded and bars[cards.NO_TYPE].value > 1
+
+
+def test_a_share_that_rounds_to_nothing_is_not_zero():
+    assert cards._share(3, 2774) == "<1%" and cards._share(0, 10) == "0%"
 
 
 def test_link_types_merge_regular_and_boss_turns():
@@ -942,3 +970,18 @@ def test_link_cohorts_are_summed_per_bucket():
 def test_the_links_card_renders():
     assert Image.open(io.BytesIO(cards.links_card(LINK_TURNS, LINK_TYPES, "New playtesters").png())).width \
         == sc.WIDTH * sc.SCALE
+
+
+def test_every_link_count_is_its_own_column_gaps_kept():
+    """Boss turns were bucketed in fives as rows; as columns they need not be."""
+    turns = [_turns("boss", 0, 2), _turns("boss", 7, 5), _turns("boss", 22, 1)]
+    hist = [b for b in cards.links_card(turns, LINK_TYPES).blocks if isinstance(b, sc.Histogram)]
+    assert len(hist) == 1 and len(hist[0].counts) == 23
+    assert hist[0].counts[7] == 5 and hist[0].counts[8] == 0
+    assert hist[0].mean == pytest.approx((7 * 5 + 22) / 8)
+
+
+def test_a_long_histogram_scales_to_its_tallest_column_and_renders():
+    hist = sc.Histogram([1] * 30 + [5])
+    assert hist.scale() >= 5 / 35
+    sc.Card("t").add(hist).png()
