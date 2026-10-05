@@ -159,6 +159,28 @@ async def _send_card(interaction, card, filename, *, colour=0x5865F2):
                                     file=nextcord.File(io.BytesIO(data), filename=filename))
 
 
+def _player_surveys(name: str) -> list:
+    """The in-game survey rows of the player(s) called `name`, for /stats
+    player's Surveys section. An extra like the profile's other sources: a read
+    that fails costs the section, not the reply.
+
+    Survey rows carry the player's uuid, not their name, so the uuids come from
+    `players` first. A name two players share counts both, as player_run_view's
+    `player` column already does.
+    """
+    try:
+        uuids = [r["uuid"] for r in fetch_all("players", ["uuid"], {"name": name}) if r.get("uuid")]
+        if not uuids:
+            return []
+        return fetch_all("survey_responses",
+                         ["question_id", "moment", "outcome", "answer", "run_number",
+                          "has_comment", "comment", "created_at"],
+                         {"player_uuid": uuids})
+    except SupabaseError as e:
+        print(f"/stats player: surveys skipped for {name}: {e}")
+        return []
+
+
 def add_stats_commands(cls):
 
     # Top-level group for stats commands
@@ -262,10 +284,11 @@ def add_stats_commands(cls):
             info = next(iter(fetch_all("player_info_view", filters={"player": player})), None)
         except SupabaseError:
             info = None
-        if not runs and not summary:
+        surveys = _player_surveys(player)
+        if not runs and not summary and not surveys:
             return f"❌ No stats found for `{player}`."
 
-        await _send_card(interaction, stats_cards.player_card(player, runs, summary, info),
+        await _send_card(interaction, stats_cards.player_card(player, runs, summary, info, surveys),
                          "player.png", colour=0x5865F2)
 
     # --- Breakdown ---

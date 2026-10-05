@@ -550,10 +550,12 @@ def most_drafted_line(info: dict) -> str:
     return f"{names} · {count} times{each}"
 
 
-def player_card(name: str, runs: list, summary: dict | None, info: dict | None) -> sc.Card:
+def player_card(name: str, runs: list, summary: dict | None, info: dict | None,
+                surveys: list | None = None) -> sc.Card:
     """`runs` from player_run_view, `summary` from player_summary_view (None
     before that migration), `info` from player_info_view (best combo, most
-    drafted)."""
+    drafted), `surveys` the player's survey_responses rows (None or [] for no
+    Surveys section)."""
     summary, info = summary or {}, info or {}
     cleared = sum(1 for r in runs if r.get("cleared"))
     last = max((str(r.get("started_at") or "")[:10] for r in runs), default="")
@@ -602,6 +604,8 @@ def player_card(name: str, runs: list, summary: dict | None, info: dict | None) 
         card.add(sc.Spacer(6))
         card.add(sc.SectionHeader("Made in the Codex"))
         card.add(*sc.tile_rows([(label, str(n)) for label, n in made]))
+
+    card.add(*player_survey_blocks(surveys or []))
     return card
 
 
@@ -1548,19 +1552,82 @@ def survey_answers_card(tally: list):
     if not shown:
         return None
     card = sc.Card("Survey answers", f"Since the last post · {COHORT_LABELS['all']}")
-    blocks = [sc.SectionHeader("Answered", f"{outcomes['answered']} of {shown} shown")]
+    card.add(sc.SectionHeader("Answered", f"{outcomes['answered']} of {shown} shown"))
+    return card.add(*_question_lines(tally))
+
+
+def _question_lines(tally: list) -> list:
+    """A line per question asked: its answers, then answered/shown."""
     by_question: dict = {}
     for r in tally:
         by_question.setdefault(r.get("question_id"), []).append(r)
     right = sc.WIDTH - sc.PAD
+    lines = []
     for qid in sorted(by_question, key=sl.order_key):
         q_rows = by_question[qid]
         counts = _answer_counts(q_rows)
         n = sum(int(r.get("responses") or 0) for r in q_rows)
-        blocks.append(sc.TableRow([
+        lines.append(sc.TableRow([
             (sl.short(qid), sc.PAD, "lm", "strong"),
             (_answer_summary(qid, counts) or "no answers", sc.PAD + DAILY_SURVEY_LABEL_W, "lm",
              "normal" if counts else "muted"),
             (f"{sum(counts.values())}/{n}", right, "rm", "muted"),
         ], height=26))
-    return card.add(*blocks)
+    return lines
+
+
+# The player card's newest comments, each at most this many lines.
+MAX_PLAYER_COMMENTS = 3
+PLAYER_COMMENT_LINES = 2
+COMMENT_SIZE = 15     # TableRow "normal"
+
+
+def _wrap(text: str, width_pt: float, size: float, max_lines: int) -> list:
+    """`text` broken into lines that fit `width_pt` in the card's font, the last
+    cut with "…" if it runs past `max_lines`."""
+    f = sc.font(size)
+    fits = lambda line: f.getlength(line) <= sc.px(width_pt)
+    lines, line = [], ""
+    for word in text.split():
+        trial = f"{line} {word}".strip()
+        if fits(trial) or not line:
+            line = trial
+        else:
+            lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    if len(lines) > max_lines:
+        last = lines[max_lines - 1]
+        while last and not fits(last + "…"):
+            last = last[:-1].rstrip()
+        lines = lines[:max_lines - 1] + [last + "…"]
+    return lines
+
+
+def player_survey_blocks(raw: list) -> list:
+    """/stats player's Surveys section from that player's survey_responses
+    rows: answered of shown, a line per question, then their newest comments,
+    each with the question it answered. [] for a player never shown one."""
+    tally = survey_tally(raw)
+    outcomes = _outcomes(tally)
+    shown = sum(outcomes.values())
+    if not shown:
+        return []
+    blocks = [sc.Spacer(6), sc.SectionHeader("Surveys", f"answered {outcomes['answered']} of {shown}")]
+    blocks += _question_lines(tally)
+    comments = sorted((r for r in raw if str(r.get("comment") or "").strip()),
+                      key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    if comments:
+        blocks.append(sc.Spacer(4))
+        blocks.append(sc.SectionHeader("Latest comments", f"{len(comments)} in all"))
+        # Full width, the question it answered above it: beside a label
+        # column a comment had room for barely forty characters.
+        for r in comments[:MAX_PLAYER_COMMENTS]:
+            blocks.append(sc.TableRow([(sl.short(r.get("question_id")), sc.PAD, "lm", "muted")],
+                                      height=22))
+            text = "“" + " ".join(str(r["comment"]).split()) + "”"
+            for line in _wrap(text, sc.WIDTH - 2 * sc.PAD, COMMENT_SIZE, PLAYER_COMMENT_LINES):
+                blocks.append(sc.TableRow([(line, sc.PAD, "lm", "normal")], height=22))
+            blocks.append(sc.Spacer(4))
+    return blocks

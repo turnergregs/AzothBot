@@ -1069,3 +1069,37 @@ def test_a_short_bar_a_little_wider_than_round_draws():
     for n in range(1, 40):
         card.add(sc.BarRow("x", 1 / n, label_w=110))
     card.png()
+
+
+def _player_survey(qid, answer="yes", comment=None, day=1, outcome="answered"):
+    return {"question_id": qid, "moment": "loss", "outcome": outcome, "answer": answer,
+            "run_number": 9, "has_comment": bool(comment), "comment": comment,
+            "created_at": f"2026-10-0{day}T12:00:00+00:00"}
+
+
+def test_a_player_never_shown_a_survey_has_no_surveys_section():
+    assert cards.player_survey_blocks([]) == []
+    heads = [b.label for b in cards.player_card("Max", MAX_RUNS, None, None, []).blocks
+             if isinstance(b, sc.SectionHeader)]
+    assert "Surveys" not in heads
+
+
+def test_a_players_newest_comments_come_first_and_are_capped():
+    rows = [_player_survey("loss", "unfair", comment=f"comment {d}", day=d) for d in range(1, 6)]
+    texts = [b.cells[0][0] for b in cards.player_survey_blocks(rows)
+             if isinstance(b, sc.TableRow) and b.cells[0][0].startswith("“")]
+    assert texts == ["“comment 5”", "“comment 4”", "“comment 3”"]
+
+
+def test_a_long_comment_wraps_inside_the_card_and_is_cut_at_its_last_line():
+    lines = cards._wrap("word " * 200, sc.WIDTH - 2 * sc.PAD, cards.COMMENT_SIZE,
+                        cards.PLAYER_COMMENT_LINES)
+    f = sc.font(cards.COMMENT_SIZE)
+    assert len(lines) == cards.PLAYER_COMMENT_LINES and lines[-1].endswith("…")
+    assert all(f.getlength(line) <= sc.px(sc.WIDTH - 2 * sc.PAD) for line in lines)
+
+
+def test_the_player_card_renders_with_surveys():
+    rows = [_player_survey("understood", "mostly", comment="x " * 80),
+            _player_survey("difficulty", outcome="skipped", answer=None)]
+    cards.player_card("Max", MAX_RUNS, None, None, rows).png()

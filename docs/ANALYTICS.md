@@ -53,7 +53,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | Command | View | Purpose |
 |---|---|---|
 | `/stats leaderboard` | `leaderboard_best_view` | Each player's best run, ranked, as an image table: combo, hero with that run's ritual, furthest act. Top three bold. Everyone by default. See [Leaderboard](#leaderboard-2026-09-29) |
-| `/stats player` | `player_run_view` + `player_summary_view` + `player_info_view` | One player's profile, drawn as an image. See [The player card (2026-09-28)](#the-player-card-2026-09-28) |
+| `/stats player` | `player_run_view` + `player_summary_view` + `player_info_view` + `survey_responses` | One player's profile, drawn as an image. See [The player card (2026-09-28)](#the-player-card-2026-09-28) |
 | `/stats players` | `player_summary_view` | Who is playing and where their active time goes (runs, custom runs, Codex, art tools), and what was made in the Codex. Drawn as an image. See [Players](#players-2026-09-28) |
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
@@ -210,6 +210,12 @@ they make.
   chart.
 - **Most drafted** and **Made in the Codex** appear only when there is
   something in them.
+- **Surveys** (2026-10-04), only for a player shown one: answered of shown,
+  a line per question with their answers (the feedback post's layout), then
+  their three newest comments full width, each under the question it
+  answered, wrapped to two lines. Read straight from `survey_responses` by the
+  uuids `players` holds for that name (`stats._player_surveys`); a failed read
+  drops the section, not the reply.
 
 **Dropped:** "max reached" (best and average act, level, deck size), which the
 act bars say better; and the links-per-turn table and chart and both

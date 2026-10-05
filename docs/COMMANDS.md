@@ -427,7 +427,7 @@ what you would want to force. Full policy:
 |---|---|---|
 | `/stats players` | — | `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Who is playing and where their time goes, drawn as an image. Replaced `/stats active_players` and `/stats engagement` 2026-09-28 |
 | `/stats leaderboard` | — | `limit?` (default 10, max 25), `hero?`*, `players?` (default Everyone). Each player's best run, ranked, drawn as an image. `player:` and `version:` were dropped 2026-09-29 |
-| `/stats player` | — | `player`*. One player's profile, drawn as an image: runs, act 3 wins, best combo and time; a bar per hero split by furthest act; most drafted and what they made in the Codex |
+| `/stats player` | — | `player`*. One player's profile, drawn as an image: runs, act 3 wins, best combo and time; a bar per hero split by furthest act; most drafted and what they made in the Codex; their survey answers and newest comments |
 | `/stats breakdown` | — | `by`* (hero / ritual / version), `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Drawn as an image. Replaced `/stats hero` and `/stats version`, then `/stats habits`, 2026-09-28 |
 | `/stats bosses` | — | `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Every boss's win rate by act, drawn as an image |
 | `/stats links` | — | `players?` (default New playtesters). Links per regular and boss turn, link types (one-card links their own row) and average length by type. Image |
