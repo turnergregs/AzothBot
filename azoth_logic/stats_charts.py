@@ -196,7 +196,10 @@ class BarRow(Block):
             d.text((px(WIDTH - PAD), cy), self.empty_text, font=font(13),
                    fill=MUTED, anchor="rm")
         else:
-            x = bar_x0 + (bar_x1 - bar_x0) * min(max(self.value, 0), 1)
+            # Whole pixels: PIL's rounded_rectangle raises for a bar between
+            # one and two pixels wider than its own height, which a fractional
+            # end lands in for some small values (a 1/17 share, 2026-10-04).
+            x = round(bar_x0 + (bar_x1 - bar_x0) * min(max(self.value, 0), 1))
             d.rounded_rectangle([bar_x0, y0, max(x, bar_x0 + bar_h), y1],
                                 radius=bar_h // 2,
                                 fill=FADED if self.faded else (self.fill or ACCENT))

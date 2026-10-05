@@ -431,6 +431,7 @@ what you would want to force. Full policy:
 | `/stats breakdown` | — | `by`* (hero / ritual / version), `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Drawn as an image. Replaced `/stats hero` and `/stats version`, then `/stats habits`, 2026-09-28 |
 | `/stats bosses` | — | `players?` (New playtesters / Everyone but us / Everyone, default New playtesters). Every boss's win rate by act, drawn as an image |
 | `/stats links` | — | `players?` (default New playtesters). Links per regular and boss turn, link types (one-card links their own row) and average length by type. Image |
+| `/stats surveys` | — | `players?` (default Everyone but us). In-game survey answers: response rate by screen, then each question's answers. Image |
 | `/stats item` | — | `item`* (a live boss, card, aspect, rite or hero), `by?` (version / ritual / hero, default version; not hero for a hero), `players?` (default New playtesters). One item's rate per group against the rest of its kind there, in its own colour beside its face or art. Image |
 | `/stats all` | 🔒 | `player?`* (default: most games), `daily?` (default true). Runs every report above with its defaults (`/stats item` on the most-fought boss), then a preview of yesterday's daily report, then a summary naming every report that replied with text (an error, "not migrated" or "no data") instead of an embed. For checking the reports after a change. The daily preview never touches `daily_update_state.json`, so it cannot claim or skip a scheduled send. `stats.ALL_REPORTS` is the list; `test_command_registration` fails if a new report is missing from it |
 | `/stats scoreboard` | — | — |
@@ -587,15 +588,23 @@ ones that don't fit wait for the next update. `report_type =
 all** when nothing is unsent. A channel enabled for the first time starts at id 0
 and works through the whole history.
 
-**Survey comments** follow the reports as a second message (2026-10-04): rows
-of `survey_responses` with a comment, posted the same way (ten a day, oldest
-first, a footer for the rest) on their own watermark `last_survey_id`. Each
-field is named by the question, then holds the comment and answer · player ·
-version · date. Questions and answers come from `SURVEY_QUESTIONS` /
-`SURVEY_ANSWERS` in `daily_reports.py`; **add a new game question there**, or it
-shows as its raw id. One-click answers are never posted. A database without the
-table (migration not applied) posts the reports alone and says so in the
-console.
+**It is the daily feedback post** (2026-10-04): after the reports come the
+in-game survey's results, as up to two more messages.
+
+- **Survey answers**, one image (`stats_cards.survey_answers_card`): every
+  survey shown since the last post, everyone included, a line per question
+  with its answers and answered/shown. Its watermark `last_survey_tally_id`
+  covers every row, so days the bot was down are counted in the next post, not
+  lost.
+- **Survey comments**: rows with a comment, posted the way reports are (ten a
+  day, oldest first, a footer for the rest) on `last_survey_id`. Each field is
+  named by the question, then holds the comment and answer · player · version
+  · date.
+
+Each message advances only its own watermark, after its own send. Questions and
+answers come from `azoth_logic/survey_labels.py`; **add a new game question
+there**, or it shows as its raw id. A database without the table posts the
+reports alone and says so in the console.
 
 It keeps its own state (`daily_reports_state.json`) with two fields that fail in
 opposite directions on purpose: the day is claimed *before* sending, so a failed

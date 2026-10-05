@@ -87,6 +87,7 @@ def _report(i, report_type="feature_request", **kw):
 def _survey(i, comment="the boss took forever", **kw):
     row = {"id": i, "player_uuid": "p1", "question_id": "difficulty", "answer": "too_hard",
            "comment": comment, "has_comment": bool(comment and comment.strip()),
+           "outcome": "answered", "moment": "loss", "run_number": 7,
            "version": "0.9.12", "created_at": "2026-10-04T12:00:00+00:00"}
     row.update(kw)
     return row
@@ -98,12 +99,13 @@ class _Channel:
         self.calls = 0
         self.fail_on = set(fail_on)
 
-    async def send(self, content=None, embed=None, allowed_mentions=None):
+    async def send(self, content=None, embed=None, file=None, allowed_mentions=None):
         self.calls += 1
         await asyncio.sleep(0)            # a real send yields to the loop
         if self.calls in self.fail_on:
             raise RuntimeError("Discord 500")
-        self.sent.append({"content": content, "embed": embed, "allowed_mentions": allowed_mentions})
+        self.sent.append({"content": content, "embed": embed, "file": file,
+                          "allowed_mentions": allowed_mentions})
 
 
 class _Bot:
@@ -359,7 +361,11 @@ def test_disabled_channel_is_skipped(env):
 # --- Survey comments ---------------------------------------------------------
 
 def _survey_message(channel):
-    return [m for m in channel.sent if "survey comment" in m["embed"].title]
+    return [m for m in channel.sent if "survey comment" in (m["embed"].title or "")]
+
+
+def _answers_image(channel):
+    return [m for m in channel.sent if m["file"] is not None]
 
 
 def test_survey_comments_follow_the_reports_as_their_own_message(env):
@@ -369,7 +375,8 @@ def test_survey_comments_follow_the_reports_as_their_own_message(env):
     channel = _Channel()
     _run_day(_Bot(channel))
 
-    assert len(channel.sent) == 2
+    assert len(channel.sent) == 3                    # reports, answers image, comments
+    assert channel.sent[1]["file"].filename == "survey_answers.png"
     survey = _survey_message(channel)[0]["embed"]
     assert survey.title == "1 new survey comment"     # one-click answers are not posted
     field = survey.fields[0]
@@ -378,6 +385,41 @@ def test_survey_comments_follow_the_reports_as_their_own_message(env):
     assert "Mira" in field.value and "v0.9.12" in field.value
     state = dr._load_state()["channels"]["123"]
     assert state["last_report_id"] == 1 and state["last_survey_id"] == 1
+    assert state["last_survey_tally_id"] == 2          # the one-click answer is counted
+
+
+def test_the_answers_image_counts_everything_since_the_last_post(env):
+    fake, day = env
+    fake.tables["survey_responses"] = [_survey(1, comment=None), _survey(2, comment=None,
+                                                                        outcome="skipped", answer=None)]
+    channel = _Channel()
+    bot = _Bot(channel)
+    _run_day(bot)
+    assert len(_answers_image(channel)) == 1 and not _survey_message(channel)
+    assert dr._load_state()["channels"]["123"]["last_survey_tally_id"] == 2
+
+    # Nothing new: no image the next day.
+    day["today"] = "2026-09-26"
+    _run_day(bot)
+    assert len(_answers_image(channel)) == 1
+
+    # A survey shown since: counted once, in the next post.
+    fake.tables["survey_responses"].append(_survey(3, comment=None, outcome="ignored", answer=None))
+    day["today"] = "2026-09-27"
+    _run_day(bot)
+    assert len(_answers_image(channel)) == 2
+    assert dr._load_state()["channels"]["123"]["last_survey_tally_id"] == 3
+
+
+def test_a_failed_answers_image_is_retried_with_the_next_post(env):
+    fake, day = env
+    fake.tables["survey_responses"] = [_survey(1, comment=None)]
+    channel = _Channel(fail_on={1})
+    _run_day(_Bot(channel))
+    assert dr._load_state()["channels"]["123"].get("last_survey_tally_id", 0) == 0
+    day["today"] = "2026-09-26"
+    _run_day(_Bot(channel))
+    assert len(_answers_image(channel)) == 1
 
 
 def test_a_score_answer_reads_as_a_score(env):
@@ -428,10 +470,11 @@ def test_a_failed_survey_send_does_not_hold_back_the_reports_watermark(env):
     fake, day = env
     fake.tables["reports"] = [_report(1)]
     fake.tables["survey_responses"] = [_survey(1)]
-    channel = _Channel(fail_on={2})
+    channel = _Channel(fail_on={3})                     # reports, image, then comments
     _run_day(_Bot(channel))
     state = dr._load_state()["channels"]["123"]
     assert state["last_report_id"] == 1
+    assert state["last_survey_tally_id"] == 1
     assert state.get("last_survey_id", 0) == 0          # retried tomorrow
 
     day["today"] = "2026-09-26"

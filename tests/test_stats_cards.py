@@ -997,3 +997,75 @@ def test_a_long_histogram_scales_to_its_tallest_column_and_renders():
     hist = sc.Histogram([1] * 30 + [5])
     assert hist.scale() >= 5 / 35
     sc.Card("t").add(hist).png()
+
+
+# --- Surveys ------------------------------------------------------------------
+
+def _survey(qid, outcome="answered", answer=None, moment="loss", run=7, comment=False):
+    return {"question_id": qid, "moment": moment, "outcome": outcome, "answer": answer,
+            "run_number": run, "has_comment": comment}
+
+
+def test_a_tally_counts_each_response_and_its_comments():
+    tally = cards.survey_tally([_survey("loss", answer="unfair", comment=True),
+                                _survey("loss", answer="unfair"),
+                                _survey("loss", "skipped")])
+    unfair = next(r for r in tally if r["answer"] == "unfair")
+    assert unfair["responses"] == 2 and unfair["comments"] == 1
+    assert sum(r["responses"] for r in tally) == 3
+
+
+def test_only_runs_1_and_3_keep_their_run_number():
+    tally = cards.survey_tally([_survey("understood", answer="yes", run=1),
+                                _survey("understood", answer="yes", run=3),
+                                _survey("fun", answer="4", run=12)])
+    assert {r["run_slot"] for r in tally} == {1, 3, None}
+
+
+def test_understood_is_split_by_run_so_the_two_can_be_compared():
+    tally = cards.survey_tally([_survey("understood", answer="no", run=1),
+                                _survey("understood", answer="yes", run=3)])
+    tags = [b.tag for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow)]
+    assert tags.count("run 1") == 3 and tags.count("run 3") == 3
+
+
+def test_a_score_question_shows_every_score_even_unpicked():
+    tally = cards.survey_tally([_survey("fun", answer="4")])
+    labels = [b.label for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow)]
+    assert labels == ["1", "2", "3", "4", "5"]
+
+
+def test_a_question_with_few_answers_is_grey():
+    tally = cards.survey_tally([_survey("loss", answer="unfair")] * (cards.MIN_SURVEY_ANSWERS - 1))
+    assert all(b.faded for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow))
+
+
+def test_survey_cohorts_are_summed_per_answer():
+    rows = [dict(question_id="loss", moment="loss", run_slot=None, outcome="answered",
+                 answer="unfair", responses=n, comments=0, cohort=c)
+            for n, c in ((2, "new"), (3, "veteran"), (5, "developer"))]
+    merged, filtered = cards.select_cohort(rows, "players", cards.SURVEY_MERGE, cards.SURVEY_COUNTS)
+    assert filtered and merged[0]["responses"] == 5
+
+
+def test_the_answers_card_is_drawn_only_when_something_was_shown():
+    assert cards.survey_answers_card([]) is None
+    card = cards.survey_answers_card(cards.survey_tally([_survey("difficulty", "ignored")]))
+    assert card is not None and card.png()
+
+
+def test_the_surveys_card_renders():
+    tally = cards.survey_tally([_survey("fight_fun", answer="5", moment="boss_win"),
+                                _survey("loss", answer="my_fault", comment=True),
+                                _survey("difficulty", "skipped", moment="victory")])
+    assert Image.open(io.BytesIO(cards.surveys_card(tally, "Everyone but us").png())).width \
+        == sc.WIDTH * sc.SCALE
+
+
+def test_a_short_bar_a_little_wider_than_round_draws():
+    """PIL raised for a filled bar one to two pixels wider than its height,
+    which a 1/17 share's fractional end landed in (2026-10-04)."""
+    card = sc.Card("t")
+    for n in range(1, 40):
+        card.add(sc.BarRow("x", 1 / n, label_w=110))
+    card.png()

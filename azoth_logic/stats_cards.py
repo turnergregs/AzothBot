@@ -10,6 +10,7 @@ import math
 from decimal import Decimal, InvalidOperation
 
 from azoth_logic import stats_charts as sc
+from azoth_logic import survey_labels as sl
 from azoth_logic.stats_format import CUTOFF_VERSION
 from azoth_logic.stats_format import value as sf_value
 
@@ -1375,3 +1376,191 @@ def links_card(turn_rows: list, type_rows: list, population: str = "") -> sc.Car
                                    reference=average / scale, faded=n < MIN_TYPE_LINKS,
                                    label_w=LINK_LABEL_W, fill=sc.NEUTRAL))
     return card
+
+
+# ---------------------------------------------------------------------------
+# Surveys: /stats surveys, and the daily report's section
+# ---------------------------------------------------------------------------
+# The game's one-click survey questions (game repo docs/SURVEYS.md). One row
+# per survey SHOWN, with its outcome: answered, skipped, or ignored (shown and
+# never touched). /stats surveys reads survey_answer_view, counts per cohort;
+# /daily_reports' feedback post tallies the raw rows since its last post,
+# everyone included.
+
+SURVEY_COUNTS = ("responses", "comments")
+SURVEY_MERGE = ("question_id", "moment", "run_slot", "outcome", "answer")
+# Below this many answers a question's bars are grey.
+MIN_SURVEY_ANSWERS = 5
+SURVEY_LABEL_W = 110
+# The feedback post's question column: wide enough for "Fight difficulty" in bold.
+DAILY_SURVEY_LABEL_W = 142
+OUTCOME_COLOURS = {"answered": sc.ACCENT, "skipped": sc.NEUTRAL, "ignored": sc.FADED}
+OUTCOME_NAMES = {"answered": "Answered", "skipped": "Skipped", "ignored": "Ignored"}
+
+
+def survey_tally(raw: list) -> list:
+    """survey_answer_view-shaped rows from raw survey_responses rows: one per
+    (question, moment, run slot, outcome, answer), with `responses` and
+    `comments` counted."""
+    merged: dict = {}
+    for r in raw:
+        slot = r.get("run_number") if r.get("run_number") in (1, 3) else None
+        key = (r.get("question_id"), r.get("moment"), slot, r.get("outcome"), r.get("answer"))
+        entry = merged.setdefault(key, dict(zip(SURVEY_MERGE, key), responses=0, comments=0))
+        entry["responses"] += 1
+        entry["comments"] += 1 if r.get("has_comment") else 0
+    return list(merged.values())
+
+
+def _outcomes(rows: list) -> dict:
+    out = {"answered": 0, "skipped": 0, "ignored": 0}
+    for r in rows:
+        out[r.get("outcome")] = out.get(r.get("outcome"), 0) + int(r.get("responses") or 0)
+    return out
+
+
+def _answer_counts(rows: list) -> dict:
+    """`{answer_key: answers}` over answered rows."""
+    out: dict = {}
+    for r in rows:
+        if r.get("outcome") == "answered" and r.get("answer") is not None:
+            out[str(r["answer"])] = out.get(str(r["answer"]), 0) + int(r.get("responses") or 0)
+    return out
+
+
+def _answer_keys(question_id: str, counts: dict) -> list:
+    """The answers to draw, in order: a scale's 1-5 always, a choice's own
+    answers in the game's order, then anything unknown."""
+    if sl.is_scale(question_id):
+        known = [str(k) for k in range(1, 6)]
+    else:
+        known = list(sl.CHOICES.get(question_id, []))
+    return known + sorted(k for k in counts if k not in known)
+
+
+def _scale_mean(counts: dict):
+    total = sum(n for k, n in counts.items() if k.isdigit())
+    return sum(int(k) * n for k, n in counts.items() if k.isdigit()) / total if total else None
+
+
+def _answer_rows(question_id: str, counts: dict, tag: str = "") -> list:
+    total = sum(counts.values())
+    faded = total < MIN_SURVEY_ANSWERS
+    ends = sl.SCALE_ENDS.get(question_id, {})
+    blocks = []
+    for key in _answer_keys(question_id, counts):
+        n = counts.get(key, 0)
+        if sl.is_scale(question_id):
+            label, row_tag = key, ends.get(int(key), "") if key.isdigit() else ""
+        else:
+            label, row_tag = sl.ANSWERS.get(key, key), ""
+        if tag:
+            row_tag = f"{tag} · {row_tag}" if row_tag else tag
+        blocks.append(sc.BarRow(label, n / total if total else 0,
+                                value_text=_share(n, total) if total else "—",
+                                count_text=f"{n:,}", faded=faded, tag=row_tag,
+                                label_w=SURVEY_LABEL_W, fill=sc.NEUTRAL))
+    return blocks
+
+
+def surveys_card(rows: list, population: str = "") -> sc.Card:
+    outcomes = _outcomes(rows)
+    shown = sum(outcomes.values())
+    comments = sum(int(r.get("comments") or 0) for r in rows)
+    card = sc.Card("Surveys", population)
+    rate = f"{round(100 * outcomes['answered'] / shown)}%" if shown else "—"
+    card.add(*sc.tile_rows([("Shown", f"{shown:,}"), ("Answered", rate),
+                            ("Comments", f"{comments:,}")]))
+    card.add(sc.Spacer(4))
+
+    # Where it was shown, and what players did with it: the bar's length is
+    # how often that screen asked, split by outcome.
+    by_moment: dict = {}
+    for r in rows:
+        by_moment.setdefault(r.get("moment"), []).append(r)
+    moments = sorted(by_moment, key=lambda m: (sl.MOMENT_ORDER.index(m)
+                                               if m in sl.MOMENT_ORDER else 99, str(m)))
+    counts = {m: _outcomes(by_moment[m]) for m in moments}
+    scale = max((sum(c.values()) for c in counts.values()), default=0)
+    if scale:
+        card.add(sc.SectionHeader("Where it was shown", "answered of shown"))
+        for m in moments:
+            c = counts[m]
+            n = sum(c.values())
+            card.add(sc.TimeRow(sl.MOMENTS.get(m, str(m)),
+                                [(c[o], OUTCOME_COLOURS[o]) for o in OUTCOME_COLOURS],
+                                scale, total_text=f"{round(100 * c['answered'] / n)}%" if n else "—",
+                                extra=(f"{c['answered']}/{n}",)))
+        present = {o for c in counts.values() for o, n in c.items() if n}
+        card.add(sc.Legend([(OUTCOME_NAMES[o], OUTCOME_COLOURS[o])
+                            for o in OUTCOME_COLOURS if o in present]))
+        card.add(sc.Spacer(4))
+
+    by_question: dict = {}
+    for r in rows:
+        by_question.setdefault(r.get("question_id"), []).append(r)
+    for qid in sorted(by_question, key=sl.order_key):
+        q_rows = by_question[qid]
+        counts_all = _answer_counts(q_rows)
+        answered = sum(counts_all.values())
+        if not answered:
+            continue
+        detail = [f"{answered:,} answer" + ("" if answered == 1 else "s")]
+        mean = _scale_mean(counts_all) if sl.is_scale(qid) else None
+        if mean is not None:
+            detail.append(f"avg {mean:.1f}")
+        q_comments = sum(int(r.get("comments") or 0) for r in q_rows)
+        if q_comments:
+            detail.append(f"{q_comments} comment" + ("" if q_comments == 1 else "s"))
+        card.add(sc.SectionHeader(sl.question(qid), " · ".join(detail)))
+        # The first-run question is asked in run 1 and again in run 3: the
+        # point is to compare them, so each run gets its own bars.
+        slots = sorted({r.get("run_slot") for r in q_rows if r.get("run_slot") in (1, 3)})
+        if qid == "understood" and slots:
+            for slot in slots:
+                slot_counts = _answer_counts([r for r in q_rows if r.get("run_slot") == slot])
+                if sum(slot_counts.values()):
+                    card.add(*_answer_rows(qid, slot_counts, tag=f"run {slot}"))
+        else:
+            card.add(*_answer_rows(qid, counts_all))
+        card.add(sc.Spacer(4))
+    return card
+
+
+def _answer_summary(question_id: str, counts: dict) -> str:
+    """One line of a day's answers: "Too hard 2 · Just right 1", or for a
+    1-5 question "avg 3.5 (4, 3)"."""
+    if sl.is_scale(question_id):
+        mean = _scale_mean(counts)
+        scores = sorted((int(k) for k, n in counts.items() if k.isdigit() for _ in range(n)),
+                        reverse=True)
+        return f"avg {mean:.1f}  ({', '.join(map(str, scores))})" if mean is not None else ""
+    keys = [k for k in _answer_keys(question_id, counts) if counts.get(k)]
+    return " · ".join(f"{sl.ANSWERS.get(k, k)} {counts[k]}" for k in keys)
+
+
+def survey_answers_card(tally: list):
+    """/daily_reports' survey answers: how many were shown and answered since
+    the last post, then a line per question asked. None when none were shown.
+    Everyone, developers included, like the rest of that post."""
+    outcomes = _outcomes(tally)
+    shown = sum(outcomes.values())
+    if not shown:
+        return None
+    card = sc.Card("Survey answers", f"Since the last post · {COHORT_LABELS['all']}")
+    blocks = [sc.SectionHeader("Answered", f"{outcomes['answered']} of {shown} shown")]
+    by_question: dict = {}
+    for r in tally:
+        by_question.setdefault(r.get("question_id"), []).append(r)
+    right = sc.WIDTH - sc.PAD
+    for qid in sorted(by_question, key=sl.order_key):
+        q_rows = by_question[qid]
+        counts = _answer_counts(q_rows)
+        n = sum(int(r.get("responses") or 0) for r in q_rows)
+        blocks.append(sc.TableRow([
+            (sl.short(qid), sc.PAD, "lm", "strong"),
+            (_answer_summary(qid, counts) or "no answers", sc.PAD + DAILY_SURVEY_LABEL_W, "lm",
+             "normal" if counts else "muted"),
+            (f"{sum(counts.values())}/{n}", right, "rm", "muted"),
+        ], height=26))
+    return card.add(*blocks)

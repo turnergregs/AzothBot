@@ -23,15 +23,22 @@ The schedule (send time, UTC offset, CST day boundary) is shared with
 daily_update.py; the state file is not, so the two can be pointed at different
 channels and toggled independently.
 
-SURVEY COMMENTS ride along (2026-10-04): the in-game one-click survey writes
-`survey_responses`, and the rows a player typed a comment on are posted as a
-second message, the same way -- up to REPORT_LIMIT a day, oldest first, with
-their own watermark `last_survey_id`. One-click answers are not posted. A
-database without the table (2026-10-04_survey_responses.sql not yet applied)
-posts the reports alone and says so in the console. See the game repo's
-docs/SURVEYS.md.
+THE SURVEYS ride along, making this the daily FEEDBACK post (2026-10-04). The
+in-game one-click survey writes `survey_responses`, and after the reports come:
+
+  - SURVEY ANSWERS, one image (stats_cards.survey_answers_card): every survey
+    shown since the last post, everyone included, a line per question. Its
+    own watermark `last_survey_tally_id` covers every row, so a bot that was
+    down counts the missed days in its next post rather than losing them.
+  - SURVEY COMMENTS, the rows a player typed a comment on, posted the way the
+    reports are: up to REPORT_LIMIT a day, oldest first, on `last_survey_id`.
+
+Each of the three messages advances only its own watermark, after its own
+send. A database without the table posts the reports alone and says so in the
+console. See the game repo's docs/SURVEYS.md.
 """
 import asyncio
+import io
 import json
 import os
 import traceback
@@ -49,6 +56,8 @@ from azoth_commands.daily_update import (
     _today_cst_str,
 )
 from azoth_commands.helpers import safe_interaction
+from azoth_logic import stats_cards
+from azoth_logic import survey_labels
 from constants import DEV_GUILD_ID
 from supabase_client import supabase
 from supabase_helpers import SupabaseQueryError, SupabaseUnreadableError, _assert_readable
@@ -84,27 +93,11 @@ SURVEY_EMBED_COLOR = 0x9B59B6
 SURVEY_TABLE = "survey_responses"
 SURVEY_COLUMNS = ["id", "player_uuid", "question_id", "answer", "comment",
                   "version", "created_at"]
+SURVEY_TALLY_COLUMNS = ["id", "question_id", "moment", "outcome", "answer",
+                        "run_number", "has_comment"]
+# Far past a real day's surveys. A backlog past it is counted in the next post.
+SURVEY_TALLY_LIMIT = 5000
 SURVEY_MIGRATION = "2026-10-04_survey_responses.sql"
-
-# The game's English for each question and answer (assets/surveys/questions.json
-# and translations.csv in the game repo). A question the bot does not know yet
-# shows its raw id rather than nothing.
-SURVEY_QUESTIONS = {
-    "understood": "I understood how to play.",
-    "fun": "How fun was that run?",
-    "loss": "That loss felt like:",
-    "difficulty": "That run's difficulty felt:",
-    "choices": "My choices mattered.",
-    "length": "That run's length felt:",
-    "variety": "Do runs feel different from each other?",
-    "fight_fun": "How fun was that fight?",
-    "fight_difficulty": "That fight's difficulty felt:",
-}
-SURVEY_ANSWERS = {
-    "yes": "Yes", "mostly": "Mostly", "no": "No",
-    "bad_luck": "Bad luck", "my_fault": "My fault", "unfair": "Unfair",
-    "too_easy": "Too easy", "just_right": "Just right", "too_hard": "Too hard",
-}
 
 # The loop and the startup catch-up both run as soon as the bot is ready, each
 # with its own copy of the state. A send is an await, so without this the second
@@ -180,6 +173,24 @@ def _fetch_unsent_survey_comments(after_id: int, limit: int = REPORT_LIMIT) -> t
     rows = response.data or []
     total = response.count if response.count is not None else len(rows)
     return rows, total
+
+
+def _fetch_survey_tally_rows(after_id: int) -> list[dict]:
+    """Every survey shown with id > after_id, oldest first, up to
+    SURVEY_TALLY_LIMIT. Raises on failure."""
+    _assert_readable(SURVEY_TABLE)
+    try:
+        response = (
+            supabase.table(SURVEY_TABLE)
+            .select(",".join(SURVEY_TALLY_COLUMNS))
+            .gt("id", after_id)
+            .order("id")
+            .limit(SURVEY_TALLY_LIMIT)
+            .execute()
+        )
+    except Exception as e:
+        raise SupabaseQueryError(f"select on `{SURVEY_TABLE}` failed: {e}") from e
+    return response.data or []
 
 
 def _fetch_player_names(player_uuids: list[str]) -> dict[str, str]:
@@ -266,16 +277,13 @@ def _survey_field(row: dict, player_names: dict[str, str]) -> tuple[str, str]:
     answer / who / which version / when. Only the comment is player text; the
     question and answer are the game's own words.
     """
-    question_id = str(row.get("question_id") or "")
-    question = SURVEY_QUESTIONS.get(question_id, question_id or "Survey")
-    name = f"{_clean(question, META_LIMIT * 2)} #{row['id']}"
+    name = f"{_clean(survey_labels.question(row.get('question_id')), META_LIMIT * 2)} #{row['id']}"
     body = _clean(row.get("comment") or "", SUMMARY_LIMIT) or "*(no comment)*"
 
     meta = []
     answer = row.get("answer")
     if answer is not None and str(answer).strip():
-        answer = str(answer)
-        meta.append(f"{answer}/5" if answer.isdigit() else SURVEY_ANSWERS.get(answer, _clean(answer, META_LIMIT)))
+        meta.append(_clean(survey_labels.answer(row.get("question_id"), answer), META_LIMIT))
     player = player_names.get(row.get("player_uuid"))
     if player:
         meta.append(_clean(player, META_LIMIT))
@@ -350,8 +358,8 @@ def _footer(shown: int, total: int):
 # ---------------------------------------------------------------------------
 
 async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today: str) -> int | None:
-    """Post this channel's unsent reports, then its unsent survey comments.
-    Caller must hold _SEND_LOCK.
+    """Post this channel's unsent reports, then the survey answers since the
+    last post, then the unsent survey comments. Caller must hold _SEND_LOCK.
 
     Returns the number of items posted (0 when there were none -- the day is
     still claimed, so a quiet day is checked once, not every 10 minutes), or
@@ -367,16 +375,31 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
     after_id = int(config.get("last_report_id") or 0)
     reports, total = _fetch_unsent_reports(after_id)
     survey_after_id = int(config.get("last_survey_id") or 0)
-    surveys, survey_total = _fetch_survey_comments_or_none(survey_after_id)
+    tally_after_id = int(config.get("last_survey_tally_id") or 0)
+    surveys, survey_total, tally_rows = _fetch_surveys_or_none(survey_after_id, tally_after_id)
 
+    # Each message: (watermark, where it stood, how far to move it, send kwargs,
+    # items posted, what it is). Built -- the image drawn included -- before the
+    # day is claimed, so a drawing failure never uses up the day.
     names = _fetch_player_names([r.get("player_uuid") for r in reports + surveys])
-    batches = []
+    messages = []
     if reports:
         embed, max_id = _build_reports_embed(reports, total, names)
-        batches.append(("last_report_id", after_id, embed, max_id, total, "reports"))
+        messages.append(("last_report_id", after_id, max_id, {"embed": embed},
+                         len(embed.fields), f"of {total} unsent reports"))
+    card = stats_cards.survey_answers_card(stats_cards.survey_tally(tally_rows))
+    if card is not None:
+        data = await asyncio.to_thread(card.png)
+        embed = nextcord.Embed(color=SURVEY_EMBED_COLOR)
+        embed.set_image(url="attachment://survey_answers.png")
+        messages.append(("last_survey_tally_id", tally_after_id, max(r["id"] for r in tally_rows),
+                         {"embed": embed, "file": nextcord.File(io.BytesIO(data),
+                                                                 filename="survey_answers.png")},
+                         len(tally_rows), "surveys shown, as one image"))
     if surveys:
         embed, max_id = _build_survey_embed(surveys, survey_total, names)
-        batches.append(("last_survey_id", survey_after_id, embed, max_id, survey_total, "survey comments"))
+        messages.append(("last_survey_id", survey_after_id, max_id, {"embed": embed},
+                         len(embed.fields), f"of {survey_total} unsent survey comments"))
 
     # Claim the day before sending anything (see the module docstring).
     config["last_sent_date"] = today
@@ -384,36 +407,38 @@ async def _claim_and_send(bot, state: dict, channel_id: str, config: dict, today
     _save_state(state)
 
     posted = 0
-    for watermark, previous, embed, max_id, unsent, what in batches:
+    for watermark, previous, max_id, kwargs, count, what in messages:
         try:
-            await channel.send(embed=embed, allowed_mentions=nextcord.AllowedMentions.none())
+            await channel.send(**kwargs, allowed_mentions=nextcord.AllowedMentions.none())
         except Exception as e:
             print(f"Daily reports send FAILED for channel {channel_id} after claiming {today}; "
-                  f"{what} after #{previous} will be retried with the next update: {e}")
+                  f"rows after #{previous} for `{watermark}` will be retried with the next update: {e}")
             continue
 
         # Advance past exactly what the message carried -- not past rows that
         # did not fit in it.
         config[watermark] = max(previous, max_id)
         _save_state(state)
-        posted += len(embed.fields)
-        print(f"Daily reports: posted {len(embed.fields)} of {unsent} unsent {what} to channel {channel_id}")
+        posted += count
+        print(f"Daily reports: posted {count} {what} to channel {channel_id}")
     return posted
 
 
-def _fetch_survey_comments_or_none(after_id: int) -> tuple[list[dict], int]:
-    """The survey comments, or none when they cannot be read.
+def _fetch_surveys_or_none(comment_after_id: int, tally_after_id: int) -> tuple[list[dict], int, list[dict]]:
+    """`(comments, comments_total, tally_rows)`, or nothing when they cannot be
+    read.
 
     Deliberately softer than the reports fetch: the survey table arrived with
-    its own migration, and a database that does not have it yet must not stop
-    the reports from posting. The console names the file to run.
+    its own migration, and a database that does not have it must not stop the
+    reports from posting. The console names the file to run.
     """
     try:
-        return _fetch_unsent_survey_comments(after_id)
+        comments, total = _fetch_unsent_survey_comments(comment_after_id)
+        return comments, total, _fetch_survey_tally_rows(tally_after_id)
     except (SupabaseQueryError, SupabaseUnreadableError) as e:
-        print(f"Daily reports: survey comments skipped ({e}). If `{SURVEY_TABLE}` does not "
+        print(f"Daily reports: surveys skipped ({e}). If `{SURVEY_TABLE}` does not "
               f"exist yet, run {SURVEY_MIGRATION}.")
-        return [], 0
+        return [], 0, []
 
 
 async def _send_due_channels(bot, source: str) -> None:
@@ -503,6 +528,7 @@ def add_daily_reports_commands(cls):
             # history REPORT_LIMIT a day. An existing one keeps its watermark.
             config.setdefault("last_report_id", 0)
             config.setdefault("last_survey_id", 0)
+            config.setdefault("last_survey_tally_id", 0)
             config["send_hour_utc"] = hour_utc
             config["send_minute_utc"] = minute_utc
             config.pop("disabled", None)
@@ -513,8 +539,8 @@ def add_daily_reports_commands(cls):
             if config.get("last_sent_date") != today and _is_past_send_time_utc(hour_utc, minute_utc):
                 posted = await _claim_and_send(self.bot, state, channel_id, config, today)
                 if posted is not None:
-                    detail = (f"Posted {posted} report(s) and survey comment(s) now." if posted
-                              else "No unsent reports or survey comments right now.")
+                    detail = (f"Posted {posted} new item(s) now." if posted
+                              else "No new reports or surveys right now.")
                     return f"Daily reports **enabled** for this channel. {detail}"
 
         local_time = _format_utc_to_local(hour_utc, minute_utc, utc_offset)

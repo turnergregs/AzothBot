@@ -31,6 +31,7 @@ ALL_REPORTS = [
     ("breakdown by:version", "stats_breakdown", {"by": "version", "players": "new"}),
     ("bosses", "stats_bosses", {"players": "new"}),
     ("links", "stats_links", {"players": "new"}),
+    ("surveys", "stats_surveys", {"players": "players"}),
     ("item", "stats_item", {"by": "version", "players": "new"}),   # item filled in at run time
     ("scoreboard", "stats_scoreboard", {}),
     ("draft picks", "stats_draft_picks", {"players": "new"}),
@@ -444,6 +445,39 @@ def add_stats_commands(cls):
         await _send_card(interaction, stats_cards.links_card(turn_rows, type_rows, population),
                          "links.png", colour=0x1ABC9C)
 
+    # --- Surveys ---
+    # 2026-10-04. The game's one-click survey questions: where each was shown
+    # and what players did with it, then each question's answers. Defaults to
+    # everyone but us rather than new playtesters: the surveys started after
+    # the cutoff, so almost no "new" player has answered one yet. See
+    # stats_cards § Surveys and the game repo's docs/SURVEYS.md.
+    @stats_cmd.subcommand(name="surveys", description="In-game survey answers and response rates")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch survey stats.")
+    async def stats_surveys(
+        self,
+        interaction: Interaction,
+        players: str = SlashOption(
+            description="Whose answers to count (default: everyone but us)",
+            required=False,
+            default="players",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
+    ):
+        try:
+            rows = fetch_all("survey_answer_view")
+        except SupabaseUnreadableError as e:
+            return f"❌ {e}"
+        except SupabaseError:
+            return ("❌ `survey_answer_view` is not migrated — run "
+                    "`db/migrations/2026-10-04_survey_answer_view.sql`.")
+
+        rows, _ = stats_cards.select_cohort(rows, players, stats_cards.SURVEY_MERGE,
+                                            stats_cards.SURVEY_COUNTS)
+        if not any(int(r.get("responses") or 0) for r in rows):
+            return "❌ No surveys shown to these players yet."
+        await _send_card(interaction, stats_cards.surveys_card(rows, stats_cards.COHORT_LABELS[players]),
+                         "surveys.png", colour=0x9B59B6)
+
     # --- One item ---
     # 2026-09-29, after Veln: its hp was halved in 0.9.11 and /stats bosses,
     # pooling every version, still ranked it the hardest. One boss, card,
@@ -628,6 +662,7 @@ def add_stats_commands(cls):
     cls.stats_all = stats_all
     cls.stats_bosses = stats_bosses
     cls.stats_links = stats_links
+    cls.stats_surveys = stats_surveys
     cls.stats_item = stats_item
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would
