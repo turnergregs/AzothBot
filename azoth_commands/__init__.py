@@ -12,6 +12,7 @@ from .stats import add_stats_commands
 from .misc import add_misc_commands
 from .daily_update import add_daily_update_commands
 from .daily_reports import add_daily_reports_commands
+from .live_reports import add_live_reports_commands
 
 
 class AzothCommands(commands.Cog):
@@ -35,3 +36,4 @@ add_stats_commands(AzothCommands)
 add_misc_commands(AzothCommands)
 add_daily_update_commands(AzothCommands)
 add_daily_reports_commands(AzothCommands)
+add_live_reports_commands(AzothCommands)

@@ -440,7 +440,8 @@ what you would want to force. Full policy:
 | `/stats draft pool` | — | — (content, no cohort). What the shipped draft decks hold, in the element colours. Image |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 | `/daily_update_repost` | 🔒 | `date` (YYYY-MM-DD, CST, before today). Posts that day's daily report here. Touches no schedule state |
-| `/daily_reports` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
+| `/daily_reports` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6). The daily survey-answers image |
+| `/live_reports` | 🔒 | `enabled`. New player reports, survey comments and crashes (not developers'), every 10 minutes |
 
 All `/stats` subcommands reply with an **embed** — an aligned table for the
 multi-row views, labelled fields for the single-row ones. They are open to anyone
@@ -578,42 +579,63 @@ level-up pick rates. Those are **service-role only** — on an anon key those
 sections say "unavailable" rather than silently reporting zero. See
 [ANALYTICS.md](ANALYTICS.md#the-daily-report).
 
-`/daily_reports` posts player-submitted `reports` to the channel it is enabled
-in, once a day at its own send time: up to **10 per day, oldest first**, as
-one field each in a single embed — the player's text cut to 200 characters, then
-player · version · date · contact — with a footer saying how many are still
-waiting. If ten long ones would break Discord's 6,000-character embed cap, the
-ones that don't fit wait for the next update. `report_type =
-'crash'` is excluded — those are automatic and far too numerous. **No message at
-all** when nothing is unsent. A channel enabled for the first time starts at id 0
-and works through the whole history.
+`/live_reports` (2026-10-07) posts new **player reports**, **survey comments**
+and **crashes** to the channels it is enabled in, every 10 minutes
+(`azoth_commands/live_reports.py`). Each cycle sends at most one embed of each
+kind, oldest first, one field per row, and **nothing** when nothing is new.
 
-**It is the daily feedback post** (2026-10-04): after the reports come the
-in-game survey's results, as up to two more messages.
+- **Player reports**: every `report_type` but `crash` (bug, feature request,
+  accessibility, content idea). The field is named by the type and category,
+  then holds the player's text cut to 200 characters and player · version ·
+  time · contact.
+- **Survey comments**: survey rows with a comment, named by the question, then
+  the comment and answer · player · version · time. The one-click answers are
+  counted in the daily image below.
+- **Crashes**: `report_type = 'crash'`, **except developer accounts**
+  (`players.developer`, Turner and Caleb). Measured 2026-10-07, ~700 crash
+  reports in two weeks came from our own sessions (GUT runs, dev probes,
+  scratch scripts) against ~9 from anyone else. A crash with no player (sent
+  before the install registered) is posted: that is a new player. The field is
+  `Crash #id · game_state`, then the error line and its `at:` line pulled out
+  of `error_message` (an unclean exit with nothing found in the log says so),
+  then player · version · time · OS. The developer filter is done in Python
+  over a read of up to 200 crashes, because PostgREST cannot join `players`
+  and this postgrest has no `or_` to keep the rows with no player.
+- **Per channel, a watermark per kind** (`last_report_id`, `last_survey_id`,
+  `last_crash_id`, in `live_reports_state.json`), each advanced only after a
+  message is out and only past the rows it carried. The crash watermark also
+  moves past developer crashes once read, without a message. A failed send is
+  retried the next cycle; a failure on one kind never holds another back, and
+  crashes go last so a burst of them never delays a report a player wrote. No
+  day is claimed: posting is what every cycle is for.
+- **A backlog** (the bot was down) drains at three embeds of ten per kind per
+  cycle, with a footer saying how many are still waiting. The startup pass runs
+  one cycle at once.
+- **A missing watermark** starts at the highest `last_report_id` /
+  `last_survey_id` in `daily_reports_state.json`, which is where the daily post
+  stopped carrying them, so the switch neither repeats nor drops anything.
+  Crashes, which the daily post never carried, and a bot with no daily state
+  start at the newest row, never id 0. A table that cannot be read leaves its
+  watermark unset until a later cycle can.
 
-- **Survey answers**, one image (`stats_cards.survey_answers_card`): every
-  survey shown since the last post, everyone included, a line per question
-  with its answers and answered/shown. Its watermark `last_survey_tally_id`
-  covers every row, so days the bot was down are counted in the next post, not
-  lost.
-- **Survey comments**: rows with a comment, posted the way reports are (ten a
-  day, oldest first, a footer for the rest) on `last_survey_id`. Each field is
-  named by the question, then holds the comment and answer · player · version
-  · date.
-
-Each message advances only its own watermark, after its own send. Questions and
-answers come from `azoth_logic/survey_labels.py`; **add a new game question
-there**, or it shows as its raw id. A database without the table posts the
-reports alone and says so in the console.
+`/daily_reports` posts **one image a day** (`stats_cards.survey_answers_card`):
+every survey shown since the last post, everyone included, a line per question
+with its answers and answered/shown. Until 2026-10-07 it was the daily feedback
+post and also carried ten reports and ten survey comments a day; those moved to
+`/live_reports`. Its old `last_report_id` / `last_survey_id` stay in its state
+file, unread by it, as `/live_reports`' starting point.
 
 It keeps its own state (`daily_reports_state.json`) with two fields that fail in
 opposite directions on purpose: the day is claimed *before* sending, so a failed
-send never re-fires every 10 minutes, while `last_report_id` advances only past
-reports the message actually carried, so a failed send retries them the
-next day instead of skipping them. Player text is truncated, markdown-escaped and
-sent with `AllowedMentions.none()` — anyone holding the anon key can insert a
-report. Needs the service-role key; on anon it fails loudly rather than posting
-nothing.
+send never re-fires every 10 minutes, while `last_survey_tally_id` advances only
+after the image is out and covers every row it counted, so a failed send or a
+day the bot was down is counted in the next post instead of lost.
+
+Questions and answers come from `azoth_logic/survey_labels.py`; **add a new game
+question there**, or it shows as its raw id. Player text is truncated,
+markdown-escaped and sent with `AllowedMentions.none()` — anyone holding the
+anon key can insert a report. Both need the service-role key; on anon they fail
+loudly rather than posting nothing.
 
 ---
 
@@ -624,7 +646,7 @@ nothing.
 of `/stats`.
 
 **Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
-`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`, `/daily_update_repost`, `/daily_reports`.
+`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`, `/daily_update_repost`, `/daily_reports`, `/live_reports`.
 
 **Removed 2026-08-26:** all 10 commands for the two retired content types, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).

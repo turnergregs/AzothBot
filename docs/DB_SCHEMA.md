@@ -752,7 +752,7 @@ crashes). INSERT-only for anon. Columns pulled 2026-09-25:
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | bigint | PK. `/daily_reports` uses it as a per-channel watermark |
+| `id` | bigint | PK. `/live_reports` uses it as a per-channel watermark (`/daily_reports` did until 2026-10-07) |
 | `player_uuid` | uuid | → `players(uuid)` |
 | `report_type` | text | `crash` (automatic, numerous) or a manual type — `bug`, `feature_request`, `content_idea`, … |
 | `category` | text | The popup's dropdown value, e.g. `Bug Report`, `Feature Request`, `Vision`, `General Suggestion` |
@@ -865,7 +865,7 @@ policy change as a security change.
 | `players` | SELECT + INSERT | ⚠️ World-readable, though it holds no PII beyond a display name |
 | `reports` | INSERT only | ✅ **The correct pattern** |
 | `turns`, `turn_nodes`, `levelups` | INSERT only | ✅ Follows `reports` |
-| `survey_responses` | INSERT only | ✅ Follows `reports` (2026-10-04). `/daily_reports` posts its comments |
+| `survey_responses` | INSERT only | ✅ Follows `reports` (2026-10-04). `/live_reports` posts its comments, `/daily_reports` a daily image of its answers |
 
 No UPDATE or DELETE policy exists anywhere except the narrow `games` one, so
 anon can add and read but never modify or destroy.

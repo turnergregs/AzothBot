@@ -5,7 +5,7 @@ import aiohttp
 from nextcord import SlashOption, Interaction
 from azoth_commands.helpers import safe_interaction, pack_fields_into_embeds
 from constants import DEV_GUILD_ID
-from azoth_logic import bulk_apply, bulk_report, content_index, deck_render, taxonomy
+from azoth_logic import bulk_apply, bulk_report, content_index, deck_bulk, deck_render, taxonomy
 
 
 # How many updated items get drawn. Rendering is ~0.7s each on a cold cache, and
@@ -161,3 +161,31 @@ def add_misc_commands(cls):
 
 
 	cls.bulk_insert_cmd = bulk_insert_cmd
+
+
+	@nextcord.slash_command(name="bulk_add_to_deck", description="Add many existing cards, aspects or rites to decks using a JSON file.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=60, error_message="❌ Failed to bulk add to decks.", require_authorized=True)
+	async def bulk_add_to_deck_cmd(
+	    self,
+	    interaction: Interaction,
+	    json_file: nextcord.Attachment = SlashOption(description="Upload a JSON file", required=True)
+	):
+	    payload, error = await _download_payload(json_file)
+	    if error:
+	        return error
+
+	    # Resolved in full before anything is written, then one INSERT -- see
+	    # azoth_logic/deck_bulk.py. Blocking network I/O; off the loop.
+	    try:
+	        plan = await asyncio.to_thread(deck_bulk.apply, payload)
+	    except deck_bulk.DeckBulkError as e:
+	        # A plain reply caps at 2000 characters.
+	        return "❌ Nothing was added.\n" + bulk_report.fit(e.lines, 1900)
+
+	    await _send_bulk_report(
+	        interaction, "Bulk add to deck", sum(len(entry["items"]) for entry in plan),
+	        {("deck_contents", name): lines
+	         for name, lines in deck_bulk.report_lines(plan).items()}, [])
+
+
+	cls.bulk_add_to_deck_cmd = bulk_add_to_deck_cmd
