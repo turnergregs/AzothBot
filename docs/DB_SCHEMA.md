@@ -1012,6 +1012,27 @@ only on the previous one's success
 partway meant every downstream table silently got nothing, so absence of a
 `boss_fights` row is not evidence that no boss was fought.
 
+**11b. No turns or drafts from 2026-09-30 22:00 to 2026-10-03 ~03:00 UTC.**
+The client began sending `turns.bonus_money` and `drafts.available_money`
+(commit f4f7ce74, 2026-09-30 21:52 UTC) about two days before
+`2026-09-29_shop_money.sql` added them, so PostgREST rejected every turn and
+draft batch in between: 0.10.0, 0.10.1 and early 0.10.2, 100% of runs. The
+`games` rows are intact (result, act, time, combo). A run in that window with no
+turns or drafts is **not** abandoned and **not** a run that never shopped.
+Exclude the window from any turn- or draft-grain question:
+
+```sql
+and not (g.started_at >= '2026-09-30 21:52+00' and g.started_at < '2026-10-03 04:00+00')
+```
+
+The rows cannot be recovered: rejected rows lived only in the client until the
+run ended. (The `0.9.12` version string predates the commit by a day, so early
+0.9.12 runs are fine; filter on time, not version.)
+
+`run_cleared()` does not need the window excluded: a run with no act 3 boss
+turn falls back to `act_reached >= 4` (game repo
+`2026-10-06_run_cleared_lost_turns.sql`).
+
 **12. `created_at` is not when the thing happened.** With per-act flushing it's
 the insert time, potentially many minutes later. Use `started_at` for anything
 time-series.
@@ -1117,6 +1138,7 @@ popular purely because they're offered more.
 
 | Date | Change |
 |---|---|
+| 2026-10-06 | **`run_cleared()` survives lost turn rows** (game repo `2026-10-06_run_cleared_lost_turns.sql`). **Not yet applied.** When a run has no act 3 boss turn at all, `run_cleared()` falls back to `games.act_reached >= 4`; a recorded act 3 boss turn still decides. Fixes the two caveat 11b runs that reached act 4 without counting as beating act 3. Signature unchanged, so `/stats player`, `/stats breakdown` and `/stats item` pick it up with no bot change. |
 | 2026-10-04 | **`survey_answer_view`** (game repo `2026-10-04_survey_answer_view.sql`). **Applied 2026-10-04.** Survey responses per (cohort, question, moment, run 1/3 slot, outcome, answer) with `responses` and `comments`; left joins `player_cohort_view` (a missing player counts as `new`). `security_invoker`, service_role only, in `SERVICE_ROLE_ONLY_VIEWS`. Serves `/stats surveys`. |
 | 2026-10-04 | **`survey_responses`** (game repo `2026-10-04_survey_responses.sql`). **Applied 2026-10-04.** One row per in-game survey question shown: `question_id`, `answer`, `comment`, `has_comment` (generated from `comment`), `outcome`, `moment`, and the run's context. bigint `id` plus a unique client `uuid`. INSERT-only for anon. `/daily_reports` posts the rows with `has_comment` as a second message on their own watermark, `last_survey_id`; until the table exists it posts the reports alone. Full column notes: the game repo's `docs/SURVEYS.md`. |
 | 2026-09-25 | **Analytics cutoff `0.9.0` → `0.9.10`** (`2026-09-25_bump_analytics_cutoff.sql`), the release that let in new playtesters. `analytics_cutoff()` alone; no view touched. Eligible population not measured at apply time. |
