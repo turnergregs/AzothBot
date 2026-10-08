@@ -1029,6 +1029,13 @@ def test_understood_is_split_by_run_so_the_two_can_be_compared():
     assert tags.count("run 1") == 3 and tags.count("run 3") == 3
 
 
+def test_understood_asked_again_after_run_3_gets_its_own_bars():
+    tally = cards.survey_tally([_survey("understood", answer="no", run=1),
+                                _survey("understood", answer="mostly", run=5)])
+    tags = [b.tag for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow)]
+    assert tags.count("run 1") == 3 and tags.count("later") == 3
+
+
 def test_a_score_question_shows_every_score_even_unpicked():
     tally = cards.survey_tally([_survey("fun", answer="4")])
     labels = [b.label for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow)]
@@ -1091,12 +1098,20 @@ def test_a_players_newest_comments_come_first_and_are_capped():
     assert texts == ["“comment 5”", "“comment 4”", "“comment 3”"]
 
 
-def test_a_long_comment_wraps_inside_the_card_and_is_cut_at_its_last_line():
-    lines = cards._wrap("word " * 200, sc.WIDTH - 2 * sc.PAD, cards.COMMENT_SIZE,
-                        cards.PLAYER_COMMENT_LINES)
+def test_a_long_comment_wraps_inside_the_card_and_is_shown_whole():
+    lines = cards._wrap("word " * 200, sc.WIDTH - 2 * sc.PAD, cards.COMMENT_SIZE)
     f = sc.font(cards.COMMENT_SIZE)
-    assert len(lines) == cards.PLAYER_COMMENT_LINES and lines[-1].endswith("…")
+    assert " ".join(lines).split() == ["word"] * 200 and not lines[-1].endswith("…")
     assert all(f.getlength(line) <= sc.px(sc.WIDTH - 2 * sc.PAD) for line in lines)
+
+
+def test_the_player_card_shows_every_word_of_a_long_comment():
+    comment = " ".join(f"w{i}" for i in range(120))
+    rows = [_player_survey("loss", "unfair", comment=comment)]
+    joined = " ".join(b.cells[0][0] for b in cards.player_survey_blocks(rows)
+                      if isinstance(b, sc.TableRow))
+    quoted = joined[joined.index("“") + 1:joined.index("”")]
+    assert quoted.split() == comment.split()
 
 
 def test_the_player_card_renders_with_surveys():

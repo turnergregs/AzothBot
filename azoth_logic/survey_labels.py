@@ -18,6 +18,9 @@ QUESTIONS = {
     "variety": "Do runs feel different from each other?",
     "fight_fun": "How fun was that fight?",
     "fight_difficulty": "That fight's difficulty felt:",
+    "ui": "How is the game UI feeling?",
+    "visuals": "How are the visuals looking?",
+    "cards": "Cards are easy to understand.",
 }
 
 # A few words for a row label.
@@ -31,12 +34,15 @@ SHORT = {
     "variety": "Variety",
     "fight_fun": "Fight fun",
     "fight_difficulty": "Fight difficulty",
+    "ui": "UI",
+    "visuals": "Visuals",
+    "cards": "Cards",
 }
 
 # The order questions are reported in: the first-run question, then the run
-# questions, then the fight ones.
+# questions, then the fight ones, then the ones about the game as a whole.
 ORDER = ["understood", "fun", "loss", "difficulty", "choices", "length", "variety",
-         "fight_fun", "fight_difficulty"]
+         "fight_fun", "fight_difficulty", "ui", "visuals", "cards"]
 
 # Choice questions' answers, in the order the card shows them.
 CHOICES = {
@@ -59,6 +65,9 @@ SCALE_ENDS = {
     "length": {1: "Too short", 3: "Just right", 5: "Too long"},
     "variety": {1: "Samey", 5: "Unique"},
     "fight_fun": {1: "Not fun", 5: "Very fun"},
+    "ui": {1: "Cumbersome", 5: "Seamless"},
+    "visuals": {1: "Ugly", 5: "Amazing"},
+    "cards": {1: "Disagree", 5: "Agree"},
 }
 
 # Where a survey was shown, by `survey_responses.moment`.

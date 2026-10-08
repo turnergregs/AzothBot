@@ -115,7 +115,7 @@ class _Channel:
         await asyncio.sleep(0)            # a real send yields to the loop
         if self.calls in self.fail_on:
             raise RuntimeError("Discord 500")
-        self.sent.append({"embed": embed, "allowed_mentions": allowed_mentions})
+        self.sent.append({"embed": embed, "file": file, "allowed_mentions": allowed_mentions})
 
 
 class _Bot:
@@ -141,7 +141,19 @@ def env(monkeypatch, tmp_path):
 
 def _ids(channel, noun):
     return [int(f.name.rsplit("#", 1)[1].split(" ")[0])
-            for m in channel.sent if noun in m["embed"].title for f in m["embed"].fields]
+            for m in channel.sent if noun in m["embed"].title for f in m["embed"].fields
+            if f.name != lr.CONTINUED]
+
+
+def _row_text(embed, row_id):
+    """Every field of row `row_id` in `embed`, joined back into one value."""
+    values, inside = [], False
+    for f in embed.fields:
+        if f.name != lr.CONTINUED:
+            inside = f.name.rsplit("#", 1)[1].split(" ")[0] == str(row_id)
+        if inside:
+            values.append(f.value)
+    return "\n".join(values)
 
 
 def _cycle(bot):
@@ -400,15 +412,59 @@ def test_player_text_cannot_ping_or_restyle(env):
         mentions = msg["allowed_mentions"]
         assert isinstance(mentions, nextcord.AllowedMentions)
         assert not mentions.everyone and not mentions.users and not mentions.roles
-        text, meta = msg["embed"].fields[0].value.split("\n")
-        assert "@everyone" not in text and "**" not in text.replace("\\*", "")
-        assert "@here" not in meta
-        assert text.endswith("…") and len(text) < lr.SUMMARY_LIMIT * 2
+        whole = _row_text(msg["embed"], 1)
+        assert "@everyone" not in whole and "@here" not in whole
+        assert "**" not in whole.replace("\\*", "")
+
+
+# --- Player text is shown whole ----------------------------------------------
+
+def test_a_long_report_is_shown_whole_across_fields(env):
+    words = [f"word{i}" for i in range(400)]
+    env.tables["reports"] = [_report(1, description=" ".join(words), contact_info="mira@example.com"),
+                             _report(2)]
+    channel = _Channel()
+    _cycle(_Bot(channel))
+    embed = channel.sent[0]["embed"]
+    assert _ids(channel, "player report") == [1, 2]
+    assert all(len(f.value) <= lr.FIELD_VALUE_LIMIT for f in embed.fields)
+    whole = _row_text(embed, 1)
+    assert [w for w in whole.split() if w.startswith("word")] == words
+    assert "contact: mira@example.com" in whole
+
+
+def test_a_long_email_is_shown_whole():
+    email = "a" * 240 + "@example.com"
+    entry = lr._report_field(_report(1, contact_info=email), {"p1": "Mira"})
+    assert f"contact: {email}" in entry["meta"]
+
+
+def test_a_survey_comment_shows_the_players_email(env):
+    env.tables["survey_responses"] = [_survey(1, contact_info="mira@example.com"), _survey(2)]
+    channel = _Channel()
+    _cycle(_Bot(channel))
+    embed = channel.sent[0]["embed"]
+    assert "contact: mira@example.com" in _row_text(embed, 1)
+    assert "contact:" not in _row_text(embed, 2)
+
+
+def test_a_report_too_long_for_a_message_posts_with_its_text_attached(env):
+    description = " ".join(f"word{i}" for i in range(2000))
+    env.tables["reports"] = [_report(1, description=description), _report(2)]
+    channel = _Channel()
+    _cycle(_Bot(channel))
+    first, second = channel.sent
+    assert first["file"].filename == "player-report-1.txt"
+    assert first["file"].fp.read().decode("utf-8") == description
+    assert "attached" in first["embed"].fields[0].value
+    assert _ids(channel, "player report") == [1, 2] and second["file"] is None
+    assert _watermarks()[0] == 2
 
 
 @pytest.mark.parametrize("field_for, row", [
     (lr._report_field, _report(0, category="*" * 500, description="_" * 2000, game_version="~" * 500,
-                               contact_info="`" * 500)),
+                               contact_info="`" * 254)),
+    (lr._survey_field, _survey(0, comment="*" * 500, contact_info="_" * 254, version="~" * 500)),
     (lr._crash_field, _crash(0, error="_" * 5000 + "\n  at: " + "*" * 5000, game_state="|" * 500,
                              os_info="~" * 500, game_version="`" * 500)),
 ])
@@ -416,12 +472,19 @@ def test_ten_worst_case_rows_stay_under_discords_caps(field_for, row):
     """Every character a markdown character, so escaping doubles all of it."""
     worst = [dict(row, id=i) for i in range(1, 11)]
     names = {"p1": "|" * 500}
-    fields = [field_for(r, names) for r in worst]
-    embed, shown = lr._build_embed(worst, fields, 10, "crash", lr.CRASH_COLOR)
-    assert 0 < shown == len(embed.fields) <= 10
+    entries = [field_for(r, names) for r in worst]
+    embed, shown = lr._build_embed(worst, entries, 10, "crash", lr.CRASH_COLOR)
+    assert 0 < shown <= 10 and len(embed.fields) <= lr.EMBED_FIELD_LIMIT
     assert all(len(f.name) <= 256 and len(f.value) <= 1024 for f in embed.fields)
     total = len(embed.title) + len(embed.footer.text or "") + sum(len(f.name) + len(f.value) for f in embed.fields)
     assert total <= 6000
+
+
+def test_a_split_never_lands_inside_an_escape():
+    text = lr._clean("*" * 3000)
+    pieces = lr._chunks(text, lr.FIELD_VALUE_LIMIT)
+    assert "".join(pieces) == text
+    assert all(len(p) <= lr.FIELD_VALUE_LIMIT and not p.startswith("*") for p in pieces)
 
 
 # --- Where a new channel starts ----------------------------------------------

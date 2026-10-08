@@ -582,15 +582,20 @@ sections say "unavailable" rather than silently reporting zero. See
 `/live_reports` (2026-10-07) posts new **player reports**, **survey comments**
 and **crashes** to the channels it is enabled in, every 10 minutes
 (`azoth_commands/live_reports.py`). Each cycle sends at most one embed of each
-kind, oldest first, one field per row, and **nothing** when nothing is new.
+kind, oldest first, a row per field, and **nothing** when nothing is new.
 
+- **Player text is never cut** (since 2026-10-08; it was cut to 200
+  characters, the email to 40). A row whose text runs past Discord's 1024 per
+  field continues in more fields (named with a zero-width space), always
+  whole rows to a message. A row too long for a whole message (6000) posts on
+  its own with a note and its full text attached as `<kind>-<id>.txt`.
 - **Player reports**: every `report_type` but `crash` (bug, feature request,
   accessibility, content idea). The field is named by the type and category,
-  then holds the player's text cut to 200 characters and player · version ·
-  time · contact.
+  then holds the player's text and player · version · time · contact.
 - **Survey comments**: survey rows with a comment, named by the question, then
-  the comment and answer · player · version · time. The one-click answers are
-  counted in the daily image below.
+  the comment and answer · player · version · time · contact (the email the
+  card offers after a negative answer; since 2026-10-08). The one-click
+  answers are counted in the daily image below.
 - **Crashes**: `report_type = 'crash'`, **except developer accounts**
   (`players.developer`, Turner and Caleb). Measured 2026-10-07, ~700 crash
   reports in two weeks came from our own sessions (GUT runs, dev probes,

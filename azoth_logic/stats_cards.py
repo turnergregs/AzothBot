@@ -1517,14 +1517,17 @@ def surveys_card(rows: list, population: str = "") -> sc.Card:
         if q_comments:
             detail.append(f"{q_comments} comment" + ("" if q_comments == 1 else "s"))
         card.add(sc.SectionHeader(sl.question(qid), " · ".join(detail)))
-        # The first-run question is asked in run 1 and again in run 3: the
-        # point is to compare them, so each run gets its own bars.
-        slots = sorted({r.get("run_slot") for r in q_rows if r.get("run_slot") in (1, 3)})
+        # The first-run question is asked in run 1, again in run 3, and every
+        # other run after until a Yes (at most 3 times): the point is to
+        # compare them, so run 1, run 3 and the later runs (run_slot NULL,
+        # since survey_answer_view keeps only 1 and 3) each get their own bars.
+        slots = sorted({r.get("run_slot") for r in q_rows}, key=lambda s: (s is None, s or 0))
         if qid == "understood" and slots:
             for slot in slots:
                 slot_counts = _answer_counts([r for r in q_rows if r.get("run_slot") == slot])
                 if sum(slot_counts.values()):
-                    card.add(*_answer_rows(qid, slot_counts, tag=f"run {slot}"))
+                    card.add(*_answer_rows(qid, slot_counts,
+                                           tag=f"run {slot}" if slot else "later"))
         else:
             card.add(*_answer_rows(qid, counts_all))
         card.add(sc.Spacer(4))
@@ -1576,15 +1579,16 @@ def _question_lines(tally: list) -> list:
     return lines
 
 
-# The player card's newest comments, each at most this many lines.
+# The player card's newest comments, each shown whole (since 2026-10-08; they
+# were cut at two lines). The game caps a comment at 500 characters, about six
+# lines here.
 MAX_PLAYER_COMMENTS = 3
-PLAYER_COMMENT_LINES = 2
 COMMENT_SIZE = 15     # TableRow "normal"
 
 
-def _wrap(text: str, width_pt: float, size: float, max_lines: int) -> list:
+def _wrap(text: str, width_pt: float, size: float, max_lines: int | None = None) -> list:
     """`text` broken into lines that fit `width_pt` in the card's font, the last
-    cut with "…" if it runs past `max_lines`."""
+    cut with "…" if it runs past `max_lines` (never, when it is None)."""
     f = sc.font(size)
     fits = lambda line: f.getlength(line) <= sc.px(width_pt)
     lines, line = [], ""
@@ -1597,7 +1601,7 @@ def _wrap(text: str, width_pt: float, size: float, max_lines: int) -> list:
             line = word
     if line:
         lines.append(line)
-    if len(lines) > max_lines:
+    if max_lines is not None and len(lines) > max_lines:
         last = lines[max_lines - 1]
         while last and not fits(last + "…"):
             last = last[:-1].rstrip()
@@ -1627,7 +1631,7 @@ def player_survey_blocks(raw: list) -> list:
             blocks.append(sc.TableRow([(sl.short(r.get("question_id")), sc.PAD, "lm", "muted")],
                                       height=22))
             text = "“" + " ".join(str(r["comment"]).split()) + "”"
-            for line in _wrap(text, sc.WIDTH - 2 * sc.PAD, COMMENT_SIZE, PLAYER_COMMENT_LINES):
+            for line in _wrap(text, sc.WIDTH - 2 * sc.PAD, COMMENT_SIZE):
                 blocks.append(sc.TableRow([(line, sc.PAD, "lm", "normal")], height=22))
             blocks.append(sc.Spacer(4))
     return blocks

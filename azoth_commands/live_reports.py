@@ -40,6 +40,7 @@ crashes, which the daily post never carried, or a bot with no daily state --
 starts at the newest row, never id 0, so it never dumps the history.
 """
 import asyncio
+import io
 import json
 import os
 import traceback
@@ -72,9 +73,12 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "live_reports_state.j
 INTERVAL_MINUTES = 10
 BATCH_LIMIT = 10           # rows per message
 MESSAGES_PER_CYCLE = 3     # per kind per channel, so a backlog drains without flooding
-SUMMARY_LIMIT = 200        # characters of the player's text, before escaping
 CRASH_SUMMARY_LIMIT = 300  # the error line and where it happened
-META_LIMIT = 40            # category, player name, version, contact
+META_LIMIT = 40            # category, player name, version
+# What a player wrote -- a report's description, a survey comment, an email --
+# is never cut (since 2026-10-08). Text past one field continues in the next
+# (CONTINUED as its name), and a row too long for a whole message posts with its
+# full text attached as a .txt file instead.
 
 # Crash rows read per fetch, developer ones included. Developer crashes run
 # 15-100 a day, so this reaches past a day of them in one read.
@@ -84,6 +88,10 @@ CRASH_SCAN_LIMIT = 200
 # worst-case ones (every character a markdown character, so escaping doubles
 # it) do not, and the rows that don't fit wait for the next message.
 EMBED_CHAR_LIMIT = 6000
+EMBED_FIELD_LIMIT = 25
+FIELD_VALUE_LIMIT = 1024
+# A field's name cannot be empty; a continuation field's is a zero-width space.
+CONTINUED = "​"
 
 CRASH_TYPE = "crash"
 REPORT_COLUMNS = ["id", "player_uuid", "report_type", "category", "description",
@@ -92,7 +100,7 @@ CRASH_COLUMNS = ["id", "player_uuid", "error_message", "game_state", "os_info",
                  "game_version", "created_at"]
 SURVEY_TABLE = daily_reports.SURVEY_TABLE
 SURVEY_COLUMNS = ["id", "player_uuid", "question_id", "answer", "comment",
-                  "version", "created_at"]
+                  "contact_info", "version", "created_at"]
 
 REPORT_COLOR = 0x3498DB
 SURVEY_COLOR = 0x9B59B6
@@ -246,19 +254,44 @@ def _fetch_player_names(player_uuids: list[str]) -> dict[str, str]:
 # Formatting
 # ---------------------------------------------------------------------------
 
-def _clean(text, limit: int) -> str:
-    """Player text, truncated and made inert.
+def _clean(text, limit: int | None = None) -> str:
+    """Text made inert, and cut to `limit` when one is given. What a player
+    wrote is passed with no limit: it is shown whole.
 
-    Truncated BEFORE escaping so the cut can't split an escape sequence, and
-    escaped so a report can't restyle the embed or render a mention. Nothing
-    here would ping anyway -- mentions inside embeds never notify, and every
-    send passes AllowedMentions.none() -- but a rendered `@everyone` still
-    reads like one.
+    Cut BEFORE escaping so the cut can't split an escape sequence, and escaped
+    so a report can't restyle the embed or render a mention. Nothing here would
+    ping anyway -- mentions inside embeds never notify, and every send passes
+    AllowedMentions.none() -- but a rendered `@everyone` still reads like one.
     """
     text = str(text).strip()
-    if len(text) > limit:
+    if limit is not None and len(text) > limit:
         text = text[:limit - 1].rstrip() + "…"
     return nextcord.utils.escape_mentions(nextcord.utils.escape_markdown(text))
+
+
+def _chunks(text: str, limit: int) -> list[str]:
+    """`text` in pieces of at most `limit` characters, broken at a line or a
+    space where there is one in reach. A cut with no space to break at never
+    lands inside an escape sequence (between a backslash and what it escapes).
+    """
+    pieces = []
+    while len(text) > limit:
+        cut = max(text.rfind("\n", 0, limit + 1), text.rfind(" ", 0, limit + 1))
+        if cut <= 0:
+            cut = limit
+            backslashes = len(text[:cut]) - len(text[:cut].rstrip("\\"))
+            if backslashes % 2:
+                cut -= 1
+        pieces.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    pieces.append(text)
+    return pieces
+
+
+def _contact(row: dict) -> list[str]:
+    """`contact: <email>` when the player gave one, whole."""
+    contact = row.get("contact_info")
+    return [f"contact: {_clean(contact)}"] if contact and str(contact).strip() else []
 
 
 def _type_label(report_type) -> str:
@@ -290,12 +323,32 @@ def _meta_line(row: dict, player_names: dict[str, str], version_key: str,
     return " · ".join(meta)
 
 
-def _report_field(report: dict, player_names: dict[str, str]) -> tuple[str, str]:
-    """(name, value) for one player report.
+def _entry(name: str, body: str, meta: str, raw: str = "") -> dict:
+    """One row as it will be posted: its field name, the text (escaped), the
+    meta line, and the player's text as written, for the .txt attachment when
+    the row is too long for a message."""
+    return {"name": name, "body": body, "meta": meta, "raw": raw}
+
+
+def _entry_fields(entry: dict) -> list[tuple[str, str]]:
+    """A row's (name, value) fields: its text split across as many fields as it
+    needs, the meta line on the last one (or after it, if it does not fit)."""
+    parts = _chunks(entry["body"], FIELD_VALUE_LIMIT)
+    meta = entry["meta"]
+    if meta:
+        if len(parts[-1]) + 1 + len(meta) <= FIELD_VALUE_LIMIT:
+            parts[-1] += "\n" + meta
+        else:
+            parts.append(meta)
+    return [(entry["name"] if i == 0 else CONTINUED, part) for i, part in enumerate(parts)]
+
+
+def _report_field(report: dict, player_names: dict[str, str]) -> dict:
+    """One player report's entry.
 
     Name: `Feature Request #12`, plus the category when it says something the
-    type doesn't (`Bug #7 · Visual`). Value: the player's text, then a line of
-    who / which version / when / how to reach them.
+    type doesn't (`Bug #7 · Visual`). Then the player's text, whole, and a line
+    of who / which version / when / how to reach them.
     """
     label = _type_label(report.get("report_type"))
     name = f"{label} #{report['id']}"
@@ -305,33 +358,29 @@ def _report_field(report: dict, player_names: dict[str, str]) -> tuple[str, str]
         name += f" · {_clean(category, META_LIMIT)}"
 
     description = report.get("description")
-    body = (_clean(description, SUMMARY_LIMIT) if description and str(description).strip()
-            else "*(no description)*")
-    contact = report.get("contact_info")
-    trailing = [f"contact: {_clean(contact, META_LIMIT)}"] if contact and str(contact).strip() else []
-    meta = _meta_line(report, player_names, "game_version", trailing=trailing)
-    if meta:
-        body += "\n" + meta
-    return name, body
+    written = description and str(description).strip()
+    body = _clean(description) if written else "*(no description)*"
+    meta = _meta_line(report, player_names, "game_version", trailing=_contact(report))
+    return _entry(name, body, meta, str(description).strip() if written else "")
 
 
-def _survey_field(row: dict, player_names: dict[str, str]) -> tuple[str, str]:
-    """(name, value) for one survey comment.
+def _survey_field(row: dict, player_names: dict[str, str]) -> dict:
+    """One survey comment's entry.
 
-    Name: the question and the row's id. Value: the comment, then a line of the
-    answer / who / which version / when. Only the comment is player text; the
-    question and answer are the game's own words.
+    Name: the question and the row's id. Then the comment, whole, and a line of
+    the answer / who / which version / when / the email, when the player gave
+    one. Only the comment and the email are player text; the question and
+    answer are the game's own words.
     """
     name = f"{_clean(survey_labels.question(row.get('question_id')), META_LIMIT * 2)} #{row['id']}"
-    body = _clean(row.get("comment") or "", SUMMARY_LIMIT) or "*(no comment)*"
+    comment = str(row.get("comment") or "").strip()
+    body = _clean(comment) or "*(no comment)*"
 
     answer = row.get("answer")
     leading = ([_clean(survey_labels.answer(row.get("question_id"), answer), META_LIMIT)]
                if answer is not None and str(answer).strip() else [])
-    meta = _meta_line(row, player_names, "version", leading=leading)
-    if meta:
-        body += "\n" + meta
-    return name, body
+    meta = _meta_line(row, player_names, "version", leading=leading, trailing=_contact(row))
+    return _entry(name, body, meta, comment)
 
 
 UNCLEAN_EXIT = "Previous session ended without shutting down cleanly."
@@ -365,37 +414,42 @@ def _crash_summary(error_message) -> str:
     return summary
 
 
-def _crash_field(crash: dict, player_names: dict[str, str]) -> tuple[str, str]:
-    """(name, value) for one crash: `Crash #12 · RESOLVING_CARDS`, then what
-    broke and where, then who / which version / when / which OS."""
+def _crash_field(crash: dict, player_names: dict[str, str]) -> dict:
+    """One crash's entry: `Crash #12 · RESOLVING_CARDS`, then what broke and
+    where (the game's words, not a player's, so still cut), then who / which
+    version / when / which OS."""
     name = f"Crash #{crash['id']}"
     if crash.get("game_state"):
         name += f" · {_clean(crash['game_state'], META_LIMIT)}"
-    body = _clean(_crash_summary(crash.get("error_message")), CRASH_SUMMARY_LIMIT)
+    summary = _crash_summary(crash.get("error_message"))
+    body = _clean(summary, CRASH_SUMMARY_LIMIT)
     trailing = [_clean(crash["os_info"], META_LIMIT)] if crash.get("os_info") else []
     meta = _meta_line(crash, player_names, "game_version", trailing=trailing)
-    if meta:
-        body += "\n" + meta
-    return name, body
+    return _entry(name, body, meta, summary)
 
 
-def _build_embed(rows: list[dict], fields: list[tuple[str, str]], total: int,
+def _build_embed(rows: list[dict], entries: list[dict], total: int,
                  noun: str, color: int) -> tuple[nextcord.Embed, int]:
-    """One embed of `fields`, and how many of them it carries.
+    """One embed of `entries`, and how many rows it carries.
 
-    Fields are added oldest first until the next would break EMBED_CHAR_LIMIT;
-    the rest wait for the next message.
+    Rows are added oldest first, each with all its fields or not at all, until
+    the next would break EMBED_CHAR_LIMIT or EMBED_FIELD_LIMIT; the rest wait
+    for the next message. 0 means the first row alone is too long for a message
+    (see _attached).
     """
     embed = nextcord.Embed(color=color)
     # The title and footer depend on how many fit, so size them for the worst
     # case (as long as they can get) before choosing.
     reserve = len(_title(len(rows), noun)) + len(_footer(len(rows), total) or "") + 10
     used, shown = reserve, 0
-    for name, value in fields:
-        if used + len(name) + len(value) > EMBED_CHAR_LIMIT:
+    for entry in entries:
+        fields = _entry_fields(entry)
+        size = sum(len(name) + len(value) for name, value in fields)
+        if used + size > EMBED_CHAR_LIMIT or len(embed.fields) + len(fields) > EMBED_FIELD_LIMIT:
             break
-        embed.add_field(name=name, value=value, inline=False)
-        used += len(name) + len(value)
+        for name, value in fields:
+            embed.add_field(name=name, value=value, inline=False)
+        used += size
         shown += 1
 
     embed.title = _title(shown, noun)
@@ -403,6 +457,16 @@ def _build_embed(rows: list[dict], fields: list[tuple[str, str]], total: int,
     if footer:
         embed.set_footer(text=footer)
     return embed, shown
+
+
+def _attached(entry: dict, row: dict, noun: str) -> tuple[dict, nextcord.File]:
+    """A row too long for a whole message: its entry with a note in place of
+    the text, and the text as written in a .txt file to send with it."""
+    raw = entry["raw"] or entry["body"]
+    note = f"*({len(raw):,} characters, too long for one message: the full text is attached)*"
+    filename = f"{noun.replace(' ', '-')}-{row['id']}.txt"
+    return (_entry(entry["name"], note, entry["meta"]),
+            nextcord.File(io.BytesIO(raw.encode("utf-8")), filename=filename))
 
 
 def _plural(noun: str) -> str:
@@ -454,13 +518,21 @@ async def _post_kind(channel, state: dict, channel_id: str, config: dict, kind) 
                 _save_state(state)
             break
         names = _fetch_player_names([r.get("player_uuid") for r in rows])
-        embed, shown = _build_embed(rows, [field_for(r, names) for r in rows], total, noun, color)
+        entries = [field_for(r, names) for r in rows]
+        embed, shown = _build_embed(rows, entries, total, noun, color)
+        file = None
+        if not shown:
+            # The oldest row alone is too long for a message: it goes on its
+            # own, its full text attached.
+            short, file = _attached(entries[0], rows[0], noun)
+            embed, shown = _build_embed(rows[:1], [short], total, noun, color)
         if not shown:
             print(f"Live reports: {noun} #{rows[0]['id']} does not fit in an embed; "
                   f"channel {channel_id} is stuck on it")
             break
         try:
-            await channel.send(embed=embed, allowed_mentions=nextcord.AllowedMentions.none())
+            await channel.send(embed=embed, file=file,
+                               allowed_mentions=nextcord.AllowedMentions.none())
         except Exception as e:
             print(f"Live reports send FAILED for channel {channel_id}; {_plural(noun)} after "
                   f"#{after_id} will be retried next cycle: {e}")

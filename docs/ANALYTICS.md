@@ -213,7 +213,8 @@ they make.
 - **Surveys** (2026-10-04), only for a player shown one: answered of shown,
   a line per question with their answers (the feedback post's layout), then
   their three newest comments full width, each under the question it
-  answered, wrapped to two lines. Read straight from `survey_responses` by the
+  answered, wrapped and shown whole (cut at two lines until 2026-10-08; the
+  game caps a comment at 500 characters). Read straight from `survey_responses` by the
   uuids `players` holds for that name (`stats._player_surveys`); a failed read
   drops the section, not the reply.
 
