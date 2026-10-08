@@ -2,7 +2,7 @@ import asyncio
 import io
 import os
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import nextcord
 import aiohttp
@@ -15,6 +15,7 @@ from constants import DEV_GUILD_ID
 from supabase_helpers import fetch_all, SupabaseError, SupabaseUnreadableError
 from azoth_logic import stats_format as sf
 from azoth_logic import stats_cards
+from azoth_logic import run_paths
 
 
 # Every report /stats all runs, in order, with the options it runs them with.
@@ -32,6 +33,7 @@ ALL_REPORTS = [
     ("bosses", "stats_bosses", {"players": "new"}),
     ("links", "stats_links", {"players": "new"}),
     ("surveys", "stats_surveys", {"players": "players"}),
+    ("paths", "stats_paths", {"days": 14, "runs": 5}),
     ("item", "stats_item", {"by": "version", "players": "new"}),   # item filled in at run time
     ("scoreboard", "stats_scoreboard", {}),
     ("draft picks", "stats_draft_picks", {"players": "new"}),
@@ -179,6 +181,41 @@ def _player_surveys(name: str) -> list:
     except SupabaseError as e:
         print(f"/stats player: surveys skipped for {name}: {e}")
         return []
+
+
+PATH_COLUMNS = ["player_uuid", "started_at", "starting_hero", "ritual", "format",
+                "act_reached", "result", "version"]
+# Player uuids per `in` filter: they travel in the URL, and a launch week could
+# bring hundreds of new players.
+_UUID_BATCH = 100
+
+
+def _in_batches(table: str, columns: list, uuids: list, filters: dict) -> list:
+    rows = []
+    for i in range(0, len(uuids), _UUID_BATCH):
+        rows += fetch_all(table, columns, {**filters, "player_uuid": uuids[i:i + _UUID_BATCH]})
+    return rows
+
+
+def new_player_paths(until: datetime, days: int, runs: int):
+    """`(paths, since)`: the run_paths graph of the new players who arrived in
+    the `days` before `until`. Shared by /stats paths and the daily report.
+
+    Three reads, none of them service-role only: the window's solo runs, which
+    of their players had ANY run before it (they arrived earlier), and those
+    players' cohorts. Raises SupabaseError like fetch_all.
+    """
+    since = until - timedelta(days=days)
+    games = [g for g in fetch_all("games", PATH_COLUMNS,
+                                  {"game_type": "solo", "started_at": ("gte", since.isoformat())})
+             if g.get("started_at") and run_paths.parse_time(g["started_at"]) < until]
+    uuids = sorted({g["player_uuid"] for g in games if g.get("player_uuid")})
+    earlier = {r["player_uuid"] for r in _in_batches(
+        "games", ["player_uuid"], uuids, {"started_at": ("lt", since.isoformat())})}
+    cohorts = {r["player_uuid"]: r["cohort"] for r in _in_batches(
+        "player_cohort_view", ["player_uuid", "cohort"], uuids, {})}
+    by_player = run_paths.new_arrivals(games, earlier, cohorts)
+    return run_paths.build(by_player, until, runs), since
 
 
 def add_stats_commands(cls):
@@ -501,6 +538,35 @@ def add_stats_commands(cls):
         await _send_card(interaction, stats_cards.surveys_card(rows, stats_cards.COHORT_LABELS[players]),
                          "surveys.png", colour=0x9B59B6)
 
+    # --- Paths ---
+    # 2026-10-08, Caleb. New players' paths: how far the tutorial got, then
+    # whether each run beat their best on that hero and ritual, until they
+    # stop. New players only: a veteran's path starts partway through. See
+    # azoth_logic/run_paths.py and docs/ANALYTICS.md § New player paths.
+    @stats_cmd.subcommand(name="paths", description="New players' tutorial, then each run: did it beat their best?")
+    @safe_interaction(timeout=30, error_message="❌ Failed to build player paths.")
+    async def stats_paths(
+        self,
+        interaction: Interaction,
+        days: int = SlashOption(
+            description="Players who started in the last N days (default 14)",
+            required=False, default=14, min_value=1, max_value=90,
+        ),
+        runs: int = SlashOption(
+            description="Runs shown after the tutorial (default 5)",
+            required=False, default=5, min_value=1, max_value=12,
+        ),
+    ):
+        until = datetime.now(timezone.utc)
+        try:
+            paths, since = await asyncio.to_thread(new_player_paths, until, days, runs)
+        except SupabaseError as e:
+            return f"❌ {e}"
+        if not paths.players:
+            return f"❌ No new players started in the last {days} days."
+        await _send_card(interaction, stats_cards.paths_card(paths, since, until, runs),
+                         "paths.png", colour=0x9085E9)
+
     # --- One item ---
     # 2026-09-29, after Veln: its hp was halved in 0.9.11 and /stats bosses,
     # pooling every version, still ranked it the hardest. One boss, card,
@@ -686,6 +752,7 @@ def add_stats_commands(cls):
     cls.stats_bosses = stats_bosses
     cls.stats_links = stats_links
     cls.stats_surveys = stats_surveys
+    cls.stats_paths = stats_paths
     cls.stats_item = stats_item
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would

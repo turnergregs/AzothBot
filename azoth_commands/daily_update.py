@@ -14,6 +14,8 @@ from azoth_logic import rite_schema
 from azoth_logic import stats_cards
 from constants import DEV_GUILD_ID
 from supabase_client import supabase, SUPABASE_ROLE
+from supabase_helpers import SupabaseError
+from azoth_commands.stats import new_player_paths
 
 # State file stores per-channel config:
 # {
@@ -776,7 +778,39 @@ def _fetch_daily_stats(day: date):
         "boss_wins": boss_wins,
         "boss_losses": boss_losses,
         "draft": draft_stats,
+        "paths": _fetch_paths(day),
     }
+
+
+# The new player paths card (/stats paths) follows the day's image: 2026-10-08,
+# Caleb. The players who arrived in the 14 days up to the end of the reported
+# day, so a backfilled report shows the paths as they stood that day.
+PATHS_DAYS = 14
+PATHS_RUNS = 5
+
+
+def _fetch_paths(day: date):
+    """`(paths, since, until)` for the daily report, or None when it could not
+    be read. An extra beside the day's own figures: a failed read costs this
+    image, with a console line, not the whole report."""
+    until = datetime.fromisoformat(_day_range_utc(day)[1])
+    try:
+        paths, since = new_player_paths(until, PATHS_DAYS, PATHS_RUNS)
+    except SupabaseError as e:
+        print(f"Daily update: player paths skipped for {day}: {e}")
+        return None
+    return paths, since, until
+
+
+def _paths_messages(stats: dict) -> list[dict]:
+    found = stats.get("paths")
+    if not found or not found[0].players:
+        return []
+    paths, since, until = found
+    data = stats_cards.paths_card(paths, since, until, PATHS_RUNS).png()
+    embed = nextcord.Embed(color=0x9085E9)
+    embed.set_image(url="attachment://paths.png")
+    return [{"embed": embed, "file": nextcord.File(io.BytesIO(data), filename="paths.png")}]
 
 
 # ---------------------------------------------------------------------------
@@ -820,12 +854,14 @@ def _build_update_messages(stats: dict, day: date) -> list[dict]:
                 f"turn, excluded.)"
             )
         return [{"embed": nextcord.Embed(title=f"Daily Report — {yesterday}",
-                                         description="\n".join(lines), color=color)}]
+                                         description="\n".join(lines), color=color)}
+                ] + _paths_messages(stats)
 
     data = stats_cards.daily_card(stats, yesterday).png()
     embed = nextcord.Embed(color=color)
     embed.set_image(url="attachment://daily.png")
-    return [{"embed": embed, "file": nextcord.File(io.BytesIO(data), filename="daily.png")}]
+    return [{"embed": embed, "file": nextcord.File(io.BytesIO(data), filename="daily.png")}
+            ] + _paths_messages(stats)
 
 
 # ---------------------------------------------------------------------------

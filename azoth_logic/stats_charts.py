@@ -110,6 +110,19 @@ class Block:
         raise NotImplementedError
 
 
+class ImageBlock(Block):
+    """A block that composites onto the card's image as well as drawing on it:
+    translucent or anti-aliased shapes, which ImageDraw cannot do (its shapes
+    have hard edges, and an RGBA fill overwrites an RGBA image rather than
+    blending). `Card.render` hands it the image."""
+
+    def draw_on(self, img: Image.Image, d: ImageDraw.ImageDraw, top: int) -> None:
+        raise NotImplementedError
+
+    def draw(self, d, top):
+        raise TypeError("an ImageBlock is drawn by Card.render, through draw_on")
+
+
 @dataclass
 class Spacer(Block):
     height: float = 8
@@ -272,7 +285,10 @@ class Card:
             d.text((px(PAD), px(PAD + 30 + self.SUBTITLE_LINE * i)), line, font=font(13), fill=INK_2)
         top = px(PAD + self.head())
         for block in self.blocks:
-            block.draw(d, top)
+            if isinstance(block, ImageBlock):
+                block.draw_on(img, d, top)
+            else:
+                block.draw(d, top)
             top += px(block.height)
         return img
 
@@ -751,3 +767,199 @@ class Histogram(Block):
             away_left = tallest is not None and tallest >= self.mean
             d.text((x + px(-4 if away_left else 4), y_top), f"avg {self.mean:.1f}",
                    font=font(11), fill=INK_2, anchor="rt" if away_left else "lt")
+
+
+# ---------------------------------------------------------------------------
+# Flow: a Sankey drawn top to bottom
+# ---------------------------------------------------------------------------
+# Built 2026-10-08 for /stats paths. Top to bottom rather than left to right
+# because a card is 500pt wide and grows downward: eight columns side by side
+# leave no room for a label, eight rows do.
+
+# Shapes are drawn this many times larger into a mask and scaled down, which
+# smooths their edges.
+SUPERSAMPLE = 4
+
+
+def smooth_fill(img: Image.Image, outline: list, colour: str, alpha: float = 1.0,
+                radius: float = 0) -> None:
+    """Fill a shape in `colour` at `alpha`, anti-aliased, composited over `img`.
+
+    `outline` is a polygon's points in image pixels, or with `radius` the two
+    corners of a rounded rectangle.
+    """
+    xs, ys = [p[0] for p in outline], [p[1] for p in outline]
+    x0, y0 = max(0, int(min(xs)) - 1), max(0, int(min(ys)) - 1)
+    x1, y1 = min(img.width, int(max(xs)) + 2), min(img.height, int(max(ys)) + 2)
+    if x1 <= x0 or y1 <= y0:
+        return
+    k = SUPERSAMPLE
+    mask = Image.new("L", ((x1 - x0) * k, (y1 - y0) * k), 0)
+    pts = [((x - x0) * k, (y - y0) * k) for x, y in outline]
+    if radius:
+        ImageDraw.Draw(mask).rounded_rectangle(pts, radius=radius * k, fill=255)
+    else:
+        ImageDraw.Draw(mask).polygon(pts, fill=255)
+    mask = mask.resize((x1 - x0, y1 - y0), Image.BOX)
+    if alpha < 1:
+        mask = mask.point(lambda v: round(v * alpha))
+    layer = Image.new("RGBA", mask.size, colour)
+    layer.putalpha(mask)
+    img.alpha_composite(layer, (x0, y0))
+
+
+def _ribbon(a0, a1, b0, b1, ya, yb, steps=40) -> list:
+    """A band's outline in image pixels: two cubic curves, vertical at both
+    ends, so it keeps its full width all the way down."""
+    ym = (ya + yb) / 2
+
+    def curve(x0, x1):
+        pts = []
+        for i in range(steps + 1):
+            t = i / steps
+            u = 1 - t
+            x = u ** 3 * x0 + 3 * u * u * t * x0 + 3 * u * t * t * x1 + t ** 3 * x1
+            y = u ** 3 * ya + 3 * u * u * t * ym + 3 * u * t * t * ym + t ** 3 * yb
+            pts.append((x * SCALE, y * SCALE))
+        return pts
+    return curve(a0, b0) + curve(a1, b1)[::-1]
+
+
+@dataclass(eq=False)
+class FlowNode:
+    """One bar of a Flow: `count` players, in `colour`. `name` is drawn above
+    the bar in the first row (nothing flows into it from above) and under it
+    in the others."""
+    count: int
+    colour: str
+    name: str = ""
+    x0: float = 0
+    x1: float = 0
+
+
+@dataclass
+class Flow(ImageBlock):
+    """Rows of bars, one row per step, each bar as wide as its players, joined
+    by bands as wide as the players who went from one bar to the next.
+
+    `links` maps a (from, to) pair of FlowNodes to a count; `row_names` label
+    the rows down the left. A bar's count is inside it when it fits, under it
+    when it does not. A bar whose players did not all go on has bare bottom
+    edge: those paths end there.
+
+    Bands are a little see-through, so one crossing behind another still
+    shows, and run from the middle of one bar to the middle of the next: the
+    bars draw over the ends, and the band fills in behind their rounded
+    corners instead of stopping short of them. A band takes the colour of the
+    bar it leads into, dimmed toward the surface.
+    """
+    rows: list
+    links: dict
+    row_names: list
+    height: float = 0
+
+    LEFT = 72          # the row-name column, after the card's padding
+    BAR_H = 14
+    PITCH = 66         # one bar's top to the next row's
+    GAP = 10           # between bars in a row
+    MAX_PER = 30       # the widest a single player's share of a bar gets
+    LINE = 13          # a line of first-row names
+    BAND_ALPHA = 0.8
+    BAND_KEEP = 0.5    # how much of the target's colour a band keeps (`dim`)
+
+    def __post_init__(self):
+        avail = WIDTH - PAD - (PAD + self.LEFT)
+        totals = [(sum(n.count for n in r), len(r)) for r in self.rows if r]
+        self.per = min([self.MAX_PER] + [(avail - self.GAP * (k - 1)) / t for t, k in totals if t])
+        for r in self.rows:
+            width = sum(n.count for n in r) * self.per + self.GAP * (len(r) - 1)
+            x = PAD + self.LEFT + (avail - width) / 2
+            for n in r:
+                n.x0, n.x1 = x, x + n.count * self.per
+                x = n.x1 + self.GAP
+        self.names = self._place_names()
+        self.top_room = (max((slot for *_, slot in self.names), default=-1) + 1) * (2 * self.LINE + 4) + 2
+        self.height = self.top_room + (len(self.rows) - 1) * self.PITCH + self.BAR_H + 22
+
+    def _fits(self, n: FlowNode) -> bool:
+        return font(11, True).getlength(str(n.count)) / SCALE + 3 <= n.x1 - n.x0
+
+    def _place_names(self) -> list:
+        """The first row's names, above its bars: `(lines, centre_x, slot)`.
+
+        A name may wrap onto two lines at a newline. Each is centred over its
+        bar; one that would run into its right neighbour slides left instead
+        (into the row-name column if need be, which sits lower), as far as it
+        still reaches its bar's centre. Only a name that cannot goes up a slot:
+        a stacked name floats over the wrong bar, a slid one does not.
+        Placed right to left, so a slide never pushes into a placed name.
+        """
+        f, starts, out = font(10.5), [], []
+        for n in reversed(self.rows[0] if self.rows else []):
+            if not n.name:
+                continue
+            lines = n.name.split("\n")
+            w = max(f.getlength(t) for t in lines) / SCALE
+            centre = (n.x0 + n.x1) / 2
+            x = min(max(centre - w / 2, PAD), WIDTH - PAD - w)
+            for slot, start in enumerate(starts + [math.inf]):
+                place = min(x, start - 4 - w)
+                if place >= PAD and place + w >= centre:
+                    break
+            if slot == len(starts):
+                starts.append(math.inf)
+            starts[slot] = place
+            out.append((lines, place + w / 2, slot))
+        return out
+
+    def draw_on(self, img, d, top):
+        y = lambda row: top / SCALE + self.top_room + row * self.PITCH
+        row_of = {id(n): r for r, row in enumerate(self.rows) for n in row}
+
+        # Each band leaves its source in the order of its targets and enters
+        # its target in the order of its sources, so bands sharing a bar
+        # stack side by side instead of overlapping.
+        out_x, in_x, bands = {}, {}, []
+        for (a, b), count in sorted(self.links.items(), key=lambda kv: (kv[0][0].x0, kv[0][1].x0)):
+            w = count * self.per
+            sx = out_x.get(id(a), a.x0)
+            out_x[id(a)] = sx + w
+            bands.append((a, b, w, sx))
+        for a, b, w, sx in sorted(bands, key=lambda bd: (bd[1].x0, bd[0].x0)):
+            tx = in_x.get(id(b), b.x0)
+            in_x[id(b)] = tx + w
+            ya, yb = y(row_of[id(a)]) + self.BAR_H / 2, y(row_of[id(b)]) + self.BAR_H / 2
+            smooth_fill(img, _ribbon(sx, sx + w, tx, tx + w, ya, yb),
+                        dim(b.colour, self.BAND_KEEP), self.BAND_ALPHA)
+
+        for r, row in enumerate(self.rows):
+            for n in row:
+                smooth_fill(img, [(n.x0 * SCALE, y(r) * SCALE), (n.x1 * SCALE, (y(r) + self.BAR_H) * SCALE)],
+                            n.colour, radius=3 * SCALE)
+
+        for lines, cx, slot in self.names:
+            bottom = y(0) - 4 - slot * (2 * self.LINE + 4)
+            for i, line in enumerate(reversed(lines)):
+                d.text((px(cx), px(bottom - i * self.LINE)), line, font=font(10.5), fill=INK_2, anchor="mb")
+        for r, row in enumerate(self.rows):
+            cy = px(y(r) + self.BAR_H / 2)
+            if r < len(self.row_names):
+                d.text((px(PAD), cy), self.row_names[r], font=font(10, True), fill=MUTED, anchor="lm")
+            for n in row:
+                inside = self._fits(n)
+                if inside:
+                    d.text((px((n.x0 + n.x1) / 2), cy), str(n.count), font=font(11, True),
+                           fill=_ink_on(n.colour), anchor="mm")
+                # Under the bar: a later row's name, and a count that did not
+                # fit inside (the first row's names are above it).
+                name = n.name if r else ""
+                if name:
+                    text = name if inside else f"{name} · {n.count}"
+                else:
+                    text = "" if inside else str(n.count)
+                if not text:
+                    continue
+                w = font(11).getlength(text) / SCALE
+                x, ty = (n.x0 + n.x1) / 2 - w / 2, y(r) + self.BAR_H + 3
+                d.rounded_rectangle([px(x - 3), px(ty), px(x + w + 3), px(ty + 14)], radius=px(3), fill=SURFACE)
+                d.text((px(x), px(ty + 7)), text, font=font(11), fill=INK_2, anchor="lm")

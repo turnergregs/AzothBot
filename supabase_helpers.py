@@ -124,6 +124,10 @@ def _assert_readable(table_name: str):
 # the server's value, or every page comes back short and reads as the last.
 PAGE_SIZE = 1000
 
+# The comparisons a `(op, value)` filter may ask for: a window on a timestamp
+# (2026-10-08, /stats paths reads two weeks of `games`, not all 7,000 rows).
+RANGE_OPS = ("gt", "gte", "lt", "lte", "neq")
+
 # Columns that identify a row on their own, preferred as the paging tiebreak.
 _KEY_COLUMNS = ("id", "uuid")
 
@@ -155,7 +159,8 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 
 	- columns: column names to select (defaults to '*')
 	- filters: field -> value. None becomes `is null`, a list becomes `in`,
-	  anything else becomes `eq`
+	  a tuple `(op, value)` is a comparison (`("gte", "2026-10-01")`; op is one
+	  of RANGE_OPS), anything else becomes `eq`
 	- sort: e.g. ["-created_at", "name"]; a leading '-' means descending.
 	  Multiple columns apply left to right (this was broken until 2026-08-27 --
 	  only the first took effect)
@@ -193,6 +198,11 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 					query = query.is_(key, "null")
 				elif isinstance(value, list):
 					query = query.in_(key, value)
+				elif isinstance(value, tuple):
+					op, operand = value
+					if op not in RANGE_OPS:
+						raise ValueError(f"fetch_all: unknown filter op {op!r} on `{key}`")
+					query = getattr(query, op)(key, operand)
 				else:
 					query = query.eq(key, value)
 		if order_terms:

@@ -59,6 +59,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
 | `/stats links` | `link_turn_view` + `link_type_view` | Links per regular and boss turn (zero-link turns included), the share of each link type, and each type's average length against every multi-card link's. `players:` cohort filter. See [Links](#links-2026-10-03) |
 | `/stats surveys` | `survey_answer_view` | The game's one-click survey (game repo `docs/SURVEYS.md`): surveys shown, share answered, comments; where each was shown, split answered / skipped / ignored; then each question's answers, `understood` split run 1 vs run 3, under 5 answers grey. `players:` cohort filter, **default Everyone but us** (surveys began after the cutoff, so few "new" players have answered). No version cutoff: every row postdates it |
+| `/stats paths` | `games` + `player_cohort_view` | New players' paths, run by run: the tutorial, then whether each run beat their best. `days:` and `runs:`. See [New player paths](#new-player-paths-2026-10-08) |
 | `/stats item` | `boss_split_view` / `draft_item_split_view` / `hero_split_view` | One boss, card, aspect, rite or hero, its rate per version (or ritual, or hero), each against the rest of its kind in that group. Drawn in the item's colour beside its face or art. See [One item](#one-item-2026-09-29) |
 | `/stats draft picks` | `draft_offer_view` | Pick rate by type (packs included), each kind of draft pack, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
 | `/stats draft items` | `draft_item_offer_view` | The five most and five least picked cards, aspects and rites, one group per type, each against its own type |
@@ -490,6 +491,49 @@ Adding version, ritual and hero to `boss_fight_view` or
 fetches, and at the time `fetch_all` did not page past PostgREST's 1000-row
 cap. It does now (2026-09-29, ARCHITECTURE.md), but a lookup of one item's
 rows is still one small request rather than several pages.
+
+### New player paths (2026-10-08)
+
+Caleb's design, from the game repo's player-paths prototype
+(`docs/USER_BEHAVIOR_VISUALS_PLAN.md` there) and a mock-up reviewed in chat.
+The question is what makes a new player stop. `/stats paths`, and the daily
+report's second image.
+
+A Sankey drawn top to bottom (`stats_charts.Flow`): one row per step, each bar
+as wide as its players, bands as wide as the players who went from one bar to
+the next.
+
+- **Row 0, the tutorial:** the most acts any of the player's opening tutorial
+  runs beat: `Act 2`, `Died` (none, restarts included), `Won`. `No tutorial` for
+  a player whose first run was a regular one.
+- **Each row after it is one run:** blue when it beat more acts than any earlier
+  run on the same hero and ritual, orange otherwise (deaths, restarts, runs left
+  unfinished). Acts beaten is `act_reached - 1`, a win beats them all. A first
+  run on a hero must beat act 1 to count, or every first try on a new hero would
+  read as one. The tutorial sets no best for the hero it plays. Colour carries
+  the result: the run rows have counts and no labels.
+- **Ends:** Stopped after 3 days without a run; Played on past the last row. A
+  player who ran in the last 3 days has **no end node**: their band stops at
+  their latest run until a later report shows their next run, or Stopped.
+- **A resultless last run under 2 hours old is left out** (it may still be
+  going). An older one was abandoned and counts. The prototype hid any
+  resultless last run by an active player, which hid runs 23-44 hours old.
+- **Who:** new players (`player_cohort_view`; a player missing from it counts as
+  new, as in `survey_answer_view`) whose first run of any kind fell in the
+  window. Solo runs at the cutoff. Developers and veterans are left out: a
+  veteran's path starts partway through.
+- **The read** is a window, not the whole table: `games` by `started_at`
+  (`fetch_all`'s `("gte", ...)` filter, added for this), then which of those
+  players had any run before it, then their cohorts, player uuids in batches of
+  100. None of it is service-role only. `stats.new_player_paths` is the one
+  function both callers use. The graph is `azoth_logic/run_paths.py` (pure); the
+  card `stats_cards.paths_card`.
+- **Drawing.** Bands are 80% opaque so a crossing shows, and every shape is
+  drawn 4x into a mask and scaled down, since PIL's own shapes have hard edges
+  and its RGBA fills overwrite rather than blend. That needs the image, not just
+  the ImageDraw: a `stats_charts.ImageBlock` is handed it by `Card.render`
+  (`draw_on`). Bands run from the middle of one bar to the middle of the next,
+  under the bars, so they fill in behind the rounded corners.
 
 ### Links (2026-10-03)
 
@@ -978,6 +1022,12 @@ being enough at two.) Enabling a channel goes through the same sweep.
 The report is one image (`stats_cards.daily_card`), titled "Daily Report", with
 the day and "Everyone" (developers included) in its header and no text under it
 (2026-10-02; it had a footer, and was titled "Yesterday", until then).
+**A second image follows it** (2026-10-08): the new player paths card
+(`/stats paths`, [New player paths](#new-player-paths-2026-10-08)) for the 14
+days up to the end of the reported day, so a backfilled report shows the paths
+as they stood that day. It is posted on a quiet day too, and skipped when
+nobody arrived. Its read is an extra: a failure is a console line and costs
+that image only, never holds the day.
 `daily_update._build_update_messages` returns the
 `channel.send` keyword sets, rendered before the day is claimed so a drawing
 failure never uses the day up. A quiet day is still one line of text.

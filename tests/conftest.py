@@ -73,6 +73,27 @@ class FakeQuery:
     def is_(self, col, val):
         self.log["filters"].append(("is", col, val)); return self
 
+    def _compare(self, op, col, val, keep):
+        # Like Postgres, a NULL never passes a comparison.
+        self.log["filters"].append((op, col, val))
+        self._rows = [r for r in self._rows if r.get(col) is not None and keep(r.get(col), val)]
+        return self
+
+    def gt(self, col, val):
+        return self._compare("gt", col, val, lambda a, b: a > b)
+
+    def gte(self, col, val):
+        return self._compare("gte", col, val, lambda a, b: a >= b)
+
+    def lt(self, col, val):
+        return self._compare("lt", col, val, lambda a, b: a < b)
+
+    def lte(self, col, val):
+        return self._compare("lte", col, val, lambda a, b: a <= b)
+
+    def neq(self, col, val):
+        return self._compare("neq", col, val, lambda a, b: a != b)
+
     @property
     def not_(self):
         self.log["filters"].append(("not", None, None)); return self

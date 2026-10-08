@@ -128,6 +128,25 @@ def test_filters_dispatch_by_value_type(monkeypatch, fake_supabase):
     assert kinds == {"is", "in", "eq"}, "None -> is null, list -> in, scalar -> eq"
 
 
+def test_a_tuple_filter_is_a_comparison(monkeypatch, fake_supabase):
+    """2026-10-08: /stats paths reads a window of `games` by `started_at`."""
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    fs = fake_supabase({"games": [{"started_at": "2026-10-01"}, {"started_at": "2026-10-07"}]})
+    monkeypatch.setattr(h, "supabase", fs)
+    rows = h.fetch_all("games", filters={"started_at": ("gte", "2026-10-05")})
+    assert ("gte", "started_at", "2026-10-05") in fs.log["games"]["filters"]
+    assert rows == [{"started_at": "2026-10-07"}]
+
+
+def test_an_unknown_comparison_is_refused(monkeypatch, fake_supabase):
+    """Not passed through as an attribute name: a typo would otherwise call
+    whatever method of the query builder it happened to name."""
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    monkeypatch.setattr(h, "supabase", fake_supabase({"games": []}))
+    with pytest.raises(ValueError):
+        h.fetch_all("games", filters={"started_at": ("select", "x")})
+
+
 def test_sort_prefix_controls_direction(monkeypatch, fake_supabase):
     monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
     fs = fake_supabase({"games": []})

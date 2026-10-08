@@ -95,6 +95,11 @@ All docs live in `docs/`. Read before changing a system.
   it does not have. Within play, merging is now fine, because each image states
   its own population per section: `picks` absorbed `breakdown` and
   `embellishments`, `items` replaced the text `rates`.
+- **`/stats paths` is a Sankey, and the daily report's second image**
+  (2026-10-08). Graph in `azoth_logic/run_paths.py`, drawn by
+  `stats_charts.Flow`, an `ImageBlock`: it composites onto the image, since
+  ImageDraw cannot blend or anti-alias. See `docs/ANALYTICS.md` § New player
+  paths.
 - **Two commands cover all content lookup.** `/show` and `/render` dispatch on an
   encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
   `/render_*` commands were retired 2026-08-26.

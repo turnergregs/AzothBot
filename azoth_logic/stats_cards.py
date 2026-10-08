@@ -7,6 +7,7 @@ rows in, Card out.
 from __future__ import annotations
 
 import math
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from azoth_logic import stats_charts as sc
@@ -1635,3 +1636,57 @@ def player_survey_blocks(raw: list) -> list:
                 blocks.append(sc.TableRow([(line, sc.PAD, "lm", "normal")], height=22))
             blocks.append(sc.Spacer(4))
     return blocks
+
+
+# ---------------------------------------------------------------------------
+# /stats paths
+# ---------------------------------------------------------------------------
+# 2026-10-08, Caleb's design (the game repo's player-paths prototype, then a
+# mock-up reviewed in chat). Where new players get to in the tutorial, then
+# whether each run after it beat their best, run by run, until they stop. The
+# graph is run_paths.build; this decides how it looks. Colour carries the
+# result, so the run rows carry counts only: no "Improved" / "Lost" labels.
+
+PATH_COLOURS = {
+    "tutorial": "#9085e9",     # the tutorial row, whatever it reached
+    "no_tutorial": "#9085e9",  # still the tutorial row: it says they skipped it
+    "improved": sc.ABOVE,      # beat their best on that hero and ritual
+    "lost": "#d95926",         # did not
+    "stopped": sc.NEUTRAL,
+    "played_on": sc.FADED,
+}
+PATH_LEGEND = (("improved", "Beat their best on that hero"), ("lost", "Didn't"),
+               ("stopped", "Stopped (3 days idle)"))
+# The tutorial row's names that need two lines to stay over a narrow bar.
+_PATH_NAMES = {"No tutorial": "No\ntutorial"}
+
+
+def _day(when) -> str:
+    return f"{when:%b} {when.day}"
+
+
+def paths_card(paths, since, until, runs_shown: int) -> sc.Card:
+    """The Flow of `paths` (a run_paths.Paths) for the players who arrived
+    from `since` up to `until`. `until` is exclusive: the daily report's is the
+    midnight its day ends at, so the header names the day before it."""
+    flow_nodes = {}
+    rows = []
+    for row in paths.rows:
+        out = []
+        for n in row:
+            name = _PATH_NAMES.get(n.label, n.label)
+            flow_nodes[id(n)] = sc.FlowNode(n.players, PATH_COLOURS[n.kind], name)
+            out.append(flow_nodes[id(n)])
+        rows.append(out)
+    links = {(flow_nodes[id(a)], flow_nodes[id(b)]): count for (a, b), count in paths.links.items()}
+    names = ["TUTORIAL"] + [f"RUN {i}" for i in range(1, runs_shown + 1)] + ["LATER"]
+
+    kinds = {n.kind for row in paths.rows for n in row}
+    legend = [(text, PATH_COLOURS[kind]) for kind, text in PATH_LEGEND if kind in kinds]
+    card = sc.Card("New player paths",
+                   f"{paths.players} new player{'' if paths.players == 1 else 's'} who started "
+                   f"{_day(since)} – {_day(until - timedelta(seconds=1))}\n"
+                   f"The tutorial, then their first {runs_shown} runs. Bar width is players.")
+    if legend:
+        card.add(sc.Legend(legend, indent=0), sc.Spacer(6))
+    return card.add(sc.Flow(rows, links, names))

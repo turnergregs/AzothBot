@@ -18,6 +18,16 @@ from azoth_logic import stats_cards
 from azoth_logic import stats_charts as sc
 
 
+@pytest.fixture(autouse=True)
+def _no_paths_read(monkeypatch):
+    """The paths card's read goes through fetch_all, not the `supabase` the
+    end-to-end tests here replace: without this they would send it to the
+    network. Tests of the paths themselves install their own."""
+    from azoth_logic import run_paths
+    monkeypatch.setattr(du, "new_player_paths",
+                        lambda until, days, runs: (run_paths.Paths(0), until - timedelta(days=days)))
+
+
 # ---------------------------------------------------------------------------
 # _to_number  --  the June 30 crash
 # ---------------------------------------------------------------------------
@@ -403,6 +413,51 @@ def test_quiet_day_produces_one_embed():
     messages = du._build_update_messages({"total_games": 0}, DAY)
     assert len(messages) == 1 and "No runs were played" in messages[0]["embed"].description
     assert "file" not in messages[0]
+
+
+def _paths_stats():
+    from datetime import datetime, timezone
+    from azoth_logic import run_paths
+    until = datetime(2026, 6, 19, 5, tzinfo=timezone.utc)
+    t = {"started_at": (until - timedelta(days=5)).isoformat(), "format": "tutorial",
+         "act_reached": 2, "result": "death"}
+    return run_paths.build({"p": [t]}, until), until - timedelta(days=14), until
+
+
+def test_the_paths_image_follows_the_days_image():
+    """2026-10-08: the new player paths card (/stats paths) is the report's
+    second image."""
+    messages = du._build_update_messages({
+        "total_games": 1, "unique_players": 1, "new_players": 0, "total_playtime_sec": 60,
+        "act_distribution": {1: 1}, "turn_grain": {}, "draft": {}, "paths": _paths_stats(),
+    }, DAY)
+    assert [m["file"].filename for m in messages] == ["daily.png", "paths.png"]
+
+
+def test_a_quiet_day_still_posts_the_paths():
+    """The paths cover two weeks, so a day with no runs does not empty them."""
+    messages = du._build_update_messages({"total_games": 0, "paths": _paths_stats()}, DAY)
+    assert len(messages) == 2 and messages[1]["file"].filename == "paths.png"
+
+
+def test_paths_that_could_not_be_read_cost_only_their_image(monkeypatch):
+    """An extra beside the day's own figures: a failed read is a console line,
+    not a report held back."""
+    def boom(*a):
+        raise du.SupabaseError("connection reset")
+    monkeypatch.setattr(du, "new_player_paths", boom)
+    assert du._fetch_paths(DAY) is None
+    messages = du._build_update_messages({"total_games": 0, "paths": None}, DAY)
+    assert len(messages) == 1
+
+
+def test_the_paths_end_where_the_reported_day_ends(monkeypatch):
+    """A backfilled report shows the paths as they stood on its day."""
+    seen = {}
+    monkeypatch.setattr(du, "new_player_paths",
+                        lambda until, days, runs: seen.setdefault("until", until) and (None, None))
+    du._fetch_paths(DAY)
+    assert seen["until"].isoformat() == du._day_range_utc(DAY)[1]
 
 
 # ---------------------------------------------------------------------------
