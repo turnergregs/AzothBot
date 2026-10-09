@@ -60,6 +60,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats links` | `link_turn_view` + `link_type_view` | Links per regular and boss turn (zero-link turns included), the share of each link type, and each type's average length against every multi-card link's. `players:` cohort filter. See [Links](#links-2026-10-03) |
 | `/stats surveys` | `survey_answer_view` | The game's one-click survey (game repo `docs/SURVEYS.md`): surveys shown, share answered, comments; where each was shown, split answered / skipped / ignored; then each question's answers, `understood` split run 1 vs run 3, under 5 answers grey. `players:` cohort filter, **default Everyone but us** (surveys began after the cutoff, so few "new" players have answered). No version cutoff: every row postdates it |
 | `/stats paths` | `games` + `player_cohort_view` | New players' paths, run by run: the tutorial, then whether each run beat their best. `days:` and `runs:`. See [New player paths](#new-player-paths-2026-10-08) |
+| `/stats sessions` | `launches` + `player_cohort_view` | Of the new players whose first launch was on each patch version, the share who launched the game again. New players only, no options. **Service-role only** (`launches` is INSERT-only for anon). See [Sessions](#sessions-2026-10-09) |
 | `/stats item` | `boss_split_view` / `draft_item_split_view` / `hero_split_view` | One boss, card, aspect, rite or hero, its rate per version (or ritual, or hero), each against the rest of its kind in that group. Drawn in the item's colour beside its face or art. See [One item](#one-item-2026-09-29) |
 | `/stats draft picks` | `draft_offer_view` | Pick rate by type (packs included), each kind of draft pack, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
 | `/stats draft items` | `draft_item_offer_view` | The five most and five least picked cards, aspects and rites, one group per type, each against its own type |
@@ -534,6 +535,40 @@ the next.
   the ImageDraw: a `stats_charts.ImageBlock` is handed it by `Card.render`
   (`draw_on`). Bands run from the middle of one bar to the middle of the next,
   under the bars, so they fill in behind the rounded corners.
+
+### Sessions (2026-10-09)
+
+Turner's question: of the players who first tried the game on a version, how
+many came back? `/stats sessions` draws one column per patch version
+(`stats_charts.RateColumns`, newest 10, oldest left), its height the share of
+that version's new players who launched the game 2+ times, its value with a %
+sign (`RateColumns(percent=True)`, off for every other report) and `again/new`
+under the label. A line across the plot is the rate over the versions shown,
+as are the two tiles above it (new players, launched 2+ times).
+
+- **A new player** is a `launches` row with `new_install` (no `settings.cfg`
+  existed, so a fresh player uuid), filed under that launch's version. Their
+  later launches on newer builds do not move them. Editor launches are never
+  read; developers and veterans are left out, and a player missing from
+  `player_cohort_view` counts as new, as in `/stats paths`. New players only,
+  so no `players:` option (Turner).
+- **Launched again** is any second non-editor launch, however soon after the
+  first. Turner chose this over "came back on a later day": a return the same
+  day is a return. A crash and relaunch counts too.
+- **Open:** a version whose newest new player first launched under 24 hours
+  ago (`SESSION_OPEN`) is an outlined column, with a legend key, since its
+  rate can still rise. Versions ship about daily, so a longer window would
+  outline most of the chart.
+- **It starts at 0.10.5**, the first build to record launches
+  (`2026-10-07_sessions_and_registration.sql` in the game repo). A player from
+  before it has no `new_install` row and is not counted, even when later
+  launches of theirs are recorded. Paths, by contrast, starts at a player's
+  first run.
+- **The read:** the new-install launches, then every launch of those players
+  and their cohorts in batches of 100 (`stats.new_player_sessions`). The
+  grouping is `stats_cards.session_groups` (pure), the card
+  `stats_cards.sessions_card`. `launches` is INSERT-only for anon, so a local
+  anon key gets `SupabaseUnreadableError`, not an empty chart.
 
 ### Links (2026-10-03)
 

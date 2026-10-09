@@ -1118,3 +1118,66 @@ def test_the_player_card_renders_with_surveys():
     rows = [_player_survey("understood", "mostly", comment="x " * 80),
             _player_survey("difficulty", outcome="skipped", answer=None)]
     cards.player_card("Max", MAX_RUNS, None, None, rows).png()
+
+
+# --- /stats sessions ----------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+NOW = datetime(2026, 10, 9, 18, tzinfo=timezone.utc)
+
+
+def _launch(player, version, hours_ago, new_install=False):
+    return {"player_uuid": player, "version": version, "new_install": new_install,
+            "started_at": (NOW - timedelta(hours=hours_ago)).isoformat()}
+
+
+def test_a_player_counts_under_the_version_of_their_new_install_launch():
+    """Their later launches on newer builds do not move them."""
+    rows = [_launch("a", "0.10.5", 60, new_install=True), _launch("a", "0.10.7", 5)]
+    [group] = cards.session_groups(rows, {}, NOW)
+    assert (group["version"], group["players"], group["again"]) == ("0.10.5", 1, 1)
+
+
+def test_any_second_launch_counts_however_soon():
+    """Turner: a return on the same day is a return."""
+    rows = [_launch("a", "0.10.6", 50, new_install=True), _launch("a", "0.10.6", 49.9),
+            _launch("b", "0.10.6", 48, new_install=True)]
+    [group] = cards.session_groups(rows, {}, NOW)
+    assert (group["players"], group["again"]) == (2, 1)
+
+
+def test_developers_and_veterans_are_left_out_and_a_missing_cohort_is_new():
+    rows = [_launch(p, "0.10.6", 50, new_install=True) for p in ("dev", "vet", "new", "unknown")]
+    cohorts = {"dev": "developer", "vet": "veteran", "new": "new"}
+    [group] = cards.session_groups(rows, cohorts, NOW)
+    assert group["players"] == 2
+
+
+def test_a_player_with_no_new_install_launch_is_not_new():
+    """Launch rows began at 0.10.5: an earlier player's first recorded launch
+    is not their first launch."""
+    assert cards.session_groups([_launch("a", "0.10.5", 50), _launch("a", "0.10.6", 10)],
+                                {}, NOW) == []
+
+
+def test_versions_sort_by_number_and_open_means_a_player_under_a_day_old():
+    rows = [_launch("a", "0.10.10", 2, new_install=True),
+            _launch("b", "0.10.9", 30, new_install=True),
+            _launch("c", "0.10.9", 23, new_install=True)]
+    groups = cards.session_groups(rows, {}, NOW)
+    assert [(g["version"], g["open"]) for g in groups] == [("0.10.9", True), ("0.10.10", True)]
+    rows[2]["started_at"] = (NOW - timedelta(hours=25)).isoformat()
+    assert [g["open"] for g in cards.session_groups(rows, {}, NOW)] == [False, True]
+
+
+def test_the_sessions_card_shows_the_newest_versions_and_its_line_is_theirs():
+    groups = [{"version": f"0.10.{i}", "players": 2, "again": i % 2, "open": False}
+              for i in range(cards.MAX_SESSION_VERSIONS + 3)]
+    card = cards.sessions_card(groups)
+    chart = next(b for b in card.blocks if isinstance(b, sc.RateColumns))
+    shown = groups[-cards.MAX_SESSION_VERSIONS:]
+    assert [g["label"] for g in chart.groups] == [g["version"] for g in shown]
+    assert chart.baseline == sum(g["again"] for g in shown) / sum(g["players"] for g in shown)
+    assert chart.percent
+    card.png()

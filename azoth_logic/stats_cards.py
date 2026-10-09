@@ -11,6 +11,7 @@ from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from azoth_logic import stats_charts as sc
+from azoth_logic.run_paths import parse_time
 from azoth_logic import survey_labels as sl
 from azoth_logic.stats_format import CUTOFF_VERSION
 from azoth_logic.stats_format import value as sf_value
@@ -1690,3 +1691,80 @@ def paths_card(paths, since, until, runs_shown: int) -> sc.Card:
     if legend:
         card.add(sc.Legend(legend, indent=0), sc.Spacer(6))
     return card.add(sc.Flow(rows, links, names))
+
+
+# ---------------------------------------------------------------------------
+# /stats sessions
+# ---------------------------------------------------------------------------
+# 2026-10-09, Turner. Of the new players whose first launch was on a version,
+# how many launched the game again: one column per patch version. Reads
+# `launches` (the game repo's 2026-10-07_sessions_and_registration.sql), so
+# it starts at 0.10.5, the first build to record a launch.
+#
+# A new player is a `new_install` launch: no settings.cfg existed, so a new
+# player uuid. Any later launch of theirs counts, however soon after the
+# first (Turner: a return on the same day is a return). Editor launches are
+# never read, developers are left out, and a player missing from
+# player_cohort_view is new, as in /stats paths. New players only, so there
+# is no `players:` option.
+
+MAX_SESSION_VERSIONS = 10        # the newest; labels collide past about 12
+# A version is still open while its newest player first launched under this
+# long ago: they may yet come back, so its rate can still rise.
+SESSION_OPEN = timedelta(hours=24)
+
+
+def session_groups(launches: list, cohorts: dict, now) -> list:
+    """One dict per version new players first launched, oldest first:
+    `version`, `players`, `again` (of them, launched 2+ times) and `open`.
+
+    `launches` are every non-editor launch of the new-install players, the
+    new-install launches among them; `cohorts` player_uuid -> cohort.
+    """
+    first: dict = {}
+    count: dict = {}
+    for row in launches:
+        p = row.get("player_uuid")
+        if not p or cohorts.get(p, "new") != "new" or not row.get("started_at"):
+            continue
+        count[p] = count.get(p, 0) + 1
+        when = parse_time(row["started_at"])
+        if row.get("new_install") and (p not in first or when < first[p][1]):
+            first[p] = (row.get("version") or "?", when)
+
+    groups: dict = {}
+    for p, (version, when) in first.items():
+        g = groups.setdefault(version, {"version": version, "players": 0, "again": 0,
+                                        "newest": when})
+        g["players"] += 1
+        g["again"] += count[p] >= 2
+        g["newest"] = max(g["newest"], when)
+    out = sorted(groups.values(), key=lambda g: _version_key(g["version"]))
+    for g in out:
+        g["open"] = now - g.pop("newest") < SESSION_OPEN
+    return out
+
+
+def sessions_card(groups: list) -> sc.Card:
+    """Patch version across, the share of its new players who launched 2+
+    times up, the newest MAX_SESSION_VERSIONS versions. An open version is an
+    outlined column. The tiles and the line are the versions shown."""
+    shown = groups[-MAX_SESSION_VERSIONS:]
+    players = sum(g["players"] for g in shown)
+    again = sum(g["again"] for g in shown)
+    subtitle = f"New players by the version of their first launch · {COHORT_LABELS['new']}"
+    if len(shown) < len(groups):
+        subtitle += f"\nThe newest {len(shown)} versions"
+    card = sc.Card("Launched again", subtitle)
+    card.add(sc.StatTiles([("New players", str(players)),
+                           ("Launched 2+ times", f"{again} · {round(100 * again / players)}%")],
+                          columns=2))
+    card.add(sc.SectionHeader("% who launched 2+ times", "· line: overall"))
+    card.add(sc.RateColumns([{"label": g["version"], "value": g["again"] / g["players"],
+                              "count_text": f"{g['again']}/{g['players']}", "faded": g["open"]}
+                             for g in shown],
+                            baseline=again / players, percent=True))
+    if any(g["open"] for g in shown):
+        card.add(sc.Legend([("Still open: a player started under a day ago",
+                             sc.dim(sc.ACCENT, 0.75), "outline")], indent=0))
+    return card

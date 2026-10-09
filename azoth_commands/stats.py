@@ -34,6 +34,7 @@ ALL_REPORTS = [
     ("links", "stats_links", {"players": "new"}),
     ("surveys", "stats_surveys", {"players": "players"}),
     ("paths", "stats_paths", {"days": 14, "runs": 5}),
+    ("sessions", "stats_sessions", {}),
     ("item", "stats_item", {"by": "version", "players": "new"}),   # item filled in at run time
     ("scoreboard", "stats_scoreboard", {}),
     ("draft picks", "stats_draft_picks", {"players": "new"}),
@@ -216,6 +217,24 @@ def new_player_paths(until: datetime, days: int, runs: int):
         "player_cohort_view", ["player_uuid", "cohort"], uuids, {})}
     by_player = run_paths.new_arrivals(games, earlier, cohorts)
     return run_paths.build(by_player, until, runs), since
+
+
+LAUNCH_COLUMNS = ["player_uuid", "version", "new_install", "started_at"]
+
+
+def new_player_sessions(now: datetime) -> list:
+    """stats_cards.session_groups for every new player who has launched the
+    game. Three reads: the new-install launches (who is new), every
+    non-editor launch of those players, and their cohorts. `launches` is
+    INSERT-only for anon, so this needs the service-role key. Raises
+    SupabaseError like fetch_all.
+    """
+    firsts = fetch_all("launches", ["player_uuid"], {"new_install": "true", "is_editor": "false"})
+    uuids = sorted({r["player_uuid"] for r in firsts if r.get("player_uuid")})
+    launches = _in_batches("launches", LAUNCH_COLUMNS, uuids, {"is_editor": "false"})
+    cohorts = {r["player_uuid"]: r["cohort"] for r in _in_batches(
+        "player_cohort_view", ["player_uuid", "cohort"], uuids, {})}
+    return stats_cards.session_groups(launches, cohorts, now)
 
 
 def add_stats_commands(cls):
@@ -567,6 +586,23 @@ def add_stats_commands(cls):
         await _send_card(interaction, stats_cards.paths_card(paths, since, until, runs),
                          "paths.png", colour=0x9085E9)
 
+    # --- Sessions ---
+    # 2026-10-09, Turner. Of the new players whose first launch was on each
+    # patch version, the share who launched the game again. New players only,
+    # so no `players:` option. Reads `launches`, recorded from 0.10.5. See
+    # stats_cards § /stats sessions and docs/ANALYTICS.md § Sessions.
+    @stats_cmd.subcommand(name="sessions", description="New players by first version: how many launched again")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch sessions.")
+    async def stats_sessions(self, interaction: Interaction):
+        try:
+            groups = await asyncio.to_thread(new_player_sessions, datetime.now(timezone.utc))
+        except SupabaseError as e:
+            return f"❌ {e}"
+        if not groups:
+            return "❌ No new players have launched the game yet."
+        await _send_card(interaction, stats_cards.sessions_card(groups),
+                         "sessions.png", colour=0x3987E5)
+
     # --- One item ---
     # 2026-09-29, after Veln: its hp was halved in 0.9.11 and /stats bosses,
     # pooling every version, still ranked it the hardest. One boss, card,
@@ -753,6 +789,7 @@ def add_stats_commands(cls):
     cls.stats_links = stats_links
     cls.stats_surveys = stats_surveys
     cls.stats_paths = stats_paths
+    cls.stats_sessions = stats_sessions
     cls.stats_item = stats_item
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would

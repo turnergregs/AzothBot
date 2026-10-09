@@ -328,7 +328,8 @@ class ColumnHeads(Block):
 
 @dataclass
 class Legend(Block):
-    """Colour swatches, named: `[(label, colour)]`.
+    """Colour swatches, named: `[(label, colour)]`, or `(label, colour, shape)`
+    with shape "line" (a reference tick) or "outline" (an unfilled column).
 
     HOUSE RULE (Turner, 2026-09-28): a legend lists only what the chart above
     it actually draws. An act nobody reached or a surface nobody used is not a
@@ -346,6 +347,10 @@ class Legend(Block):
             if shape and shape[0] == "line":     # the key to a reference tick
                 d.line([(x - px(2), cy), (x + px(12), cy)], fill=colour, width=px(2))
                 x += px(16)
+            elif shape and shape[0] == "outline":  # the key to a faded RateColumns column
+                d.rounded_rectangle([x, cy - px(5), x + px(10), cy + px(5)], radius=px(2),
+                                    outline=colour, width=px(1.25))
+                x += px(14)
             else:
                 d.rounded_rectangle([x, cy - px(5), x + px(10), cy + px(5)], radius=px(2), fill=colour)
                 x += px(14)
@@ -579,11 +584,16 @@ class RateColumns(Block):
     `baseline`, in place of each group's `rest`, is ONE line across the plot
     for groups all read against the same rate (a section's overall pick rate).
     A tick per column at the same height reads as a row of dashes.
+
+    `percent` puts a % sign on the value over each column (/stats sessions,
+    Turner 2026-10-09). Off by default, so the reports that already read their
+    columns as bare numbers keep them.
     """
     groups: list
     fill: str = ACCENT
     baseline: float | None = None
     height: float = 180
+    percent: bool = False
 
     PLOT_H = 104      # the height of a column at the top of the scale
     TOP = 34          # room above a full column for its value
@@ -650,7 +660,7 @@ class RateColumns(Block):
                 d.line([(x_a - px(self.TICK_OVER), y), (x_b + px(self.TICK_OVER), y)],
                        fill=REFERENCE, width=px(2))
             if value is not None:
-                text = f"{round(value * 100)}"
+                text = f"{round(value * 100)}{'%' if self.percent else ''}"
                 text_y = base - px(peak) - px(6)
                 f = font(13, True)
                 if self.baseline is not None:

@@ -866,6 +866,7 @@ policy change as a security change.
 | `reports` | INSERT only | ✅ **The correct pattern** |
 | `turns`, `turn_nodes`, `levelups` | INSERT only | ✅ Follows `reports` |
 | `survey_responses` | INSERT only | ✅ Follows `reports` (2026-10-04). `/live_reports` posts its comments, `/daily_reports` a daily image of its answers |
+| `launches` | INSERT only | ✅ Follows `reports` (2026-10-07, game repo `2026-10-07_sessions_and_registration.sql`). One row per game launch; `/stats sessions` reads it with the service-role key |
 
 No UPDATE or DELETE policy exists anywhere except the narrow `games` one, so
 anon can add and read but never modify or destroy.
