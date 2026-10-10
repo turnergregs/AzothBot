@@ -1181,3 +1181,45 @@ def test_the_sessions_card_shows_the_newest_versions_and_its_line_is_theirs():
     assert chart.baseline == sum(g["again"] for g in shown) / sum(g["players"] for g in shown)
     assert chart.percent
     card.png()
+
+
+# --- /stats card_conversions -------------------------------------------------
+
+def _conversion(name, drafted, returned, item_type="card", players=400, players_returned=160):
+    return {"item_type": item_type, "item_name": name, "drafted": drafted, "returned": returned,
+            "players": players, "players_returned": players_returned}
+
+
+def test_cards_and_aspects_are_ranked_together_and_an_aspect_is_tagged():
+    rows = [_conversion("Card", 10, 5), _conversion("Aspect", 10, 9, item_type="aspect")]
+    most, _ = cards.conversion_lists(rows)
+    assert [r["item_name"] for r in most] == ["Aspect", "Card"]
+    tags = {b.label: b.tag for b in cards.conversions_card(rows).blocks if isinstance(b, sc.BarRow)}
+    assert tags == {"Aspect": "aspect", "Card": ""}
+
+
+def test_only_items_with_enough_drafters_are_ranked_and_none_appears_twice():
+    rows = [_conversion(f"c{i}", 5 + i, i % 5) for i in range(20)]
+    rows.append(_conversion("thin", cards.CONVERSION_MIN_DRAFTERS - 1, 4))
+    most, least = cards.conversion_lists(rows)
+    names = [r["item_name"] for r in most + least]
+    assert "thin" not in names and len(names) == len(set(names))
+    assert len(most) == len(least) == cards.CONVERSIONS_PER_SECTION
+
+
+def test_an_item_is_flagged_against_the_players_who_did_not_draft_it():
+    """160 of 400 new players came back. A card whose 200 drafters came back
+    at 40% matches the 200 who did not (80/200) and is not flagged. One whose
+    drafters came back at 50% is ahead of the others' 30% (60/200): blue."""
+    level = _conversion("Level", 200, 80, players=400, players_returned=160)   # rest 80/200 = 40%
+    bar = next(b for b in cards.conversions_card([level]).blocks if isinstance(b, sc.BarRow))
+    assert bar.marker == ""
+    ahead = _conversion("Ahead", 200, 100, players=400, players_returned=160)  # rest 60/200 = 30%
+    bar = next(b for b in cards.conversions_card([ahead]).blocks if isinstance(b, sc.BarRow))
+    assert bar.marker == "▲"
+
+
+def test_the_card_renders_with_nothing_ranked_yet():
+    card = cards.conversions_card([_conversion("thin", 1, 1, players=20, players_returned=5)])
+    assert not any(isinstance(b, (sc.BarRow, sc.Legend)) for b in card.blocks)
+    card.png()

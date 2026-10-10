@@ -79,6 +79,8 @@ SERVICE_ROLE_ONLY_VIEWS = frozenset({
 	"link_turn_view", "link_type_view",
 	# 2026-10-04_survey_answer_view.sql, for /stats surveys. Reads `survey_responses`.
 	"survey_answer_view",
+	# 2026-10-09_card_conversion_view.sql, for /stats card_conversions. Reads `launches`.
+	"card_conversion_view",
 })
 
 # The six taxonomy tables that used to live here -- `card_attributes`,

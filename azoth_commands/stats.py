@@ -35,6 +35,7 @@ ALL_REPORTS = [
     ("surveys", "stats_surveys", {"players": "players"}),
     ("paths", "stats_paths", {"days": 14, "runs": 5}),
     ("sessions", "stats_sessions", {}),
+    ("card_conversions", "stats_card_conversions", {}),
     ("item", "stats_item", {"by": "version", "players": "new"}),   # item filled in at run time
     ("scoreboard", "stats_scoreboard", {}),
     ("draft picks", "stats_draft_picks", {"players": "new"}),
@@ -603,6 +604,27 @@ def add_stats_commands(cls):
         await _send_card(interaction, stats_cards.sessions_card(groups),
                          "sessions.png", colour=0x3987E5)
 
+    # --- Card conversions ---
+    # 2026-10-09, Turner. Which cards and aspects new players drafted in their
+    # first session, ranked by how many of those players came back. New
+    # players only, so no `players:` option. See stats_cards § /stats
+    # card_conversions and docs/ANALYTICS.md § Card conversions.
+    @stats_cmd.subcommand(name="card_conversions",
+                          description="Cards and aspects new players drafted: did they come back?")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch card conversions.")
+    async def stats_card_conversions(self, interaction: Interaction):
+        try:
+            rows = fetch_all("card_conversion_view")
+        except SupabaseUnreadableError as e:
+            return f"❌ {e}"
+        except SupabaseError:
+            return ("❌ `card_conversion_view` is not migrated — run "
+                    "`db/migrations/2026-10-09_card_conversion_view.sql`.")
+        if not rows:
+            return "❌ No new player has drafted a card or aspect yet."
+        await _send_card(interaction, stats_cards.conversions_card(rows),
+                         "card_conversions.png", colour=0x3987E5)
+
     # --- One item ---
     # 2026-09-29, after Veln: its hp was halved in 0.9.11 and /stats bosses,
     # pooling every version, still ranked it the hardest. One boss, card,
@@ -790,6 +812,7 @@ def add_stats_commands(cls):
     cls.stats_surveys = stats_surveys
     cls.stats_paths = stats_paths
     cls.stats_sessions = stats_sessions
+    cls.stats_card_conversions = stats_card_conversions
     cls.stats_item = stats_item
     cls.stats_scoreboard = stats_scoreboard
     # The group AND each of its subcommands. Assigning only the group would

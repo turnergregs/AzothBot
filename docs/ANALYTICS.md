@@ -61,6 +61,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats surveys` | `survey_answer_view` | The game's one-click survey (game repo `docs/SURVEYS.md`): surveys shown, share answered, comments; where each was shown, split answered / skipped / ignored; then each question's answers, `understood` split run 1 vs run 3, under 5 answers grey. `players:` cohort filter, **default Everyone but us** (surveys began after the cutoff, so few "new" players have answered). No version cutoff: every row postdates it |
 | `/stats paths` | `games` + `player_cohort_view` | New players' paths, run by run: the tutorial, then whether each run beat their best. `days:` and `runs:`. See [New player paths](#new-player-paths-2026-10-08) |
 | `/stats sessions` | `launches` + `player_cohort_view` | Of the new players whose first launch was on each patch version, the share who launched the game again. New players only, no options. **Service-role only** (`launches` is INSERT-only for anon). See [Sessions](#sessions-2026-10-09) |
+| `/stats card_conversions` | `card_conversion_view` | Cards and aspects new players drafted in their first session, ranked together by how many of those players came back (a game in a later session): the seven most and seven least, each against every new player's rate. **Service-role only.** See [Card conversions](#card-conversions-2026-10-09) |
 | `/stats item` | `boss_split_view` / `draft_item_split_view` / `hero_split_view` | One boss, card, aspect, rite or hero, its rate per version (or ritual, or hero), each against the rest of its kind in that group. Drawn in the item's colour beside its face or art. See [One item](#one-item-2026-09-29) |
 | `/stats draft picks` | `draft_offer_view` | Pick rate by type (packs included), each kind of draft pack, element, valence and embellishment kind, each against its section (or bare cards), with flags. See [Draft reports](#draft-reports-2026-09-29) |
 | `/stats draft items` | `draft_item_offer_view` | The five most and five least picked cards, aspects and rites, one group per type, each against its own type |
@@ -569,6 +570,37 @@ as are the two tiles above it (new players, launched 2+ times).
   grouping is `stats_cards.session_groups` (pure), the card
   `stats_cards.sessions_card`. `launches` is INSERT-only for anon, so a local
   anon key gets `SupabaseUnreadableError`, not an empty chart.
+
+### Card conversions (2026-10-09)
+
+Turner's question: which cards kept players the most excited to come back and
+play more? `/stats card_conversions` reads `card_conversion_view` (game repo
+`db/migrations/2026-10-09_card_conversion_view.sql`, whose header holds the
+definitions) and draws the seven cards or aspects whose drafters came back
+most, then the seven least (`stats_cards.conversions_card`).
+
+- **Who and what:** new players, by their new-install launch as in
+  `/stats sessions`, and the cards and aspects they drafted in their **first
+  session** (games started before their next launch, packs opened there
+  included). Counting only the first session is the point: a player who comes
+  back plays more and so drafts more, and counting every draft would make
+  every card look like it brings players back.
+- **Came back:** a game started at or after their next launch (Turner: "they
+  had to launch the game and also start a game"). Continuing a saved run does
+  not count.
+- **The tutorial's first draft is skipped** in every tutorial game, packs
+  opened from it too: it is scripted. Every later draft is a real choice.
+- **Cards and aspects are ranked together** (Turner: they appear in drafts at
+  comparable rates), an aspect tagged "aspect". Rites are left out.
+- **Ranked** once 5 new players have drafted it (`CONVERSION_MIN_DRAFTERS`).
+  On 2026-10-09 the most-drafted item had 3, so the card drew its tiles only;
+  it is built to fill in as players arrive.
+- **The line** is every new player's return rate. **The flag** compares an
+  item with the new players who did NOT draft it (`players - drafted`), by the
+  usual `rate_flag`, so a much-drafted item is not partly compared with
+  itself. The view carries the all-player totals on every row for this.
+- **Correlation, not cause.** A card players who were going to return anyway
+  like to draft reads the same as a card that made them return.
 
 ### Links (2026-10-03)
 

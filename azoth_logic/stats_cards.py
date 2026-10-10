@@ -1768,3 +1768,75 @@ def sessions_card(groups: list) -> sc.Card:
         card.add(sc.Legend([("Still open: a player started under a day ago",
                              sc.dim(sc.ACCENT, 0.75), "outline")], indent=0))
     return card
+
+
+# ---------------------------------------------------------------------------
+# /stats card_conversions
+# ---------------------------------------------------------------------------
+# 2026-10-09, Turner: which cards kept players the most excited to come back
+# and play more. Reads the game repo's 2026-10-09_card_conversion_view.sql:
+# per card or aspect, the new players who drafted it in their first session
+# and how many of them came back (started a game in a later session), with
+# the totals for every new player on each row. The definitions live in the
+# view's header.
+#
+# Cards and aspects are ranked TOGETHER (Turner: they appear in drafts at
+# comparable rates), an aspect tagged as one. The line is every new player's
+# return rate; an item is flagged against the new players who did NOT draft
+# it, so a much-drafted item is not partly compared with itself.
+
+CONVERSION_MIN_DRAFTERS = 5
+CONVERSIONS_PER_SECTION = 7
+# Fits "Reverberation" with its "aspect" tag, the widest live pair.
+CONVERSION_LABEL_W = 158
+
+
+def _conversion_rate(row: dict) -> float:
+    return int(row.get("returned") or 0) / int(row["drafted"])
+
+
+def conversion_lists(rows: list) -> tuple:
+    """`(most, least)`: the items drafted by CONVERSION_MIN_DRAFTERS+ new
+    players whose drafters came back most and least. Never an item twice."""
+    ranked = [r for r in rows if int(r.get("drafted") or 0) >= CONVERSION_MIN_DRAFTERS]
+
+    def name(r):
+        return str(r.get("item_name") or "")
+
+    most = sorted(ranked, key=lambda r: (-_conversion_rate(r), -int(r["drafted"]), name(r)))
+    most = most[:CONVERSIONS_PER_SECTION]
+    rest = [r for r in ranked if r not in most]
+    least = sorted(rest, key=lambda r: (_conversion_rate(r), -int(r["drafted"]), name(r)))
+    return most, least[:CONVERSIONS_PER_SECTION]
+
+
+def conversions_card(rows: list) -> sc.Card:
+    players = int(rows[0].get("players") or 0) if rows else 0
+    returned = int(rows[0].get("players_returned") or 0) if rows else 0
+    average = returned / players if players else 0
+    ranked = sum(int(r.get("drafted") or 0) >= CONVERSION_MIN_DRAFTERS for r in rows)
+    card = sc.Card("Drafts and coming back",
+                   f"{COHORT_LABELS['new']} · cards and aspects drafted in their first session\n"
+                   f"Came back: played a game in a later session")
+    card.add(sc.StatTiles([("New players", str(players)),
+                           ("Came back", f"{round(100 * average)}%" if players else "—"),
+                           ("Ranked", str(ranked))], columns=3))
+    most, least = conversion_lists(rows)
+    for title, items in (("Drafters came back most", most), ("Drafters came back least", least)):
+        if not items:
+            continue
+        card.add(sc.SectionHeader(title))
+        for r in items:
+            p, n = int(r.get("returned") or 0), int(r["drafted"])
+            others = players - n
+            flag = rate_flag(p, n, (returned - p) / others) if others > 0 else None
+            card.add(sc.BarRow(_item_label(r), p / n, value_text=f"{round(100 * p / n)}%",
+                               count_text=f"{p}/{n}", delta=sc.signed((p / n - average) * 100),
+                               reference=average, label_w=CONVERSION_LABEL_W,
+                               tag="aspect" if r.get("item_type") == "aspect" else "",
+                               **_flag_style(flag)))
+        card.add(sc.Spacer(6))
+    if most:
+        card.add(sc.Legend([(f"Every new player {round(100 * average)}%", sc.REFERENCE, "line")],
+                           indent=CONVERSION_LABEL_W))
+    return card
