@@ -21,6 +21,7 @@ QUESTIONS = {
     "ui": "How is the game UI feeling?",
     "visuals": "How are the visuals looking?",
     "cards": "Cards are easy to understand.",
+    "new_attacks": "The new attack system is:",
 }
 
 # A few words for a row label.
@@ -37,12 +38,14 @@ SHORT = {
     "ui": "UI",
     "visuals": "Visuals",
     "cards": "Cards",
+    "new_attacks": "New attacks",
 }
 
 # The order questions are reported in: the first-run question, then the run
-# questions, then the fight ones, then the ones about the game as a whole.
+# questions, then the fight ones, then the ones about the game as a whole, then
+# the returning-player ones about a single change.
 ORDER = ["understood", "fun", "loss", "difficulty", "choices", "length", "variety",
-         "fight_fun", "fight_difficulty", "ui", "visuals", "cards"]
+         "fight_fun", "fight_difficulty", "ui", "visuals", "cards", "new_attacks"]
 
 # Choice questions' answers, in the order the card shows them.
 CHOICES = {
@@ -68,6 +71,7 @@ SCALE_ENDS = {
     "ui": {1: "Cumbersome", 5: "Seamless"},
     "visuals": {1: "Ugly", 5: "Amazing"},
     "cards": {1: "Disagree", 5: "Agree"},
+    "new_attacks": {1: "Worse", 3: "About the same", 5: "Better"},
 }
 
 # Where a survey was shown, by `survey_responses.moment`.
