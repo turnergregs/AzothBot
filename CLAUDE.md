@@ -167,7 +167,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 1145 tests, all offline** (`docs/TESTING.md`):
+**pytest, 1168 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest
@@ -255,8 +255,10 @@ See `docs/CONTENT_PIPELINE.md`.
 - Don't filter `/add_to_deck`'s item picker to live content. Every other lookup
   is filtered; that one is the only route back for a retired row, and there is
   no `/delete_*` left to undo a mistake
-- Don't uncomment `/stage`, `/postpone` or `/merge_staging` without first
-  fixing their hardcoded deck IDs (21 is archived, 22 is not the aspect deck)
+- Don't uncomment `/postpone` without first replacing its hardcoded deck
+  IDs, and don't pin a deck id in new code: `/stage` and `/merge_staging`
+  (rebuilt 2026-10-13, `azoth_logic/deck_staging.py`) find their decks by usage
+  type and by what they already hold
 - Don't commit `.env`
 - Don't add a command without assigning it onto the cog — `test_command_registration.py`
   will fail, and that is the point

@@ -55,6 +55,7 @@ azoth_logic/
   content_search.py         The filters behind /search
   rite_schema.py            Which side of the events -> rites rename the database is on
   bulk_report.py            Diffs and summaries for /bulk_insert and /bulk_update
+  deck_staging.py           /stage and /merge_staging: which decks an item leaves or joins, and the move
   bulk_apply.py             The transactional write itself -- one RPC, one transaction
   taxonomy.py               Elements, card types, attributes, deck types -- was six tables
   upgrades.py               What a card becomes when it upgrades; mirrors the engine
@@ -353,7 +354,7 @@ fixed; the rest are still open.
 | ~~`soft_delete_record` always returned `None`~~ | `supabase_helpers.py` | **Fixed 2026-08-26** — `/delete_deck` and `/delete_hero` reported failure on every success |
 | `game_stats` table does not exist | `stats.py` version autocomplete | Autocomplete always returns nothing. Now logs the reason to the console |
 | ~~Leaderboard sorts client-side after a capped fetch~~ | `stats.py` | **Fixed**: `limit` is pushed to the server, and since 2026-09-29 `fetch_all` pages past the 1000-row cap |
-| Hardcoded deck IDs | `decks.py` `stage` / `merge_staging` | IDs 20/21/22/3; deck 21 ("Staging") is **archived** and 22 is "Testing Fates" despite the constant being `ASPECT_DECK_ID`. **Both commands hidden 2026-08-27** — the bug is parked, not fixed. Derive the decks from `type`/`usage_type` before restoring them |
+| Hardcoded deck IDs | `decks.py` `postpone` | Pins the "Removed" decks' ids (26, 27). **Hidden 2026-08-27** — the bug is parked, not fixed. `/stage` and `/merge_staging` had the same bug (IDs 20/21/22/3, with 22 "Testing Fates" under a constant named `ASPECT_DECK_ID`) and were **rebuilt 2026-10-13** deriving their decks from `type`/`usage_type` and their contents (`azoth_logic/deck_staging.py`); do the same before restoring it |
 | Six pseudo-docstrings placed above `def` | `supabase_helpers.py` | Not real docstrings; `help()` shows nothing |
 | Stale comment | `supabase_storage.py` `download_image` | Says "timestamped filename"; it writes a flat name |
 | `add_to_deck` never sets `position` or `weight` | `supabase_helpers.py` | Bot-added deck entries take column defaults; `weight` appears to be draft probability |

@@ -8,7 +8,7 @@ from azoth_logic import taxonomy
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID
 from supabase_helpers import fetch_all, update_record, get_deck_contents
 
-from azoth_logic import deck_render
+from azoth_logic import bulk_report, deck_render, deck_staging
 
 TABLE_NAME = "decks"
 MODEL_NAME = "deck"
@@ -129,8 +129,9 @@ def add_deck_commands(cls):
 		still opens an archived deck by name.
 
 		The **id** is shown because it is the thing you cannot get anywhere else
-		and the thing that keeps mattering -- `/stage` and `/merge_staging` are
-		commented out precisely because they pinned ids that had since moved, and
+		and the thing that keeps mattering -- `/stage` and `/merge_staging` were
+		commented out until they were rebuilt without them (2026-10-13),
+		precisely because they pinned ids that had since moved, and
 		the Rites deck was invisible to `draft_deck_view` for its whole life
 		without anyone being able to see the deck list to notice.
 		"""
@@ -337,18 +338,18 @@ def add_deck_commands(cls):
 
 
 	# ------------------------------------------------------------------
-	# HIDDEN 2026-08-27: /postpone, /stage and /merge_staging.
+	# HIDDEN 2026-08-27: /postpone.
 	#
-	# Commented out rather than deleted -- the balance workflow they
-	# implement is still wanted, but all three are unsafe as written:
-	# /stage and /merge_staging hardcode deck ids 21/22/20/3, and in the
-	# current database deck 21 (Staging) is ARCHIVED and deck 22 is named
-	# "Testing Fates" despite the constant being ASPECT_DECK_ID. See
-	# docs/COMMANDS.md § Deck curation.
+	# Commented out rather than deleted -- benching content is still
+	# wanted, but it is unsafe as written: it pins the "Removed" decks' ids
+	# (26, 27) and deletes each copy before inserting it again. /stage and
+	# /merge_staging were hidden with it and rebuilt 2026-10-13 with no ids
+	# (below, and azoth_logic/deck_staging.py); derive its decks the same
+	# way before restoring it. See docs/COMMANDS.md § Deck curation.
 	#
-	# The bodies must stay commented, not merely unattached:
+	# The body must stay commented, not merely unattached:
 	# tests/test_command_registration.py fails a command that a module
-	# defines but never assigns onto the cog. Commenting hides them from
+	# defines but never assigns onto the cog. Commenting hides it from
 	# its AST scan, which is the supported way to park a command.
 	# ------------------------------------------------------------------
 
@@ -446,197 +447,78 @@ def add_deck_commands(cls):
 			# f"• Added to `{target_deck['name']}`"
 		# )
 
-	# @nextcord.slash_command(
-		# name="stage",
-		# description="Move all copies of an item from live draft decks to Staging (or add it if missing).",
-		# guild_ids=[DEV_GUILD_ID]
-	# )
-	# @safe_interaction(timeout=5, error_message="❌ Failed to stage item.", require_authorized=True)
-	# async def stage_cmd(
-		# self,
-		# interaction: Interaction,
-		# item_name: str = SlashOption(description="Item to stage", autocomplete=True),
-	# ):
-		# from supabase_helpers import remove_from_deck, add_to_deck, parse_item_ref, get_display_name
+	@nextcord.slash_command(name="stage", description="Pull every copy of an item out of the live decks and into Staging.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=15, error_message="❌ Failed to stage item.", require_authorized=True)
+	async def stage_cmd(
+		self,
+		interaction: Interaction,
+		item_name: str = SlashOption(description="Card, Aspect, or Rite to stage", autocomplete=True),
+	):
+		"""One item out of the decks that deal it: see azoth_logic/deck_staging.py.
 
-		# STAGING_DECK_ID = 21
-
-		# # Resolve the encoded item ref (falls back to the raw name for typed input)
-		# ref_type, ref_id = parse_item_ref(item_name)
-		# display_name = item_name
-		# if ref_type:
-			# recs = fetch_all(f"{ref_type}s", filters={"id": ref_id})
-			# if recs:
-				# display_name = get_display_name(recs[0], ref_type)
-
-		# # 1️⃣ Find all active base draft decks
-		# decks = fetch_all(
-			# TABLE_NAME,
-			# filters={
-				# "archived_at": None,
-				# "type": "base",
-				# "usage_type": "draft",
-			# },
-		# )
-
-		# if not decks:
-			# return "❌ No active base draft decks found."
-
-		# total_removed = 0
-		# source_decks = []
-
-		# # 2️⃣ Remove ALL copies from ALL matching decks (if present)
-		# for deck in decks:
-			# success, contents = get_deck_contents(deck, full=True)
-			# if not success or not contents:
-				# continue
-
-			# if ref_type:
-				# matching = [it for it in contents if it["id"] == ref_id and it["item_type"] == ref_type]
-			# else:
-				# matching = [it for it in contents if it.get("name") == item_name]
-			# if not matching:
-				# continue
-
-			# quantity = len(matching)
-			# success, result = remove_from_deck(deck, item_name, quantity)
-			# if not success:
-				# return f"❌ Failed to remove `{display_name}` from `{deck['name']}`:\n{result}"
-
-			# update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
-			# total_removed += quantity
-			# source_decks.append(deck["name"])
-
-		# # 3️⃣ Load staging deck
-		# target_matches = fetch_all(TABLE_NAME, filters={"id": STAGING_DECK_ID})
-		# if not target_matches:
-			# return "❌ Staging deck not found."
-
-		# staging_deck = target_matches[0]
-
-		# # 4️⃣ Decide how many to add
-		# add_quantity = total_removed if total_removed > 0 else 1
-
-		# success, result = add_to_deck(staging_deck, item_name, add_quantity)
-		# if not success:
-			# return (
-				# f"❌ Failed to add `{display_name}` ×{add_quantity} "
-				# f"to `{staging_deck['name']}`:\n{result}"
-			# )
-
-		# update_record(TABLE_NAME, staging_deck["id"], {"updated_at": "now()"})
-
-		# # 5️⃣ Response
-		# if total_removed > 0:
-			# return (
-				# f"⏸️ Staged `{display_name}` ×{total_removed}\n"
-				# f"• Removed from: {', '.join(source_decks)}\n"
-				# f"• Added to `{staging_deck['name']}`"
-			# )
-		# else:
-			# return (
-				# f"⏸️ Staged `{display_name}`\n"
-				# f"• Item was not present in live draft decks\n"
-				# f"• Added 1 copy to `{staging_deck['name']}`"
-			# )
+		Rebuilt 2026-10-13, after /merge_staging. The version hidden 2026-08-27
+		pinned Staging's id and deleted each copy before inserting it again.
+		"""
+		# Blocking network I/O; off the loop.
+		try:
+			staged = await asyncio.to_thread(deck_staging.stage_plan, item_name)
+			warnings = await asyncio.to_thread(deck_staging.stage_apply, staged)
+		except deck_staging.StagingError as e:
+			return "❌ " + bulk_report.fit(e.lines, 1900)
+		return deck_staging.stage_report(staged, warnings)
 
 
-	# @nextcord.slash_command(name="merge_staging", description="Move all staged items back into live draft decks.", guild_ids=[DEV_GUILD_ID])
-	# @safe_interaction(timeout=10, error_message="❌ Failed to merge items.", require_authorized=True)
-	# async def merge_staging_cmd(
-		# self,
-		# interaction: Interaction,
-	# ):
-		# from supabase_helpers import remove_from_deck_by_ref, add_to_deck_by_ref, get_display_name
+	@nextcord.slash_command(name="merge_staging", description="Move everything in Staging into the live decks that deal it.", guild_ids=[DEV_GUILD_ID])
+	@safe_interaction(timeout=30, error_message="❌ Failed to merge Staging.", require_authorized=True)
+	async def merge_staging_cmd(
+		self,
+		interaction: Interaction,
+		preview: bool = SlashOption(
+			description="Show where everything would go without moving it",
+			required=False, default=False),
+	):
+		"""The release step for staged content: see azoth_logic/deck_staging.py.
 
-		# STAGING_DECK_ID = 21
+		Rebuilt 2026-10-13. The version hidden 2026-08-27 pinned deck ids and
+		deleted-then-inserted each row; this one finds the decks by usage type and
+		by what they already hold, and moves the rows.
+		"""
+		# Blocking network I/O; off the loop.
+		try:
+			merge = await asyncio.to_thread(deck_staging.plan)
+		except deck_staging.StagingError as e:
+			# A plain reply caps at 2000 characters.
+			return "❌ Nothing was moved.\n" + bulk_report.fit(e.lines, 1900)
 
-		# # Destination decks
-		# ASPECT_DECK_ID = 22
-		# COMBO_CARD_DECK_ID = 20  # cards with null valence and null element are combo cards
-		# DEFAULT_CARD_DECK_ID = 3
+		staging_name = merge["staging"]["name"]
+		if not merge["moves"]:
+			return f"ℹ️ `{staging_name}` is empty."
 
-		# # 1️⃣ Load staging deck
-		# staging_matches = fetch_all(TABLE_NAME, filters={"id": STAGING_DECK_ID})
-		# if not staging_matches:
-			# return "❌ Staging deck not found."
+		warnings = []
+		if not preview:
+			try:
+				warnings = await asyncio.to_thread(deck_staging.apply, merge)
+			except deck_staging.StagingError as e:
+				return "❌ " + bulk_report.fit(e.lines, 1900)
 
-		# staging_deck = staging_matches[0]
+		total = sum(len(move["rows"]) for move in merge["moves"])
+		lines = deck_staging.report_lines(merge)
+		fields = [(f"→ {move['deck']['name']} ({len(move['rows'])})",
+		           bulk_report.fit(lines[move["deck"]["name"]]), False)
+		          for move in merge["moves"]]
+		if warnings:
+			fields.append((f"Warnings ({len(warnings)})", bulk_report.fit(warnings), False))
 
-		# success, contents = get_deck_contents(staging_deck, full=True)
-		# if not success:
-			# return f"❌ Failed to load staging deck contents:\n{contents}"
-
-		# if not contents:
-			# return "ℹ️ Staging deck is empty."
-
-		# # 2️⃣ Bucket items by destination deck, keyed by (content_type, content_id)
-		# move_plan = {
-			# ASPECT_DECK_ID: {},
-			# COMBO_CARD_DECK_ID: {},
-			# DEFAULT_CARD_DECK_ID: {},
-		# }
-		# display_names = {}
-
-		# for item in contents:
-			# content_type = item["item_type"]
-			# content_id = item["id"]
-			# key = (content_type, content_id)
-			# display_names[key] = get_display_name(item, content_type)
-
-			# if content_type == "aspect":
-				# target_deck_id = ASPECT_DECK_ID
-			# elif (
-				# content_type == "card"
-				# and item.get("valence") is None
-				# and item.get("element") is None
-			# ):
-				# target_deck_id = COMBO_CARD_DECK_ID
-			# else:
-				# target_deck_id = DEFAULT_CARD_DECK_ID
-
-			# move_plan[target_deck_id][key] = move_plan[target_deck_id].get(key, 0) + 1
-
-		# # 3️⃣ Remove EVERYTHING from staging
-		# for bucket in move_plan.values():
-			# for (content_type, content_id), qty in bucket.items():
-				# success, result = remove_from_deck_by_ref(staging_deck, content_type, content_id, qty)
-				# if not success:
-					# name = display_names.get((content_type, content_id), content_id)
-					# return f"❌ Failed to remove `{name}` ×{qty} from staging:\n{result}"
-
-		# update_record(TABLE_NAME, staging_deck["id"], {"updated_at": "now()"})
-
-		# # 4️⃣ Add items to destination decks
-		# moved_summary = []
-
-		# for deck_id, items in move_plan.items():
-			# if not items:
-				# continue
-
-			# matches = fetch_all(TABLE_NAME, filters={"id": deck_id})
-			# if not matches:
-				# return f"❌ Destination deck {deck_id} not found."
-
-			# deck = matches[0]
-
-			# for (content_type, content_id), qty in items.items():
-				# success, result = add_to_deck_by_ref(deck, content_type, content_id, qty)
-				# name = display_names.get((content_type, content_id), content_id)
-				# if not success:
-					# return (
-						# f"❌ Failed to add `{name}` ×{qty} to "
-						# f"`{deck['name']}`:\n{result}"
-					# )
-				# moved_summary.append(f"{name} ×{qty} → {deck['name']}")
-
-			# update_record(TABLE_NAME, deck["id"], {"updated_at": "now()"})
-
-		# # 5️⃣ Done
-		# return (
-			# "🎭 Unstaged all items:\n"
-			# + "\n".join(f"• {line}" for line in moved_summary)
-		# )
+		plural = "" if total == 1 else "s"
+		embeds = pack_fields_into_embeds(
+			fields,
+			title=(f"Merge {staging_name} (preview) — {total} item{plural} would move" if preview
+			       else f"Merge {staging_name} — {total} item{plural} moved"),
+			colour=0x5865F2 if preview else (0xe67e22 if warnings else 0x2ecc71),
+			footer=("Nothing was moved. Run it without preview to move them." if preview
+			        else "Every build deals these from now on."))
+		for embed in embeds:
+			await interaction.followup.send(embed=embed)
 
 
 	# Autocomplete Helpers
@@ -709,7 +591,7 @@ def add_deck_commands(cls):
 
 
 	@add_to_deck_cmd.on_autocomplete("item_name")
-	# @stage_cmd.on_autocomplete("item_name")
+	@stage_cmd.on_autocomplete("item_name")
 	async def autocomplete_item_name(self, interaction: Interaction, input: str):
 		"""EVERY row, live or not -- deliberately not filtered.
 
@@ -719,6 +601,8 @@ def add_deck_commands(cls):
 		live again, and filtering here would make retired content unrecoverable
 		through the bot -- with no `/delete_*` commands left to undo it either.
 		This picker IS the way back.
+
+		`/stage` shares it for the same reason: it stages an item no deck holds.
 		"""
 		from supabase_helpers import encode_item_ref, make_item_label
 
@@ -784,6 +668,6 @@ def add_deck_commands(cls):
 	cls.add_to_deck_cmd = add_to_deck_cmd
 	cls.remove_from_deck_cmd = remove_from_deck_cmd
 	# cls.postpone_cmd = postpone_cmd
-	# cls.stage_cmd = stage_cmd
-	# cls.merge_staging_cmd = merge_staging_cmd
+	cls.stage_cmd = stage_cmd
+	cls.merge_staging_cmd = merge_staging_cmd
 

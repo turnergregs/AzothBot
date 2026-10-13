@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 1145 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 1168 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -21,6 +21,7 @@ Added 2026-08-26. Before that there was no suite at all.
 | `tests/test_helpers.py` | 35 | Key-role detection, autocomplete degradation, filename slugging, embed packing, missing-asset guidance |
 | `tests/test_search.py` | 30 | `/search` filters, the deep `actions`/`triggers`/`properties` scan, sort orders |
 | `tests/test_bulk_report.py` | 45 | Bulk diffs: changed-fields-only, jsonb shape not contents, announced truncation |
+| `tests/test_deck_staging.py` | 22 | `/merge_staging`: each kind routed to the live deck already holding the most of it with no deck id anywhere, starter / curse / custom / archived decks never a destination, a kind with no home or a tie refusing the whole merge, rows moved by id out of Staging rather than copied, and a failed move saying which decks already received theirs. `/stage`: every copy out of the decks that deal the item's kind and no others, one copy added for an item no deck deals but never a second, and a typed name refused when it matches more than one item |
 | `tests/test_command_registration.py` | 35 | **What the cog actually exposes**, and that no name in it is undefined at runtime |
 | `tests/test_art_cache.py` | 32 | Both caches: content-hash render keys, art TTL, invalidation after a re-upload |
 | `tests/test_content_get.py` | 31 | The `/show` embed: which fields show, which are deliberately omitted — plus `/rules`, which carries exactly the four `jsonb` fields `/show` drops |

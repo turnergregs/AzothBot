@@ -187,15 +187,22 @@ def test_no_command_deletes_content(gone):
     assert gone not in _registered_command_names()
 
 
-@pytest.mark.parametrize("hidden", ["stage", "postpone", "merge_staging"])
-def test_the_deck_curation_commands_stay_hidden(hidden):
+def test_postpone_stays_hidden():
     """Commented out 2026-08-27 (azoth_commands/decks.py).
 
-    All three are unsafe as written -- `/stage` and `/merge_staging` hardcode
-    deck ids 21/22/20/3, and deck 21 is archived while deck 22 is "Testing
-    Fates" despite the constant being ASPECT_DECK_ID. Uncommenting them without
-    fixing the ids re-ships that bug, so this is the tripwire."""
-    assert hidden not in _registered_command_names()
+    Unsafe as written: it hardcodes the "Removed" decks' ids (26 and 27), and
+    ids are what moved under the three commands hidden that day -- Staging's
+    deck was archived at the time, and the old `/merge_staging` sent aspects to
+    a constant that had become a different deck. Uncommenting it without
+    deriving the decks re-ships that bug, so this is the tripwire."""
+    assert "postpone" not in _registered_command_names()
+
+
+@pytest.mark.parametrize("rebuilt", ["stage", "merge_staging"])
+def test_the_staging_commands_are_back(rebuilt):
+    """Hidden with `/postpone`, rebuilt 2026-10-13 with no deck ids
+    (azoth_logic/deck_staging.py, tests/test_deck_staging.py)."""
+    assert rebuilt in _registered_command_names()
 
 
 # ---------------------------------------------------------------------------

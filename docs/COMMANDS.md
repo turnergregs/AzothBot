@@ -261,7 +261,8 @@ type. Unarchived only — 20 of the 28 rows are archived, and a list that is
 two-thirds dead content is not one you can scan; `/show_deck` still opens an
 archived deck by name. The **id** is shown because it is the thing you cannot get
 anywhere else and the thing that keeps mattering: `/stage` and `/merge_staging`
-are parked precisely because they pinned ids that had since moved.
+were parked until they were rebuilt without them, precisely because they pinned
+ids that had since moved.
 
 `type` and `usage_type` autocomplete from `azoth_logic/taxonomy.py`, not from the
 database. The six taxonomy tables were dropped 2026-08-27 — see
@@ -280,34 +281,109 @@ narrow by that column and now list **every unarchived deck**.
 |---|---|---|
 | `/add_to_deck` | 🔒 | `deck_name`*, `item_name`*, `quantity?` |
 | `/remove_from_deck` | 🔒 | `deck_name`*, `item_name`*, `quantity?` |
+| `/stage` | 🔒 | `item_name`* — pulls every copy of one item out of the live decks that deal it, into the Staging deck |
+| `/merge_staging` | 🔒 | `preview?` (default false) — moves everything in the Staging deck into the live decks that deal it |
 
 **Always pick items from autocomplete.** Typed names fall back to a first-match
 lookup across content types and can resolve to the wrong item — see
 [ARCHITECTURE.md § Deck membership](ARCHITECTURE.md#deck-membership).
 
-### Hidden 2026-08-27: `/stage`, `/postpone`, `/merge_staging`
+### `/merge_staging`: the release step for staged content
 
-The **balance workflow** — pulling content out of the live draft pool and putting
-it back — is commented out in `azoth_commands/decks.py`, not deleted. What it did:
+Cards, aspects and rites for the next release are uploaded early into the
+**Staging** deck (`/bulk_insert`, then `/bulk_add_to_deck`). Every build
+downloads that deck and none deals from it. `/merge_staging` empties it into the
+live decks, and **from then on every build deals those items**, the older ones
+included: run it with the release, not before.
 
-- **`/postpone`** — removed every copy of an item from all active base draft decks
-  and moved them into the "Removed" decks. Used when benching content.
-- **`/stage`** — moved every copy from live draft decks into the Staging deck (or
-  added it if missing). A holding area for content being reworked.
-- **`/merge_staging`** — emptied Staging back into live draft decks, routing each
-  item by type: aspects → the aspect deck, cards with null valence *and* null
-  element → Combo Cards, everything else → Base Draft Deck.
+`preview:true` replies with where each item would go and writes nothing. Run it
+first.
 
-⚠️ **Do not simply uncomment them.** `/stage` and `/merge_staging` hardcode deck
-IDs (`21` Staging, `22`, `20` Combo Cards, `3` Base Draft Deck) and the database
-has moved: deck 21 is **archived** and deck 22 is named "Testing Fates" despite
-the constant being called `ASPECT_DECK_ID`. Fix the IDs — ideally by deriving the
-decks from `type`/`usage_type` the way `draft_deck_view` does — before restoring.
+**No deck ids, and no options naming a deck.** The decks are found each time
+(`azoth_logic/deck_staging.py`):
 
-The bodies must stay **commented**, not merely unattached:
+- **Staging** is the unarchived base deck whose usage type is `staging`. None, or
+  more than one, is refused.
+- **A staged item goes to the unarchived base deck that already holds the most
+  of its kind**, among the decks of the usage type that deals that kind:
+
+| Kind | Decks considered |
+|---|---|
+| aspect | `draft` |
+| combo card (a card with no valence *and* no element) | `draft` |
+| any other card | `draft` |
+| rite | `weighted` |
+
+So aspects join the deck the aspects are in, and a deck being renamed,
+renumbered or replaced needs no change here. A starter, curse, custom or
+archived deck is never a destination, however much it holds.
+
+**What it refuses, before writing anything**, listing every problem at once:
+
+- a kind no deck holds yet (put one in its deck with `/add_to_deck` first);
+- two decks tied for a kind;
+- a staged row naming a deleted item (`deck_contents.content_id` has no foreign
+  key).
+
+To send staged items somewhere this would not, such as a new deck, use
+`/bulk_add_to_deck` and `/remove_from_deck` instead.
+
+**Rows move; they are not copied.** Each destination deck is one `UPDATE` of
+`deck_contents.deck_id`, filtered to rows still in Staging, so an item is in
+exactly one deck at every moment and `position` (the order within the deck it
+left) is cleared. The destinations are separate requests, because PostgREST has
+no transaction across them: if one fails the reply names the decks that already
+received theirs, the rest is still in Staging, and running the command again
+moves it. `updated_at` is stamped on Staging and every deck that received
+something.
+
+### `/stage`: one item out of the live decks
+
+The other direction, one item at a time: a holding place for content being
+reworked. Every copy of the item leaves the decks that deal it and lands in
+Staging, where every build still downloads it and none deals it. **Every build
+stops dealing it at once.**
+
+- **Which decks it empties:** the ones `/merge_staging` would consider for the
+  item, the unarchived base decks of the usage type that deals its kind (table
+  above). A copy in any other deck, a starter or curse deck say, **stays**, and
+  the reply names those decks: the item is still dealt from them.
+- **An item no such deck holds** gets one copy added to Staging, so new content
+  can be staged by name. If Staging already holds it, nothing changes and the
+  reply says so.
+- **The picker lists every row**, live or not, like `/add_to_deck`'s. A typed
+  name has to match exactly one card, aspect or rite; one matching several is
+  refused rather than taking the first.
+- **Rows move**, as in `/merge_staging`: one `UPDATE` per deck the item leaves.
+
+**`/stage` then `/merge_staging` is not a round trip for one item.**
+`/merge_staging` empties *all* of Staging, the next release's content included,
+and sends each item to the deck holding the most of its kind, which is not
+necessarily the deck it was staged out of. To put one item back while other
+content waits in Staging, use `/add_to_deck` and `/remove_from_deck`.
+
+### Hidden 2026-08-27: `/postpone`
+
+The last of the **balance workflow** is commented out in
+`azoth_commands/decks.py`, not deleted. **`/postpone`** removed every copy of an
+item from all active base draft decks and moved them into the "Removed" decks.
+Used when benching content.
+
+`/stage` and `/merge_staging` were hidden with it and **rebuilt 2026-10-13**
+(above). The versions they replaced pinned deck ids (`21` Staging, `22`, `20`,
+`3`), sent aspects to a constant named `ASPECT_DECK_ID` that had become a
+different deck, and deleted each row from one deck before inserting it in
+another, one request per copy.
+
+⚠️ **Do not simply uncomment it.** `/postpone` hardcodes the "Removed" decks'
+ids (`26`, `27`) and deletes before it inserts. Derive the decks from
+`type`/`usage_type` and move the rows, the way the other two now do, before
+restoring it.
+
+The body must stay **commented**, not merely unattached:
 `tests/test_command_registration.py` fails a command that a module defines but
-never assigns onto the cog, and a separate test asserts these three names stay
-off the cog.
+never assigns onto the cog, and a separate test asserts the name stays off the
+cog.
 
 ## Taxonomy lives in code
 
@@ -697,7 +773,7 @@ loudly rather than posting nothing.
 of `/stats`.
 
 **Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
-`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/announce`, `/daily_update`, `/daily_update_repost`, `/daily_reports`, `/live_reports`.
+`/remove_from_deck`, `/stage`, `/merge_staging`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/announce`, `/daily_update`, `/daily_update_repost`, `/daily_reports`, `/live_reports`.
 
 **Removed 2026-08-26:** all 10 commands for the two retired content types, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).
@@ -710,8 +786,9 @@ modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means
 **Removed 2026-08-27:** all four `/delete_*` commands — see
 [Deletion](#deletion--removed-2026-08-27). Nothing deletes content now.
 
-**Hidden 2026-08-27:** `/stage`, `/postpone`, `/merge_staging` — commented out
-in `azoth_commands/decks.py`, see [Deck curation](#hidden-2026-08-27-stage-postpone-merge_staging).
+**Hidden 2026-08-27:** `/postpone` — commented out in
+`azoth_commands/decks.py`, see [Deck curation](#hidden-2026-08-27-postpone).
+`/stage` and `/merge_staging` were hidden with it and rebuilt 2026-10-13.
 
 **Retired 2026-08-26:** all `/*_hero` commands. `heroes.py` is deliberately not
 attached in `azoth_commands/__init__.py` — see

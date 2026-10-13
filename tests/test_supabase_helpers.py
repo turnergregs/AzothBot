@@ -337,3 +337,19 @@ def test_display_name_reads_name():
 
 def test_deck_content_types_are_current():
     assert h.DECK_CONTENT_TYPES == ["card", "aspect", "rite"]
+
+
+def test_moving_deck_contents_is_one_update_guarded_by_the_source_deck(monkeypatch, fake_supabase):
+    """2026-10-13, /merge_staging. The `deck_id` filter is what stops a row that
+    was moved elsewhere since it was read from being pulled back out; `position`
+    is the order within the deck the row left."""
+    fs = fake_supabase({"deck_contents": []})
+    monkeypatch.setattr(h, "supabase", fs)
+
+    h.move_deck_contents([5, 6], from_deck_id=21, to_deck_id=3)
+
+    log = fs.log["deck_contents"]
+    assert log["update"] == {"deck_id": 3, "position": None}
+    assert ("eq", "deck_id", 21) in log["filters"]
+    assert ("in", "id", [5, 6]) in log["filters"]
+    assert len(log["requests"]) == 1

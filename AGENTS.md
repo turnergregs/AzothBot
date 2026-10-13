@@ -253,9 +253,10 @@ real `turns` data. There is no CI. See `docs/TESTING.md` § Gaps.
   were unrecoverable — and the game's `prune_content_dirs()` reads a missing row
   as the deletion signal, so one misclick also pruned the offline snapshot.
   Retire content with `/remove_from_deck`; see `docs/COMMANDS.md` § Deletion.
-- **Don't uncomment `/stage`, `/postpone` or `/merge_staging`** without first
-  fixing their hardcoded deck IDs — deck 21 is archived and deck 22 is not the
-  aspect deck.
+- **Don't uncomment `/postpone`** without first replacing its hardcoded deck
+  IDs, and don't pin a deck id in new code: `/stage` and `/merge_staging`
+  (rebuilt 2026-10-13, `azoth_logic/deck_staging.py`) find their decks by usage
+  type and by what they already hold.
 - **Don't assume a command exists because the code does** — check
   `azoth_commands/__init__.py`.
 - **Don't trust an empty result** — check which Supabase key is loaded.

@@ -490,6 +490,26 @@ def remove_from_deck_by_ref(deck: dict, content_type: str, content_id, quantity:
 	return True, f"🗑️ Removed {len(to_delete)}x **{item_name}** from **{deck['name']}**."
 
 
+def move_deck_contents(row_ids: list, from_deck_id, to_deck_id) -> list[dict]:
+	"""Move `deck_contents` rows to another deck in ONE update. Returns the rows moved.
+
+	The rows are named by their own ids AND by the deck they are leaving, so a
+	row removed or moved since it was read is skipped rather than pulled out of
+	wherever it went. `position` is cleared: it is the Codex's order within the
+	deck the row left. Raises SupabaseQueryError on failure.
+	"""
+	try:
+		response = (supabase.table("deck_contents")
+			.update({"deck_id": to_deck_id, "position": None})
+			.eq("deck_id", from_deck_id)
+			.in_("id", list(row_ids))
+			.execute())
+	except Exception as e:
+		raise SupabaseQueryError(
+			f"moving deck_contents from deck {from_deck_id} to {to_deck_id} failed: {e}") from e
+	return response.data or []
+
+
 def _resolve_name_to_ref(item_name: str):
 	"""Legacy fallback for raw (non-encoded) names: first match by type priority.
 
