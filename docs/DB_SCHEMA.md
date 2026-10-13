@@ -867,6 +867,7 @@ policy change as a security change.
 | `turns`, `turn_nodes`, `levelups` | INSERT only | ✅ Follows `reports` |
 | `survey_responses` | INSERT only | ✅ Follows `reports` (2026-10-04). `/live_reports` posts its comments, `/daily_reports` a daily image of its answers |
 | `launches` | INSERT only | ✅ Follows `reports` (2026-10-07, game repo `2026-10-07_sessions_and_registration.sql`). One row per game launch; `/stats sessions` reads it with the service-role key |
+| `announcements` | SELECT only, and only rows with `archived_at` NULL | ✅ Like content: no vandalism path. News a hero says on the title screen, read by the game and written here by `/announce` (2026-10-12, game repo `2026-10-12_announcements.sql`) |
 
 No UPDATE or DELETE policy exists anywhere except the narrow `games` one, so
 anon can add and read but never modify or destroy.
@@ -1139,6 +1140,7 @@ popular purely because they're offered more.
 
 | Date | Change |
 |---|---|
+| 2026-10-12 | **`announcements`** (game repo `2026-10-12_announcements.sql`). **Applied; the table and both policies were in the database on 2026-10-13.** News said by a hero on the game's title screen, one row each: `body` (BBCode, CHECK 1 to 400 characters), `speaker_hero_id` (→ `heroes`, NULL for the default speaker), `starts_at` (default `now()`), `ends_at` (CHECK after `starts_at`), `min_version`, `max_version`, `created_at`, `archived_at` (set to pull a row; the anon policy hides it). Read-only for anon, written with the service key by `/announce`. Which players confirmed which row is **not** in the database (a list of ids on each player's machine), so a row is never edited: pull it and post a new one. Full notes: the game repo's `docs/ANNOUNCEMENTS.md`. |
 | 2026-10-09 | **`card_conversion_view`** (game repo `2026-10-09_card_conversion_view.sql`). **Applied 2026-10-09.** Cards and aspects new players drafted in their first session, with how many of those players came back, and the all-new-player totals on every row. `security_invoker`, service_role only, in `SERVICE_ROLE_ONLY_VIEWS`. Serves `/stats card_conversions`. |
 | 2026-10-06 | **`run_cleared()` survives lost turn rows** (game repo `2026-10-06_run_cleared_lost_turns.sql`). **Not yet applied.** When a run has no act 3 boss turn at all, `run_cleared()` falls back to `games.act_reached >= 4`; a recorded act 3 boss turn still decides. Fixes the two caveat 11b runs that reached act 4 without counting as beating act 3. Signature unchanged, so `/stats player`, `/stats breakdown` and `/stats item` pick it up with no bot change. |
 | 2026-10-04 | **`survey_answer_view`** (game repo `2026-10-04_survey_answer_view.sql`). **Applied 2026-10-04.** Survey responses per (cohort, question, moment, run 1/3 slot, outcome, answer) with `responses` and `comments`; left joins `player_cohort_view` (a missing player counts as `new`). `security_invoker`, service_role only, in `SERVICE_ROLE_ONLY_VIEWS`. Serves `/stats surveys`. |

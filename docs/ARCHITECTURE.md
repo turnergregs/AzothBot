@@ -34,6 +34,7 @@ azoth_commands/
   misc.py                   /bulk_insert, /bulk_update (both via azoth_logic/bulk_apply)
   stats.py                  /stats subcommands (formatting in azoth_logic/stats_format)
   daily_update.py           Scheduled analytics reports + its background task
+  announcements.py          /announce (checks in azoth_logic/announcements)
 
 azoth_logic/
   image_generator.py        Thin facade over the eigenfunction generator
@@ -59,6 +60,7 @@ azoth_logic/
   upgrades.py               What a card becomes when it upgrades; mirrors the engine
   holo.py                   The upgraded card's holographic sheen (ported shader)
   stats_format.py           /stats views as tables and fields, not raw JSON
+  announcements.py          What /announce refuses, and its reply
 
   # ARCHIVES -- unreachable at runtime, kept as the record of the old templates.
   card_renderer.py          Superseded by card_render.py + deck_render.py

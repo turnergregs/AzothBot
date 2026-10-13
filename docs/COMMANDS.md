@@ -421,6 +421,46 @@ what you would want to force. Full policy:
 
 ---
 
+## Announcements
+
+| Command | Access | Parameters |
+|---|---|---|
+| `/announce` | 🔒 | `body`, `speaker?`*, `starts?`, `ends?`, `min_version?`, `max_version?`, `preview?` |
+
+News a hero says in a speech bubble on the game's title screen: an update, new
+content, an event. One row of `announcements` is one announcement, and the game
+reads the table when the title loads, so **a post is live for every player from
+their next launch, with no build**. The game repo's `docs/ANNOUNCEMENTS.md` is
+the authority on what the game does with each column.
+
+| Option | Meaning |
+|---|---|
+| `body` | What the hero says. BBCode; `[term]…[/term]` is the gold of game terms. About 110 characters fit three lines of the bubble. Longer is allowed up to the table's 400 and draws a warning in the reply |
+| `speaker` | Whose bubble it is. Autocompletes the unarchived heroes. Left out, **Lumis** (hero 7, `DEFAULT_SPEAKER_ID`: the first hero of the game's unlock chain, the one every player has), written into the row. Were that hero ever archived, the column is left NULL, which the game reads as the same fallback |
+| `starts` | When it goes live. `2026-10-20` or `2026-10-20 18:00`, **read as UTC** unless it carries an offset (`2026-10-20 18:00-05:00`). Left out, the database's `now()` |
+| `ends` | When it stops being shown, same format. Left out, never |
+| `min_version` / `max_version` | The builds it is for, inclusive. Announce a new mode with `min_version`, so a build without the mode never promises it |
+| `preview` | Reply with what would be posted and write nothing |
+
+The reply prints every time as a Discord timestamp, which each reader sees in
+their own zone: a time typed as local and read as UTC shows up wrong there
+first. **Use `preview:True` for anything scheduled.**
+
+Refused before anything is written (`azoth_logic/announcements.py`): an empty or
+over-long body, `[term]` tags that do not pair up or are not lower case (the
+game swaps them for colour tags by plain replacement, so it would print or
+bleed the mistake), a version that is not dotted numbers (the game reads each
+part with `int()`, so `v0.11` compares as zero), an `ends` that is not after
+`starts` or is already past, and a `min_version` above `max_version`.
+
+**There is no update command, on purpose.** Which announcements a player has
+confirmed is a list of ids on the player's own machine, so an edited row keeps
+its id and is never shown again to anyone who confirmed it. To correct one, set
+`archived_at` on the row in Supabase (the game asks only for rows where it is
+NULL) and post a new one. Pulling and listing are still done in the dashboard.
+
+---
+
 ## Analytics
 
 | Command | Access | Parameters |
@@ -654,7 +694,7 @@ loudly rather than posting nothing.
 of `/stats`.
 
 **Authorized users only:** every `create_*` and `update_*`, `/add_to_deck`,
-`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/daily_update`, `/daily_update_repost`, `/daily_reports`, `/live_reports`.
+`/remove_from_deck`, `/cache clear`, `/bulk_insert`, `/bulk_update`, `/announce`, `/daily_update`, `/daily_update_repost`, `/daily_reports`, `/live_reports`.
 
 **Removed 2026-08-26:** all 10 commands for the two retired content types, along with their
 modules. Both content types are retired — see [AZOTH.md](AZOTH.md#ritual-means-two-different-things-one-of-them-is-dead).

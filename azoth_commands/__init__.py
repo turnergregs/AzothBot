@@ -13,6 +13,7 @@ from .misc import add_misc_commands
 from .daily_update import add_daily_update_commands
 from .daily_reports import add_daily_reports_commands
 from .live_reports import add_live_reports_commands
+from .announcements import add_announcement_commands
 
 
 class AzothCommands(commands.Cog):
@@ -37,3 +38,4 @@ add_misc_commands(AzothCommands)
 add_daily_update_commands(AzothCommands)
 add_daily_reports_commands(AzothCommands)
 add_live_reports_commands(AzothCommands)
+add_announcement_commands(AzothCommands)
