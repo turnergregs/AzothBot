@@ -182,11 +182,23 @@ They now raise:
 | Exception | Meaning |
 |---|---|
 | `SupabaseUnreadableError` | The loaded key **provably cannot read** this table. Raised *before* the query |
-| `SupabaseQueryError` | The query reached Supabase and failed |
+| `SupabaseQueryError` | The query reached Supabase and failed. Carries the database's own `code` and `detail` when the failure had them, and `missing`: true only when the table, view or column asked for is not in the database |
 | `SupabaseError` | Base class; catch this to handle either |
 
 `safe_interaction` already catches everything and posts the exception to Discord,
 so errors reach the user with no per-command work.
+
+**A failed read is "not migrated" only when `missing` says so** (2026-10-12).
+The `/stats` reports catch `SupabaseError` to name the migration file that
+creates their view, and used to give that answer for every failure. One bad row
+under `player_summary_view` (an action count stored as `1.0`, which the view's
+integer cast refused) then made `/stats players` tell us to run a migration
+that had been applied for two weeks. `stats._read_failed(e, views, *migrations)`
+is the one place that decides: the migration hint for a missing view, the
+unreadable-key message for a key that cannot see it, and otherwise the
+database's error text and code in the reply, with the full error on the
+console. A new report's `except SupabaseError` goes through it; `rite_schema`
+reads the same `missing` to tell which side of the rename the database is on.
 
 ### Reads page past the 1000-row cap (2026-09-29)
 

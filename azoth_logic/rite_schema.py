@@ -42,9 +42,6 @@ CONTENT_TYPES = frozenset({BEFORE.content_type, AFTER.content_type})
 
 TTL = 300.0
 
-# How a missing table fails: PostgREST's own code, Postgres's, and their text.
-_MISSING_TABLE = ("PGRST205", "42P01", "Could not find the table", "does not exist")
-
 _lock = threading.Lock()
 _side: Side | None = None
 _stamp = 0.0
@@ -59,7 +56,7 @@ def _probe() -> Side:
         fetch_all(AFTER.table, ["id"], limit=1)
         return AFTER
     except SupabaseQueryError as e:
-        if any(marker in str(e) for marker in _MISSING_TABLE):
+        if e.missing:
             return BEFORE
         raise
 

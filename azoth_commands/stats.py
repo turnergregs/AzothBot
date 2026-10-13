@@ -12,7 +12,7 @@ from nextcord import SlashOption, Interaction
 from azoth_commands.helpers import safe_interaction, record_to_json
 from azoth_commands.autocomplete import autocomplete_from_table
 from constants import DEV_GUILD_ID
-from supabase_helpers import fetch_all, SupabaseError, SupabaseUnreadableError
+from supabase_helpers import fetch_all, SupabaseError, SupabaseQueryError, SupabaseUnreadableError
 from azoth_logic import stats_format as sf
 from azoth_logic import stats_cards
 from azoth_logic import run_paths
@@ -185,6 +185,30 @@ def _player_surveys(name: str) -> list:
         return []
 
 
+def _read_failed(e: SupabaseError, views, *migrations: str) -> str:
+    """The reply for a report whose view (or views, a tuple) could not be read.
+
+    "Not migrated", naming the files under the game's db/migrations/ to run in
+    order, only when the view or a column asked of it is not in the database.
+    Any other failure is the database's own error and is said as such: on
+    2026-10-12 one bad row under `player_summary_view` raised an integer cast
+    error, and /stats players answered "not migrated" for a view that had been
+    in place for two weeks. A key that cannot read the view says that instead,
+    or a local anon run would read as "migrate" too.
+    """
+    names = (views,) if isinstance(views, str) else tuple(views)
+    shown = " / ".join(f"`{name}`" for name in names)
+    if isinstance(e, SupabaseUnreadableError):
+        return f"❌ {e}"
+    if isinstance(e, SupabaseQueryError) and e.missing:
+        files = f"`db/migrations/{migrations[0]}`" + "".join(f" then `{m}`" for m in migrations[1:])
+        return f"❌ {shown} {'is' if len(names) == 1 else 'are'} not migrated — run {files}."
+    print(f"/stats: reading {shown} failed: {e}")
+    detail = getattr(e, "detail", None) or str(e)
+    code = getattr(e, "code", None)
+    return f"❌ {shown} could not be read: {detail}" + (f" ({code})" if code else "")
+
+
 PATH_COLUMNS = ["player_uuid", "started_at", "starting_hero", "ritual", "format",
                 "act_reached", "result", "version"]
 # Player uuids per `in` filter: they travel in the URL, and a launch week could
@@ -265,9 +289,8 @@ def add_stats_commands(cls):
     ):
         try:
             rows = fetch_all("player_summary_view")
-        except SupabaseError:
-            return ("❌ `player_summary_view` is not migrated — run "
-                    "`db/migrations/2026-09-28_player_summary_view.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "player_summary_view", "2026-09-28_player_summary_view.sql")
 
         wanted = stats_cards.COHORTS[players]
         rows = [r for r in rows if r.get("cohort") in wanted]
@@ -301,9 +324,8 @@ def add_stats_commands(cls):
     ):
         try:
             rows = fetch_all("leaderboard_best_view")
-        except SupabaseError:
-            return ("❌ `leaderboard_best_view` is not migrated — run "
-                    "`db/migrations/2026-09-29_leaderboard_best_view.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "leaderboard_best_view", "2026-09-29_leaderboard_best_view.sql")
         wanted = stats_cards.COHORTS[players]
         rows = [r for r in rows if r.get("cohort") in wanted]
         if not stats_cards.leaderboard_rows(rows, hero):
@@ -328,18 +350,19 @@ def add_stats_commands(cls):
     ):
         try:
             runs = fetch_all("player_run_view", filters={"player": player}, sort=["started_at"])
-        except SupabaseError:
-            return ("❌ `player_run_view` is not migrated — run "
-                    "`db/migrations/2026-09-28_ritual_stats.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "player_run_view", "2026-09-28_ritual_stats.sql")
         # The profile's other two sources are extras: without them the card
         # loses a tile or a section, not the reply.
         try:
             summary = next(iter(fetch_all("player_summary_view", filters={"player": player})), None)
-        except SupabaseError:
+        except SupabaseError as e:
+            print(f"/stats player: summary skipped for {player}: {e}")
             summary = None
         try:
             info = next(iter(fetch_all("player_info_view", filters={"player": player})), None)
-        except SupabaseError:
+        except SupabaseError as e:
+            print(f"/stats player: info skipped for {player}: {e}")
             info = None
         surveys = _player_surveys(player)
         if not runs and not summary and not surveys:
@@ -372,9 +395,8 @@ def add_stats_commands(cls):
     ):
         try:
             rows = fetch_all("breakdown_view", filters={"dimension": by})
-        except SupabaseError:
-            return ("❌ `breakdown_view` is not migrated — run "
-                    "`db/migrations/2026-09-28_breakdown_view.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "breakdown_view", "2026-09-28_breakdown_view.sql")
 
         rows, filtered = stats_cards.select_cohort(
             rows, players, ("dimension", "grp", "furthest_act"), stats_cards.BREAKDOWN_COUNTS)
@@ -418,7 +440,8 @@ def add_stats_commands(cls):
                     fights: dict = {}
                     for r in fetch_all("boss_fight_view", ["boss", "fights"]):
                         fights[r["boss"]] = fights.get(r["boss"], 0) + int(r.get("fights") or 0)
-                except SupabaseError:
+                except SupabaseError as e:
+                    print(f"/stats all: item skipped, boss_fight_view unread: {e}")
                     fights = {}
                 if not any(fights.values()):
                     continue
@@ -472,10 +495,9 @@ def add_stats_commands(cls):
     ):
         try:
             rows = fetch_all("boss_fight_view")
-        except SupabaseError:
-            return ("❌ `boss_fight_view` is not migrated — run "
-                    "`db/migrations/2026-09-28_player_cohorts.sql` then "
-                    "`2026-09-28_boss_fight_view.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "boss_fight_view", "2026-09-28_player_cohorts.sql",
+                                "2026-09-28_boss_fight_view.sql")
         if not rows:
             return "❌ No bosses found."
 
@@ -505,13 +527,8 @@ def add_stats_commands(cls):
         try:
             turn_rows = fetch_all("link_turn_view")
             type_rows = fetch_all("link_type_view")
-        except SupabaseUnreadableError as e:
-            # The loaded key cannot read them, which is not the same as their
-            # being missing. Say which, or a local anon run reads as "migrate".
-            return f"❌ {e}"
-        except SupabaseError:
-            return ("❌ `link_turn_view` / `link_type_view` are not migrated — run "
-                    "`db/migrations/2026-10-02_link_views.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, ("link_turn_view", "link_type_view"), "2026-10-02_link_views.sql")
 
         turn_rows, filtered = stats_cards.select_cohort(
             turn_rows, players, ("turn_type", "links"), stats_cards.LINK_TURN_COUNTS)
@@ -545,11 +562,8 @@ def add_stats_commands(cls):
     ):
         try:
             rows = fetch_all("survey_answer_view")
-        except SupabaseUnreadableError as e:
-            return f"❌ {e}"
-        except SupabaseError:
-            return ("❌ `survey_answer_view` is not migrated — run "
-                    "`db/migrations/2026-10-04_survey_answer_view.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "survey_answer_view", "2026-10-04_survey_answer_view.sql")
 
         rows, _ = stats_cards.select_cohort(rows, players, stats_cards.SURVEY_MERGE,
                                             stats_cards.SURVEY_COUNTS)
@@ -615,11 +629,8 @@ def add_stats_commands(cls):
     async def stats_card_conversions(self, interaction: Interaction):
         try:
             rows = fetch_all("card_conversion_view")
-        except SupabaseUnreadableError as e:
-            return f"❌ {e}"
-        except SupabaseError:
-            return ("❌ `card_conversion_view` is not migrated — run "
-                    "`db/migrations/2026-10-09_card_conversion_view.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "card_conversion_view", "2026-10-09_card_conversion_view.sql")
         if not rows:
             return "❌ No new player has drafted a card or aspect yet."
         await _send_card(interaction, stats_cards.conversions_card(rows),
@@ -665,9 +676,8 @@ def add_stats_commands(cls):
             filters["item_type"] = kind
         try:
             rows = fetch_all(view, filters=filters)
-        except SupabaseError:
-            return (f"❌ `{view}` is not migrated — run "
-                    "`db/migrations/2026-09-29_item_split_views.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, view, "2026-09-29_item_split_views.sql")
         rows, _ = stats_cards.select_cohort(rows, players, "grp", counts)
         groups = [g for g in stats_cards.item_groups(rows, kind) if g["n"]]
         if not groups:
@@ -696,12 +706,12 @@ def add_stats_commands(cls):
         #
         # Caught the way the image reports catch theirs: an unmigrated view
         # is PGRST205, and "not migrated" is a different answer from "no turns
-        # yet". Naming the file is the whole value of catching it.
+        # yet". Naming the file is the whole value of catching it, so only a
+        # missing view gets that answer (_read_failed).
         try:
             records = fetch_all("turn_scoreboard_view")
-        except SupabaseError:
-            return ("❌ `turn_scoreboard_view` is not migrated — run "
-                    "`db/migrations/2026-08-31_turn_scoreboard.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "turn_scoreboard_view", "2026-08-31_turn_scoreboard.sql")
 
         if not records:
             return ("❌ No turn scoreboards recorded yet. These columns postdate "
@@ -740,9 +750,8 @@ def add_stats_commands(cls):
     ):
         try:
             rows = fetch_all("draft_offer_view")
-        except SupabaseError:
-            return ("❌ `draft_offer_view` is not migrated — run "
-                    "`db/migrations/2026-09-29_draft_offer_views.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "draft_offer_view", "2026-09-29_draft_offer_views.sql")
         rows, _ = stats_cards.select_cohort(rows, players, ("dimension", "bucket"),
                                             stats_cards.DRAFT_COUNTS)
         if not any(r.get("offered") for r in rows):
@@ -765,9 +774,8 @@ def add_stats_commands(cls):
     ):
         try:
             rows = fetch_all("draft_item_offer_view")
-        except SupabaseError:
-            return ("❌ `draft_item_offer_view` is not migrated — run "
-                    "`db/migrations/2026-09-29_draft_offer_views.sql`.")
+        except SupabaseError as e:
+            return _read_failed(e, "draft_item_offer_view", "2026-09-29_draft_offer_views.sql")
         rows, _ = stats_cards.select_cohort(rows, players, ("item_type", "item_id", "item_name"),
                                             stats_cards.DRAFT_COUNTS)
         rows = [r for r in rows if r.get("offered")]

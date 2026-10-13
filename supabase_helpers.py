@@ -6,8 +6,34 @@ class SupabaseError(RuntimeError):
 	"""Base class for Supabase access failures raised by this module."""
 
 
+# How a table, view or column that is not in the database fails: PostgREST's
+# own code, Postgres's, and their text. Only these mean "not migrated yet".
+MISSING_RELATION = ("PGRST205", "42P01", "Could not find the table", "does not exist")
+
+
 class SupabaseQueryError(SupabaseError):
-	"""A query reached Supabase and failed."""
+	"""A query reached Supabase and failed.
+
+	`code` and `detail` are the database's own error code and message when the
+	failure carried them (PostgREST's APIError does); otherwise `code` is None
+	and `detail` is the failure's text.
+	"""
+
+	def __init__(self, message: str, cause: Exception | None = None):
+		super().__init__(message)
+		self.code = getattr(cause, "code", None)
+		self.detail = getattr(cause, "message", None) or (str(cause) if cause is not None else message)
+
+	@property
+	def missing(self) -> bool:
+		"""Is what was asked for not in the database (an unapplied migration)?
+
+		Everything else is a query that ran and failed: bad data under a view,
+		a timeout, a bad key. Reporting those as "not migrated" sends whoever
+		reads the reply to the wrong place.
+		"""
+		text = f"{self.code or ''} {self}"
+		return any(marker in text for marker in MISSING_RELATION)
 
 
 class SupabaseUnreadableError(SupabaseError):
@@ -229,7 +255,7 @@ def fetch_all(table_name: str, columns: list[str] = None, filters: dict = None, 
 		try:
 			response = query.execute()
 		except Exception as e:
-			raise SupabaseQueryError(f"select on `{table_name}` failed: {e}") from e
+			raise SupabaseQueryError(f"select on `{table_name}` failed: {e}", e) from e
 		return response.data or []
 
 	def page(query, start: int) -> list:

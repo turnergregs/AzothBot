@@ -518,7 +518,10 @@ and states no cutoff. The view filters
 `bonus_key is not null` rather than a version — the columns postdate `0.9.1`
 and are NULL on every earlier run, so they date themselves. An unmigrated view
 is named in the reply rather than shown as "no data": "not migrated" and "no
-turns yet" are different problems.
+turns yet" are different problems. Every `/stats` report does the same, and
+only for a view that is really absent: any other failed read replies with the
+database's own error (`stats._read_failed`, see
+[ARCHITECTURE.md](ARCHITECTURE.md#failures-raise-only-genuine-emptiness-returns-)).
 
 The turn counts sit in a caption under the hit-rate table instead of a fifth
 column, and the thresholds under the counts table, purely for width — both
