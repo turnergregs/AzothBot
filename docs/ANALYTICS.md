@@ -58,7 +58,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats breakdown by:hero\|ritual\|version` | `breakdown_view` | Runs grouped three ways, drawn as an image: how far runs got in the act colours, beat-act-3 rate with outlier flags, then hero activations (hero) or per-turn averages (ritual, version). `players:` cohort filter. See [Breakdown](#breakdown-2026-09-28) |
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
 | `/stats links` | `link_turn_view` + `link_type_view` | Links per regular and boss turn (zero-link turns included), the share of each link type, and each type's average length against every multi-card link's. `players:` cohort filter. See [Links](#links-2026-10-03) |
-| `/stats surveys` | `survey_answer_view` | The game's one-click survey (game repo `docs/SURVEYS.md`): surveys shown, share answered, comments; where each was shown, split answered / skipped / ignored; then each question's answers, `understood` split run 1 vs run 3, under 5 answers grey. `players:` cohort filter, **default Everyone but us** (surveys began after the cutoff, so few "new" players have answered). No version cutoff: every row postdates it |
+| `/stats surveys` | `survey_answer_view` | The game's one-click survey (game repo `docs/SURVEYS.md`): surveys shown, share answered, comments; where each was shown, split answered / skipped / ignored; then a donut per question, `understood` split run 1, run 3 and later runs, under 5 answers dimmed. **A wide card**, two card-widths. See [Surveys](#surveys-2026-10-13). `players:` cohort filter, **default Everyone but us** (surveys began after the cutoff, so few "new" players have answered). No version cutoff: every row postdates it |
 | `/stats paths` | `games` + `player_cohort_view` | New players' paths, run by run: the tutorial, then whether each run beat their best. `days:` and `runs:`. See [New player paths](#new-player-paths-2026-10-08) |
 | `/stats sessions` | `launches` + `player_cohort_view` | Of the new players whose first launch was on each patch version, the share who launched the game again. New players only, no options. **Service-role only** (`launches` is INSERT-only for anon). See [Sessions](#sessions-2026-10-09) |
 | `/stats card_conversions` | `card_conversion_view` | Cards and aspects new players drafted in their first session, ranked together by how many of those players came back (a game in a later session): the seven most and seven least, each against every new player's rate. **Service-role only.** See [Card conversions](#card-conversions-2026-10-09) |
@@ -101,6 +101,14 @@ The rules, from the dataviz guidance the reports were audited against: pick the
 chart from the data's job; label values directly (an image has no hover); one
 accent colour for one measure and grey for anything not asserted; hairline
 chrome; and every card states its population and sample size.
+
+**A wide card** (2026-10-13). A card is 500pt wide and grows downward, which
+suits most reports. `/stats surveys` had grown to 2,300pt, four screens of
+scrolling, so it is drawn two card-widths wide instead (`Card.width`): `Columns`
+sets ordinary blocks side by side, each stack one card-width, and `head_tiles`
+puts the headline numbers beside the title. The cost: Discord shows it inline
+at half the size of a narrow card, so it is opened to be read. Use it for a
+report that would otherwise need opening anyway, not for a short one.
 
 **Hero colours never carry identity alone.** Checked with a colour-blindness
 validator: Eith and Essra are nearly indistinguishable to protanopes, and Lumis
@@ -493,6 +501,40 @@ Adding version, ritual and hero to `boss_fight_view` or
 fetches, and at the time `fetch_all` did not page past PostgREST's 1000-row
 cap. It does now (2026-09-29, ARCHITECTURE.md), but a lookup of one item's
 rows is still one small request rather than several pages.
+
+### Surveys (2026-10-13)
+
+`/stats surveys` (`stats_cards.surveys_card`) is the one wide card. Turner's
+review: the bars were hard to read and the card far too long; survey answers
+are usually shown as pies, and he asked for them.
+
+- **Header:** surveys shown, the share answered and the comments, beside the
+  title.
+- **Left:** where it was shown, one bar per screen whose length is how often
+  that screen asked, split answered / skipped / ignored. Unchanged from the
+  narrow card.
+- **Right:** the first-run question (`understood`) as a donut for run 1, run 3
+  and the later runs (`run_slot` NULL), side by side, since comparing them is
+  the point of asking it again.
+- **Below:** every other question with an answer as a cell, four across: the
+  question as the player read it, answers and comments, a donut, and a line per
+  answer with its count. A 1-5 question has its average in the middle of the
+  donut. Every answer is listed, the ones nobody gave as an outline: "nobody
+  said 1" is a finding.
+- **Counts, not percentages.** A question has a handful of answers; the donut
+  carries the share and the line the count.
+- **One colour scale for every question** (`stats_charts.DIVERGING`, checked
+  with the colour-blindness validator): red through grey to blue, a 1-5 answer
+  by its score. A choice answer takes a step on the same scale
+  (`stats_cards.CHOICE_STEPS`), so blue is always the answer hoped for and red
+  the one to worry about; "Just right" is the grey middle of too easy / too
+  hard. An answer the bot does not know yet is grey.
+- **Under 5 answers** a donut is dimmed rather than greyed: its colours still
+  say what the answers were.
+
+A pie is used here and nowhere else. `/stats links` kept bars for link types
+(Turner, 2026-10-03): those are compared with each other, which a pie is bad
+at. A survey question is one whole split a few ways.
 
 ### New player paths (2026-10-08)
 

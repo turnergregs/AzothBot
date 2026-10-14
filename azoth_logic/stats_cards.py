@@ -1395,13 +1395,21 @@ def links_card(turn_rows: list, type_rows: list, population: str = "") -> sc.Car
 
 SURVEY_COUNTS = ("responses", "comments")
 SURVEY_MERGE = ("question_id", "moment", "run_slot", "outcome", "answer")
-# Below this many answers a question's bars are grey.
+# Below this many answers a question's donut is dimmed.
 MIN_SURVEY_ANSWERS = 5
-SURVEY_LABEL_W = 110
 # The feedback post's question column: wide enough for "Fight difficulty" in bold.
 DAILY_SURVEY_LABEL_W = 142
 OUTCOME_COLOURS = {"answered": sc.ACCENT, "skipped": sc.NEUTRAL, "ignored": sc.FADED}
 OUTCOME_NAMES = {"answered": "Answered", "skipped": "Skipped", "ignored": "Ignored"}
+# A choice answer's step on sc.DIVERGING, the scale a 1-5 answer is already on
+# (1 red, 3 grey, 5 blue), so every question reads the same way: blue is the
+# answer hoped for, grey the one in the middle, red the one to worry about.
+# "Just right" is the middle of too easy / too hard, as 3 is of a length's
+# too short / too long. The loss answers have no order: Unfair is the alarming
+# one, My fault the one a fair game earns (Turner's review, 2026-10-13).
+CHOICE_STEPS = {"yes": 4, "mostly": 3, "no": 0,
+                "my_fault": 4, "bad_luck": 2, "unfair": 0,
+                "too_easy": 4, "just_right": 2, "too_hard": 0}
 
 
 def survey_tally(raw: list) -> list:
@@ -1449,38 +1457,51 @@ def _scale_mean(counts: dict):
     return sum(int(k) * n for k, n in counts.items() if k.isdigit()) / total if total else None
 
 
-def _answer_rows(question_id: str, counts: dict, tag: str = "") -> list:
-    total = sum(counts.values())
-    faded = total < MIN_SURVEY_ANSWERS
+def _answer_colour(question_id: str, key: str) -> str:
+    """An answer's colour. One the bot does not know yet is grey."""
+    if sl.is_scale(question_id) and key.isdigit():
+        return sc.DIVERGING[min(max(int(key), 1), len(sc.DIVERGING)) - 1]
+    return sc.DIVERGING[CHOICE_STEPS[key]] if key in CHOICE_STEPS else sc.NEUTRAL
+
+
+def _answers(n: int) -> str:
+    return f"{n:,} answer" + ("" if n == 1 else "s")
+
+
+def _answer_donut(question_id: str, counts: dict, title: str, detail: str = "") -> sc.Donut:
+    """A question's answers as a donut: every answer listed, a 1-5 question's
+    average in the middle, dimmed under MIN_SURVEY_ANSWERS answers."""
     ends = sl.SCALE_ENDS.get(question_id, {})
-    blocks = []
+    slices = []
     for key in _answer_keys(question_id, counts):
-        n = counts.get(key, 0)
         if sl.is_scale(question_id):
-            label, row_tag = key, ends.get(int(key), "") if key.isdigit() else ""
+            label, tag = key, ends.get(int(key), "") if key.isdigit() else ""
         else:
-            label, row_tag = sl.ANSWERS.get(key, key), ""
-        if tag:
-            row_tag = f"{tag} · {row_tag}" if row_tag else tag
-        blocks.append(sc.BarRow(label, n / total if total else 0,
-                                value_text=_share(n, total) if total else "—",
-                                count_text=f"{n:,}", faded=faded, tag=row_tag,
-                                label_w=SURVEY_LABEL_W, fill=sc.NEUTRAL))
-    return blocks
+            label, tag = sl.ANSWERS.get(key, key), ""
+        slices.append((label, tag, counts.get(key, 0), _answer_colour(question_id, key)))
+    mean = _scale_mean(counts) if sl.is_scale(question_id) else None
+    return sc.Donut(title, slices, detail,
+                    centre=f"{mean:.1f}" if mean is not None else "",
+                    centre_label="avg" if mean is not None else "",
+                    faded=sum(counts.values()) < MIN_SURVEY_ANSWERS)
 
 
 def surveys_card(rows: list, population: str = "") -> sc.Card:
+    """/stats surveys. A wide card (2026-10-13): as one column of bars it ran to
+    2,300 points, four screens of scrolling. The headline numbers sit beside
+    the title; below them, where it was shown beside the first-run question's
+    donuts; then a donut per question, four across."""
     outcomes = _outcomes(rows)
     shown = sum(outcomes.values())
     comments = sum(int(r.get("comments") or 0) for r in rows)
-    card = sc.Card("Surveys", population)
     rate = f"{round(100 * outcomes['answered'] / shown)}%" if shown else "—"
-    card.add(*sc.tile_rows([("Shown", f"{shown:,}"), ("Answered", rate),
-                            ("Comments", f"{comments:,}")]))
-    card.add(sc.Spacer(4))
+    card = sc.Card("Surveys", population, width=sc.WIDTH * 2,
+                   head_tiles=[("Shown", f"{shown:,}"), ("Answered", rate),
+                               ("Comments", f"{comments:,}")])
 
     # Where it was shown, and what players did with it: the bar's length is
     # how often that screen asked, split by outcome.
+    left = []
     by_moment: dict = {}
     for r in rows:
         by_moment.setdefault(r.get("moment"), []).append(r)
@@ -1489,19 +1510,19 @@ def surveys_card(rows: list, population: str = "") -> sc.Card:
     counts = {m: _outcomes(by_moment[m]) for m in moments}
     scale = max((sum(c.values()) for c in counts.values()), default=0)
     if scale:
-        card.add(sc.SectionHeader("Where it was shown", "answered of shown"))
+        left.append(sc.SectionHeader("Where it was shown", "answered of shown"))
         for m in moments:
             c = counts[m]
             n = sum(c.values())
-            card.add(sc.TimeRow(sl.MOMENTS.get(m, str(m)),
-                                [(c[o], OUTCOME_COLOURS[o]) for o in OUTCOME_COLOURS],
-                                scale, total_text=f"{round(100 * c['answered'] / n)}%" if n else "—",
-                                extra=(f"{c['answered']}/{n}",)))
+            left.append(sc.TimeRow(sl.MOMENTS.get(m, str(m)),
+                                   [(c[o], OUTCOME_COLOURS[o]) for o in OUTCOME_COLOURS],
+                                   scale, total_text=f"{round(100 * c['answered'] / n)}%" if n else "—",
+                                   extra=(f"{c['answered']}/{n}",)))
         present = {o for c in counts.values() for o, n in c.items() if n}
-        card.add(sc.Legend([(OUTCOME_NAMES[o], OUTCOME_COLOURS[o])
-                            for o in OUTCOME_COLOURS if o in present]))
-        card.add(sc.Spacer(4))
+        left.append(sc.Legend([(OUTCOME_NAMES[o], OUTCOME_COLOURS[o])
+                               for o in OUTCOME_COLOURS if o in present]))
 
+    right, grid = [], []
     by_question: dict = {}
     for r in rows:
         by_question.setdefault(r.get("question_id"), []).append(r)
@@ -1511,28 +1532,33 @@ def surveys_card(rows: list, population: str = "") -> sc.Card:
         answered = sum(counts_all.values())
         if not answered:
             continue
-        detail = [f"{answered:,} answer" + ("" if answered == 1 else "s")]
-        mean = _scale_mean(counts_all) if sl.is_scale(qid) else None
-        if mean is not None:
-            detail.append(f"avg {mean:.1f}")
+        detail = [_answers(answered)]
         q_comments = sum(int(r.get("comments") or 0) for r in q_rows)
         if q_comments:
             detail.append(f"{q_comments} comment" + ("" if q_comments == 1 else "s"))
-        card.add(sc.SectionHeader(sl.question(qid), " · ".join(detail)))
+        detail = " · ".join(detail)
         # The first-run question is asked in run 1, again in run 3, and every
         # other run after until a Yes (at most 3 times): the point is to
         # compare them, so run 1, run 3 and the later runs (run_slot NULL,
-        # since survey_answer_view keeps only 1 and 3) each get their own bars.
-        slots = sorted({r.get("run_slot") for r in q_rows}, key=lambda s: (s is None, s or 0))
-        if qid == "understood" and slots:
+        # since survey_answer_view keeps only 1 and 3) each get their own
+        # donut, side by side at the top.
+        if qid == "understood":
+            slots = sorted({r.get("run_slot") for r in q_rows}, key=lambda s: (s is None, s or 0))
+            donuts = []
             for slot in slots:
                 slot_counts = _answer_counts([r for r in q_rows if r.get("run_slot") == slot])
                 if sum(slot_counts.values()):
-                    card.add(*_answer_rows(qid, slot_counts,
-                                           tag=f"run {slot}" if slot else "later"))
+                    donuts.append(_answer_donut(qid, slot_counts,
+                                                f"Run {slot}" if slot else "Later runs",
+                                                _answers(sum(slot_counts.values()))))
+            right += [sc.SectionHeader(sl.question(qid), detail), sc.DonutRow(donuts)]
         else:
-            card.add(*_answer_rows(qid, counts_all))
-        card.add(sc.Spacer(4))
+            grid.append(_answer_donut(qid, counts_all, sl.question(qid), detail))
+
+    if left or right:
+        card.add(sc.Columns([left, right]), sc.Spacer(10))
+    if grid:
+        card.add(sc.DonutGrid(grid, width=card.width))
     return card
 
 

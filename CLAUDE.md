@@ -79,7 +79,9 @@ All docs live in `docs/`. Read before changing a system.
 - **`/stats` reports are being redrawn as images** (2026-09-28): the drawing
   layer is `azoth_logic/stats_charts.py`, each report's layout
   `azoth_logic/stats_cards.py`, sent by `stats._send_card`. `/stats bosses` is
-  the first. See `docs/ANALYTICS.md` § Reports as images.
+  the first. See `docs/ANALYTICS.md` § Reports as images. A card is 500pt wide;
+  `/stats surveys` alone is two card-widths (`Card.width`, `Columns`), with a
+  donut per question (2026-10-13).
 - **`/stats item` reads split views that carry their own baseline**
   (2026-09-29). `boss_split_view`, `draft_item_split_view` and
   `hero_split_view` hold each item per (version | ritual | hero, cohort) WITH

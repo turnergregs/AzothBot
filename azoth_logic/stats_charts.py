@@ -26,6 +26,13 @@ A report is a `Card` of blocks stacked top to bottom. Each block knows its own
 height, so a card is measured before it is drawn and never clipped. Blocks are
 added here as reports need them, not ahead of time.
 
+A card is `WIDTH` wide unless it says otherwise. A report that would run to
+several screens of rows is drawn two card-widths wide instead (`Card.width`,
+/stats surveys since 2026-10-13): `Columns` sets ordinary blocks side by side,
+and a block made for the wide card (`DonutGrid`) takes the width itself. The
+cost is that Discord shows it inline at half the size of a narrow card, so it
+is opened to be read; a card too tall for a screen had to be opened anyway.
+
 Pure drawing: no I/O, no Discord. The commands call `Card.png()` off the event
 loop (asyncio.to_thread), since drawing blocks for a noticeable moment.
 """
@@ -66,6 +73,13 @@ NEUTRAL = "#6e6d68"      # an ordinary bar in an EMPHASIS chart, where colour
 # either colour also carries ▼ or ▲ in text.
 BELOW = "#e66767"
 ABOVE = "#3987e5"
+# The same pair with a lighter step each side of a grey middle: five steps for
+# the shares of an ordered scale (a survey's 1-5, No / Mostly / Yes), read from
+# red through grey to blue. Every neighbouring pair clears the validator's
+# colour-blindness and normal-vision floors on SURFACE, and all five its 3:1
+# contrast (2026-10-13). The lighter steps are tints, not darker shades: a
+# shade of either hue falls under 3:1 on a dark card.
+DIVERGING = ["#e66767", "#f0a9a4", "#8f8e87", "#8fb8ee", "#3987e5"]
 # The game's act colours (GlobalVars.ACT_COLORS), acts 1-5, so a chart about
 # acts matches what players see in the game. Checked as adjacent categories on
 # SURFACE: every neighbouring pair clears the colour-blindness floor with room
@@ -255,11 +269,18 @@ class Card:
     a report about one thing, so the reader sees WHICH thing. Blocks do not
     flow around it: a caller that puts a block beside it insets that block
     (StatTiles' `inset_right`) and starts full-width blocks below it.
+
+    `width` is `WIDTH` for every report but a wide one, which is two
+    card-widths (see the module docstring). `head_tiles` are headline numbers
+    `[(label, value)]` drawn beside the title, over the second card-width, so a
+    wide card does not spend a row on them.
     """
     title: str
     subtitle: str = ""
     blocks: list = field(default_factory=list)
     thumb: object = None
+    width: float = WIDTH
+    head_tiles: list = field(default_factory=list)
 
     HEAD = 64
     SUBTITLE_LINE = 18
@@ -275,11 +296,16 @@ class Card:
         height = PAD + self.head() + sum(b.height for b in self.blocks) + PAD
         if self.thumb is not None:
             height = max(height, PAD + self.thumb.height / SCALE + PAD)
-        img = Image.new("RGBA", (px(WIDTH), px(height)), (0, 0, 0, 0))
+        img = Image.new("RGBA", (px(self.width), px(height)), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         d.rounded_rectangle([0, 0, img.width - 1, img.height - 1], radius=px(12), fill=SURFACE)
         if self.thumb is not None:
-            img.alpha_composite(self.thumb, (px(WIDTH - PAD) - self.thumb.width, px(PAD)))
+            img.alpha_composite(self.thumb, (px(self.width - PAD) - self.thumb.width, px(PAD)))
+        tile_w = (WIDTH - PAD * 2) / 4
+        for i, (label, value) in enumerate(self.head_tiles):
+            x = px(WIDTH + PAD + i * tile_w)
+            d.text((x, px(PAD + 2)), label, font=font(11), fill=MUTED)
+            d.text((x, px(PAD + 18)), value, font=font(22, True), fill=INK)
         d.text((px(PAD), px(PAD)), self.title, font=font(22, True), fill=INK)
         for i, line in enumerate(self.subtitle.split("\n") if self.subtitle else []):
             d.text((px(PAD), px(PAD + 30 + self.SUBTITLE_LINE * i)), line, font=font(13), fill=INK_2)
@@ -779,13 +805,6 @@ class Histogram(Block):
                    font=font(11), fill=INK_2, anchor="rt" if away_left else "lt")
 
 
-# ---------------------------------------------------------------------------
-# Flow: a Sankey drawn top to bottom
-# ---------------------------------------------------------------------------
-# Built 2026-10-08 for /stats paths. Top to bottom rather than left to right
-# because a card is 500pt wide and grows downward: eight columns side by side
-# leave no room for a label, eight rows do.
-
 # Shapes are drawn this many times larger into a mask and scaled down, which
 # smooths their edges.
 SUPERSAMPLE = 4
@@ -816,6 +835,219 @@ def smooth_fill(img: Image.Image, outline: list, colour: str, alpha: float = 1.0
     layer = Image.new("RGBA", mask.size, colour)
     layer.putalpha(mask)
     img.alpha_composite(layer, (x0, y0))
+
+
+@dataclass
+class Columns(ImageBlock):
+    """Stacks of ordinary blocks side by side on a wide card, each stack one
+    card-width wide and drawn exactly as it would be on a card of its own."""
+    columns: list
+    height: float = 0
+
+    def __post_init__(self):
+        self.height = max((sum(b.height for b in col) for col in self.columns), default=0)
+
+    def draw_on(self, img, d, top):
+        for i, col in enumerate(self.columns):
+            # Opaque, in the card's own surface: text drawn on a clear image
+            # and composited comes out thinner at its edges.
+            sub = Image.new("RGBA", (px(WIDTH), px(self.height)), SURFACE)
+            sub_d = ImageDraw.Draw(sub)
+            y = 0
+            for block in col:
+                if isinstance(block, ImageBlock):
+                    block.draw_on(sub, sub_d, y)
+                else:
+                    block.draw(sub_d, y)
+                y += px(block.height)
+            img.paste(sub, (px(WIDTH * i), top))
+
+
+@dataclass
+class Donut:
+    """One whole and how it divides, for DonutGrid and DonutRow.
+
+    `slices` is `[(label, tag, count, colour)]` in the order they are drawn,
+    clockwise from 12 o'clock, and listed: every answer, the ones nobody gave
+    included, since "nobody said 1" is a finding. `tag` is small muted text
+    after the label (a scale's end label). `centre` is a figure set in the
+    hole with `centre_label` under it (an average). `faded` dims the colours
+    and the text: shown, but not asserted.
+    """
+    title: str
+    slices: list
+    detail: str = ""
+    centre: str = ""
+    centre_label: str = ""
+    faded: bool = False
+
+    LINE = 17                  # one listed slice
+
+    def colour(self, colour: str) -> str:
+        return dim(colour, 0.7) if self.faded else colour
+
+    def draw_ring(self, img, cx: float, cy: float, radius: float) -> None:
+        """The ring, centred on (cx, cy), in image pixels."""
+        k = SUPERSAMPLE
+        size = round(radius * 2 * k)
+        layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        box = [0, 0, size - 1, size - 1]
+        live = [(n, colour) for _, _, n, colour in self.slices if n]
+        total = sum(n for n, _ in live)
+        if not total:
+            ld.ellipse(box, fill=TRACK)
+        else:
+            angle, cuts = -90.0, []
+            for n, colour in live:
+                end = angle + 360.0 * n / total
+                ld.pieslice(box, angle, end, fill=self.colour(colour))
+                cuts.append(angle)
+                angle = end
+            if len(live) > 1:
+                # Slices touch with a thin clear gap, never a border.
+                c = size / 2
+                for a in cuts:
+                    r = math.radians(a)
+                    ld.line([(c, c), (c + size * math.cos(r), c + size * math.sin(r))],
+                            fill=(0, 0, 0, 0), width=round(px(1.5) * k))
+        inset = size * 0.18
+        ld.ellipse([inset, inset, size - inset, size - inset], fill=(0, 0, 0, 0))
+        layer = layer.resize((round(radius * 2), round(radius * 2)), Image.LANCZOS)
+        img.alpha_composite(layer, (round(cx - radius), round(cy - radius)))
+        if self.centre:
+            d = ImageDraw.Draw(img)
+            lift = px(3) if self.centre_label else 0
+            d.text((cx, cy - lift), self.centre, font=font(16, True),
+                   fill=INK_2 if self.faded else INK, anchor="mm")
+            if self.centre_label:
+                d.text((cx, cy + px(11)), self.centre_label, font=font(9), fill=MUTED, anchor="mm")
+
+    def draw_lines(self, d, x0: float, x1: float, top: float) -> None:
+        """A line per slice from `top` down: swatch, label, count at `x1`. A
+        slice of nothing is an outline and muted."""
+        for i, (label, tag, n, colour) in enumerate(self.slices):
+            cy = top + px(self.LINE) * i + px(self.LINE) // 2
+            swatch = [x0, cy - px(5), x0 + px(10), cy + px(5)]
+            if n:
+                d.rounded_rectangle(swatch, radius=px(2), fill=self.colour(colour))
+            else:
+                d.rounded_rectangle(swatch, radius=px(2), outline=dim(colour, 0.45), width=px(1))
+            ink = MUTED if not n else (INK_2 if self.faded else INK)
+            x = x0 + px(16)
+            d.text((x, cy), label, font=font(13), fill=ink, anchor="lm")
+            if tag:
+                d.text((x + d.textlength(label, font=font(13)) + px(5), cy + px(1)), tag,
+                       font=font(11), fill=MUTED, anchor="lm")
+            d.text((x1, cy), f"{n:,}", font=font(13, bool(n)), fill=ink, anchor="rm")
+
+
+def wrap(text: str, width_pt: float, size: float, bold: bool = False) -> list:
+    """`text` broken into lines that fit `width_pt`. A word wider than the
+    line keeps a line to itself."""
+    f = font(size, bold)
+    lines, line = [], ""
+    for word in text.split():
+        trial = f"{line} {word}".strip()
+        if not line or f.getlength(trial) <= px(width_pt):
+            line = trial
+        else:
+            lines.append(line)
+            line = word
+    return lines + [line] if line else lines
+
+
+@dataclass
+class DonutRow(ImageBlock):
+    """Donuts side by side within one card-width, each under its title and over
+    its lines: one question at several points, to be compared. Up to three."""
+    donuts: list
+    height: float = 0
+    DIAMETER = 72
+    TITLE = 28
+
+    def __post_init__(self):
+        lines = max((len(o.slices) for o in self.donuts), default=0)
+        self.height = self.TITLE + self.DIAMETER + 8 + Donut.LINE * lines + 4
+
+    def draw_on(self, img, d, top):
+        w = (WIDTH - PAD * 2) / max(len(self.donuts), 3)
+        r = px(self.DIAMETER) / 2
+        for i, o in enumerate(self.donuts):
+            x0 = px(PAD + i * w)
+            d.text((x0, top + px(12)), o.title, font=font(13, True),
+                   fill=INK_2 if o.faded else INK, anchor="lm")
+            if o.detail:
+                d.text((x0 + d.textlength(o.title, font=font(13, True)) + px(6), top + px(12)),
+                       o.detail, font=font(11), fill=MUTED, anchor="lm")
+            o.draw_ring(img, x0 + r, top + px(self.TITLE) + r, r)
+            o.draw_lines(d, x0, x0 + px(w - 34), top + px(self.TITLE + self.DIAMETER + 8))
+
+
+@dataclass
+class DonutGrid(ImageBlock):
+    """A cell per donut, `columns` across the card: a hairline, the title (on
+    two lines if it must be), the detail, then the ring with its lines beside
+    it. Cells in a row share the row's height, so rings line up."""
+    donuts: list
+    columns: int = 4
+    width: float = WIDTH * 2
+    height: float = 0
+    GAP = 22
+    DIAMETER = 72
+    TITLE_LINE = 17
+    TITLE_OVERHANG = 8
+
+    def __post_init__(self):
+        self.height = sum(self._row_height(row) for row in self._rows())
+
+    def _cell_w(self) -> float:
+        return (self.width - PAD * 2 - self.GAP * (self.columns - 1)) / self.columns
+
+    def _rows(self) -> list:
+        return [self.donuts[i:i + self.columns] for i in range(0, len(self.donuts), self.columns)]
+
+    def _title(self, o: Donut) -> list:
+        # A title may run a little into the gap rather than take a second
+        # line, and a whole row's height with it, for one letter.
+        return wrap(o.title, self._cell_w() + self.TITLE_OVERHANG, 13, True) or [""]
+
+    def _body(self, row: list) -> float:
+        return max(self.DIAMETER + 8, Donut.LINE * max(len(o.slices) for o in row))
+
+    def _row_height(self, row: list) -> float:
+        titles = max(len(self._title(o)) for o in row)
+        return 12 + self.TITLE_LINE * titles + 22 + self._body(row) + 14
+
+    def draw_on(self, img, d, top):
+        cell_w = self._cell_w()
+        r = px(self.DIAMETER) / 2
+        y = top
+        for row in self._rows():
+            titles = max(len(self._title(o)) for o in row)
+            body = self._body(row)
+            for i, o in enumerate(row):
+                x0 = px(PAD + i * (cell_w + self.GAP))
+                x1 = x0 + px(cell_w)
+                d.line([(x0, y), (x1, y)], fill=TRACK, width=px(0.5))
+                for n, line in enumerate(self._title(o)):
+                    d.text((x0, y + px(20 + self.TITLE_LINE * n)), line, font=font(13, True),
+                           fill=INK_2 if o.faded else INK, anchor="lm")
+                below = y + px(12 + self.TITLE_LINE * titles)
+                d.text((x0, below + px(9)), o.detail, font=font(11), fill=MUTED, anchor="lm")
+                cy = below + px(22) + px(body) / 2
+                o.draw_ring(img, x0 + r, cy, r)
+                o.draw_lines(d, x0 + px(self.DIAMETER + 14), x1,
+                             round(cy - px(Donut.LINE) * len(o.slices) / 2))
+            y += px(self._row_height(row))
+
+
+# ---------------------------------------------------------------------------
+# Flow: a Sankey drawn top to bottom
+# ---------------------------------------------------------------------------
+# Built 2026-10-08 for /stats paths. Top to bottom rather than left to right
+# because that card is 500pt wide and grows downward: eight columns side by side
+# leave no room for a label, eight rows do.
 
 
 def _ribbon(a0, a1, b0, b1, ya, yb, steps=40) -> list:

@@ -1022,29 +1022,58 @@ def test_only_runs_1_and_3_keep_their_run_number():
     assert {r["run_slot"] for r in tally} == {1, 3, None}
 
 
+def _survey_donuts(card) -> tuple:
+    """(the first-run question's donuts, every other question's) of a surveys card."""
+    row, grid = [], []
+    for block in card.blocks:
+        for b in ([x for col in block.columns for x in col] if isinstance(block, sc.Columns)
+                  else [block]):
+            if isinstance(b, sc.DonutRow):
+                row += b.donuts
+            elif isinstance(b, sc.DonutGrid):
+                grid += b.donuts
+    return row, grid
+
+
 def test_understood_is_split_by_run_so_the_two_can_be_compared():
     tally = cards.survey_tally([_survey("understood", answer="no", run=1),
                                 _survey("understood", answer="yes", run=3)])
-    tags = [b.tag for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow)]
-    assert tags.count("run 1") == 3 and tags.count("run 3") == 3
+    row, grid = _survey_donuts(cards.surveys_card(tally))
+    assert [o.title for o in row] == ["Run 1", "Run 3"] and not grid
+    assert [[n for _, _, n, _ in o.slices] for o in row] == [[0, 0, 1], [1, 0, 0]]
 
 
-def test_understood_asked_again_after_run_3_gets_its_own_bars():
+def test_understood_asked_again_after_run_3_gets_its_own_donut():
     tally = cards.survey_tally([_survey("understood", answer="no", run=1),
                                 _survey("understood", answer="mostly", run=5)])
-    tags = [b.tag for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow)]
-    assert tags.count("run 1") == 3 and tags.count("later") == 3
+    row, _ = _survey_donuts(cards.surveys_card(tally))
+    assert [o.title for o in row] == ["Run 1", "Later runs"]
 
 
 def test_a_score_question_shows_every_score_even_unpicked():
     tally = cards.survey_tally([_survey("fun", answer="4")])
-    labels = [b.label for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow)]
-    assert labels == ["1", "2", "3", "4", "5"]
+    _, grid = _survey_donuts(cards.surveys_card(tally))
+    assert [label for label, _, _, _ in grid[0].slices] == ["1", "2", "3", "4", "5"]
+    assert grid[0].centre == "4.0"
 
 
-def test_a_question_with_few_answers_is_grey():
-    tally = cards.survey_tally([_survey("loss", answer="unfair")] * (cards.MIN_SURVEY_ANSWERS - 1))
-    assert all(b.faded for b in cards.surveys_card(tally).blocks if isinstance(b, sc.BarRow))
+def test_a_question_with_few_answers_is_dimmed():
+    few = cards.survey_tally([_survey("loss", answer="unfair")] * (cards.MIN_SURVEY_ANSWERS - 1))
+    enough = cards.survey_tally([_survey("loss", answer="unfair")] * cards.MIN_SURVEY_ANSWERS)
+    assert _survey_donuts(cards.surveys_card(few))[1][0].faded
+    assert not _survey_donuts(cards.surveys_card(enough))[1][0].faded
+
+
+def test_an_answer_keeps_its_colour_whatever_else_was_answered():
+    """Colour follows the answer, never its place among the answers given."""
+    assert cards._answer_colour("fun", "5") == cards._answer_colour("cards", "5") == sc.DIVERGING[-1]
+    assert cards._answer_colour("loss", "an_answer_added_later") == sc.NEUTRAL
+
+
+def test_a_question_nobody_answered_has_no_donut():
+    tally = cards.survey_tally([_survey("fun", "skipped"), _survey("loss", answer="unfair")])
+    _, grid = _survey_donuts(cards.surveys_card(tally))
+    assert len(grid) == 1
 
 
 def test_survey_cohorts_are_summed_per_answer():
@@ -1066,7 +1095,18 @@ def test_the_surveys_card_renders():
                                 _survey("loss", answer="my_fault", comment=True),
                                 _survey("difficulty", "skipped", moment="victory")])
     assert Image.open(io.BytesIO(cards.surveys_card(tally, "Everyone but us").png())).width \
-        == sc.WIDTH * sc.SCALE
+        == sc.WIDTH * 2 * sc.SCALE
+
+
+def test_a_donut_grid_grows_for_a_long_title_and_extra_answers():
+    """A title past its cell takes a second line and an answer past the fifth
+    a sixth, and the row they are in is that much taller: nothing is clipped."""
+    slices = [(str(i), "", i, sc.NEUTRAL) for i in range(5)]
+    plain = sc.DonutGrid([sc.Donut("Short", slices)])
+    long_title = sc.DonutGrid([sc.Donut("A question that cannot fit on one line of a cell " * 2, slices)])
+    more = sc.DonutGrid([sc.Donut("Short", slices + [("6", "", 1, sc.NEUTRAL)] * 3)])
+    assert long_title.height > plain.height and more.height > plain.height
+    sc.Card("t", width=sc.WIDTH * 2).add(long_title, more, sc.DonutRow([sc.Donut("None", [])])).png()
 
 
 def test_a_short_bar_a_little_wider_than_round_draws():
