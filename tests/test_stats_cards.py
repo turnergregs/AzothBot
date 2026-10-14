@@ -1090,6 +1090,84 @@ def test_the_answers_card_is_drawn_only_when_something_was_shown():
     assert card is not None and card.png()
 
 
+def _histogram_cells(card) -> list:
+    """Each chart of a survey histograms card, as the list of its blocks."""
+    return [col for block in card.blocks if isinstance(block, sc.Columns) for col in block.columns]
+
+
+def _curves(tally) -> list:
+    """Each chart's DensityCurves, in the card's order."""
+    return [b for cell in _histogram_cells(cards.surveys_histograms_card(tally))
+            for b in cell if isinstance(b, sc.DensityCurves)]
+
+
+def test_understood_is_a_curve_per_run_from_no_to_yes():
+    tally = cards.survey_tally([_survey("understood", answer="yes", run=1),
+                                _survey("understood", answer="no", run=1),
+                                _survey("understood", answer="mostly", run=8)])
+    curves = _curves(tally)[0]
+    assert curves.labels == ["No", "Mostly", "Yes"]
+    # Run 1 and the later runs; run 3, unanswered, has no curve.
+    assert [counts for _, counts, _ in curves.series] == [{3: 1, 1: 1}, {2: 1}]
+
+
+def test_paired_questions_overlap_a_curve_each_with_a_legend_line_each():
+    tally = cards.survey_tally([_survey("fun", answer="5")] * 3 + [_survey("fight_fun", answer="1")])
+    cells = _histogram_cells(cards.surveys_histograms_card(tally))
+    curves = [b for b in cells[0] if isinstance(b, sc.DensityCurves)]
+    assert len(cells) == 1 and len(curves[0].series) == 2
+    assert len([b for b in cells[0] if isinstance(b, sc.Legend)]) == 2
+
+
+def test_a_curve_keeps_its_answers_inside_the_scale():
+    """Reflected at both ends, a curve's area over the scale is 1 however
+    near an end its answers are: 3 answers and 30 compare as shares."""
+    curves = sc.DensityCurves([], ["1", "2", "3", "4", "5"])
+    lo, hi = curves._range()
+    steps = 2000
+    for counts in ({5: 3}, {1: 1, 3: 30}):
+        area = sum(curves.density(counts, lo + (hi - lo) * (i + 0.5) / steps)
+                   for i in range(steps)) * (hi - lo) / steps
+        assert abs(area - 1) < 0.01
+
+
+def test_run_and_fight_difficulty_are_summed_into_one_curve():
+    tally = cards.survey_tally([_survey("difficulty", answer="too_hard"),
+                                _survey("fight_difficulty", answer="too_hard"),
+                                _survey("fight_difficulty", answer="too_easy"),
+                                _survey("loss", answer="unfair")])
+    difficulty, loss = _curves(tally)
+    # Difficulty, summed; loss blame in a chart of its own.
+    assert difficulty.series[0][1] == {3: 2, 1: 1} and len(difficulty.series) == 1
+    assert loss.series[0][1] == {3: 1}
+
+
+def test_a_question_alone_or_unanswered_gets_its_own_chart_or_none():
+    tally = cards.survey_tally([_survey("cards", answer="4"), _survey("loss", "skipped")])
+    cells = _histogram_cells(cards.surveys_histograms_card(tally))
+    assert len(cells) == 1
+    assert not any(isinstance(b, sc.Legend) for b in cells[0])
+
+
+def test_a_pair_takes_its_own_end_labels_or_its_questions_shared_ones():
+    shared = cards.survey_tally([_survey("fun", answer="3"), _survey("fight_fun", answer="3")])
+    renamed = cards.survey_tally([_survey("visuals", answer="3"), _survey("ui", answer="3")])
+    assert _curves(shared)[0].tags == {1: "Not fun", 5: "Very fun"}
+    assert _curves(renamed)[0].tags == {1: "Bad", 5: "Good"}
+    assert cards.surveys_histograms_card(renamed).png()
+
+
+def test_the_survey_histograms_card_is_square():
+    """The plots are sized to fill a square, whatever the count of charts,
+    within HISTOGRAM_PLOT_H: one chart is clamped, so not square."""
+    many = cards.survey_tally([_survey(qid, answer="3") for qid in
+                               ("fun", "choices", "length", "variety", "cards", "new_attacks")]
+                              + [_survey("difficulty", answer="too_hard")]
+                              + [_survey("understood", answer="yes", run=1)])
+    img = Image.open(io.BytesIO(cards.surveys_histograms_card(many).png()))
+    assert abs(img.width - img.height) <= sc.SCALE * 2
+
+
 def test_the_surveys_card_renders():
     tally = cards.survey_tally([_survey("fight_fun", answer="5", moment="boss_win"),
                                 _survey("loss", answer="my_fault", comment=True),

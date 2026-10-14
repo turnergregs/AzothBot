@@ -1486,18 +1486,21 @@ def _answer_donut(question_id: str, counts: dict, title: str, detail: str = "") 
                     faded=sum(counts.values()) < MIN_SURVEY_ANSWERS)
 
 
+def _survey_head_tiles(rows: list) -> list:
+    """A survey card's headline numbers: shown, the share answered, comments."""
+    outcomes = _outcomes(rows)
+    shown = sum(outcomes.values())
+    comments = sum(int(r.get("comments") or 0) for r in rows)
+    rate = f"{round(100 * outcomes['answered'] / shown)}%" if shown else "—"
+    return [("Shown", f"{shown:,}"), ("Answered", rate), ("Comments", f"{comments:,}")]
+
+
 def surveys_card(rows: list, population: str = "") -> sc.Card:
     """/stats surveys. A wide card (2026-10-13): as one column of bars it ran to
     2,300 points, four screens of scrolling. The headline numbers sit beside
     the title; below them, where it was shown beside the first-run question's
     donuts; then a donut per question, four across."""
-    outcomes = _outcomes(rows)
-    shown = sum(outcomes.values())
-    comments = sum(int(r.get("comments") or 0) for r in rows)
-    rate = f"{round(100 * outcomes['answered'] / shown)}%" if shown else "—"
-    card = sc.Card("Surveys", population, width=sc.WIDTH * 2,
-                   head_tiles=[("Shown", f"{shown:,}"), ("Answered", rate),
-                               ("Comments", f"{comments:,}")])
+    card = sc.Card("Surveys", population, width=sc.WIDTH * 2, head_tiles=_survey_head_tiles(rows))
 
     # Where it was shown, and what players did with it: the bar's length is
     # how often that screen asked, split by outcome.
@@ -1559,6 +1562,175 @@ def surveys_card(rows: list, population: str = "") -> sc.Card:
         card.add(sc.Columns([left, right]), sc.Spacer(10))
     if grid:
         card.add(sc.DonutGrid(grid, width=card.width))
+    return card
+
+
+# ---------------------------------------------------------------------------
+# /stats surveys_histograms
+# ---------------------------------------------------------------------------
+# 2026-10-14, Caleb. The same answers as /stats surveys, drawn for seeing
+# trends rather than reading numbers: every question as a smoothed
+# distribution of its answers (stats_charts.DensityCurves), three across in a
+# grid sized to make the card square. Things to compare overlap in one chart:
+# the first-run question's runs, run and fight fun, visuals and UI. Run and
+# fight difficulty ask the same thing, so they are summed into one curve.
+#
+# Tried and dropped the same day: bars side by side, then overlapping, for the
+# pairs; loss blame drawn beside difficulty in one chart; the first-run
+# question as one average per run (Yes +5, Mostly 0, No −5) against a zero
+# baseline. The curves replaced all three.
+
+# A choice question's answers left to right, worst to best as a 1-5 scale
+# runs, where sl.CHOICES' order (the card's) differs.
+CURVE_ORDER = {"understood": ["no", "mostly", "yes"]}
+# Questions drawn in one chart: (title, how, [(question, series name)], end
+# labels). "curves" overlaps the questions, a series each; "sum" adds them
+# into one. End labels {position: text} replace the questions' own (visuals'
+# Ugly and UI's Cumbersome both become Bad); None keeps theirs. Every other
+# question answered gets a chart of its own, after these.
+SURVEY_HISTOGRAM_GROUPS = [
+    ("Fun", "curves", [("fun", "Run"), ("fight_fun", "Fight")], None),
+    ("Difficulty", "sum", [("difficulty", "Run"), ("fight_difficulty", "Fight")], None),
+    ("Visuals and UI", "curves", [("visuals", "Visuals"), ("ui", "UI")], {1: "Bad", 5: "Good"}),
+]
+# A series' colour, by its place in its chart: the dark card's categorical
+# slots 1 to 3 (blue, orange, aqua), the dataviz palette's validated order on
+# SURFACE. A chart of one series is one measure, so ACCENT, slot 1.
+SERIES_COLOURS = [sc.ACCENT, "#d95926", "#199e70"]
+HISTOGRAM_COLUMNS = 3
+HISTOGRAM_CELL_W = 400
+# The plot height solved for a square card is held between these, so a card
+# of few charts does not stretch them into towers, nor one of many crush them.
+HISTOGRAM_PLOT_H = (90, 300)
+HISTOGRAM_ROW_GAP = 12
+
+
+def _curve_keys(question_id: str, counts: dict) -> list:
+    """The answers along a curve's axis, left to right: a scale's 1-5, a
+    choice's in CURVE_ORDER or the game's order, then anything unknown."""
+    known = CURVE_ORDER.get(question_id) or _answer_keys(question_id, {})
+    return known + sorted(k for k in counts if k not in known)
+
+
+def _summary(question_id: str, counts: dict) -> str:
+    """"8 answers · avg 4.0", the average for a 1-5 question only."""
+    mean = _scale_mean(counts) if sl.is_scale(question_id) else None
+    return _answers(sum(counts.values())) + (f" · avg {mean:.1f}" if mean is not None else "")
+
+
+def _comments_text(questions: list, by_question: dict, keep=None) -> str:
+    n = sum(int(r.get("comments") or 0) for qid in questions for r in by_question.get(qid, [])
+            if keep is None or keep(r))
+    return (f" · {n} comment" + ("" if n == 1 else "s")) if n else ""
+
+
+def _curves_cell(title: str, question_id: str, series: list, note: str, plot_h: float,
+                 tags: dict | None = None) -> list:
+    """One chart: its title, a line of detail, the curves, and for two or
+    more series a legend line each. `series` is `[(name, counts, legend
+    text)]`, counts keyed by `question_id`'s answers; one with no answers is
+    left out, and a chart with none is []. `tags` are the end labels under the
+    axis, by default the question's own."""
+    series = [s for s in series if sum(s[1].values())]
+    if not series:
+        return []
+    union: dict = {}
+    for _, counts, _ in series:
+        for k, n in counts.items():
+            union[k] = union.get(k, 0) + n
+    keys = _curve_keys(question_id, union)
+    labels = [k if k.isdigit() else sl.ANSWERS.get(k, k) for k in keys]
+    if tags is None:
+        tags = {int(k): t for k, t in sl.SCALE_ENDS.get(question_id, {}).items()}
+        tags = {keys.index(str(k)) + 1: t for k, t in tags.items() if str(k) in keys}
+    curves, legend = [], []
+    for i, (name, counts, text) in enumerate(series):
+        colour = SERIES_COLOURS[i % len(SERIES_COLOURS)] if len(series) > 1 else sc.ACCENT
+        faded = sum(counts.values()) < MIN_SURVEY_ANSWERS
+        curves.append((colour, {keys.index(k) + 1: n for k, n in counts.items()}, faded))
+        legend.append(sc.Legend([(f"{name} · {text}", sc.dim(colour, 0.5) if faded else colour)],
+                                height=18, indent=0))
+    blocks = [sc.SectionHeader(title, width=HISTOGRAM_CELL_W), sc.Note(note),
+              sc.DensityCurves(curves, labels, tags=tags, width=HISTOGRAM_CELL_W, plot_h=plot_h)]
+    return blocks + (legend if len(series) > 1 else [])
+
+
+def _understood_cell(q_rows: list, plot_h: float) -> list:
+    """The first-run question at run 1, run 3 and later runs (run_slot NULL:
+    survey_answer_view keeps only 1 and 3), a curve each, No to Yes."""
+    series = []
+    for slot in (1, 3, None):
+        counts = _answer_counts([r for r in q_rows if r.get("run_slot") == slot])
+        series.append((f"Run {slot}" if slot else "Later runs", counts,
+                       _answers(sum(counts.values()))))
+    comments = sum(int(r.get("comments") or 0) for r in q_rows)
+    note = "each run as a share of its own answers" + (
+        (f" · {comments} comment" + ("" if comments == 1 else "s")) if comments else "")
+    return _curves_cell(sl.question("understood"), "understood", series, note, plot_h)
+
+
+def _group_cell(title: str, how: str, questions: list, ends, by_question: dict,
+                plot_h: float) -> list:
+    """A SURVEY_HISTOGRAM_GROUPS chart: the questions overlapping, or summed."""
+    first = questions[0][0]
+    counted = [(qid, name, _answer_counts(by_question.get(qid, []))) for qid, name in questions]
+    comments = _comments_text([qid for qid, _ in questions], by_question)
+    if how == "sum":
+        total: dict = {}
+        for _, _, counts in counted:
+            for k, n in counts.items():
+                total[k] = total.get(k, 0) + n
+        if not sum(total.values()):
+            return []
+        names = " and ".join(name.lower() for _, name in questions)
+        note = f"{names} together · {_summary(first, total)}{comments}"
+        return _curves_cell(title, first, [(title, total, "")], note, plot_h, tags=ends)
+    series = [(name, counts, _summary(qid, counts)) for qid, name, counts in counted]
+    return _curves_cell(title, first, series, "each as a share of its own answers" + comments,
+                        plot_h, tags=ends)
+
+
+def _question_cell(question_id: str, by_question: dict, plot_h: float) -> list:
+    counts = _answer_counts(by_question.get(question_id, []))
+    note = _summary(question_id, counts) + _comments_text([question_id], by_question)
+    return _curves_cell(sl.question(question_id), question_id,
+                        [(sl.short(question_id), counts, "")], note, plot_h)
+
+
+def surveys_histograms_card(rows: list, population: str = "") -> sc.Card:
+    """/stats surveys_histograms (2026-10-14): every question as a smoothed
+    distribution of its answers, the first-run question's runs, run and fight
+    fun, and visuals and UI overlapping, run and fight difficulty summed.
+    Three across, the plots as tall as makes the card square."""
+    card = sc.Card("Survey histograms", population,
+                   width=HISTOGRAM_CELL_W * HISTOGRAM_COLUMNS,
+                   head_tiles=_survey_head_tiles(rows))
+    by_question: dict = {}
+    for r in rows:
+        by_question.setdefault(r.get("question_id"), []).append(r)
+    grouped = {qid for _, _, questions, _ in SURVEY_HISTOGRAM_GROUPS for qid, _ in questions}
+
+    def grid(plot_h: float) -> list:
+        cells = [_understood_cell(by_question.get("understood", []), plot_h)]
+        cells += [_group_cell(title, how, questions, ends, by_question, plot_h)
+                  for title, how, questions, ends in SURVEY_HISTOGRAM_GROUPS]
+        cells += [_question_cell(qid, by_question, plot_h)
+                  for qid in sorted(by_question, key=sl.order_key)
+                  if qid != "understood" and qid not in grouped]
+        cells = [c for c in cells if c]
+        return [sc.Columns(cells[i:i + HISTOGRAM_COLUMNS], col_width=HISTOGRAM_CELL_W)
+                for i in range(0, len(cells), HISTOGRAM_COLUMNS)]
+
+    # Every block's height is its fixed parts plus the plot's, so measuring
+    # the grid with no plot leaves what the plots have to fill the square.
+    flat = grid(0)
+    if not flat:
+        return card
+    fixed = sc.PAD * 2 + card.head() + sum(r.height + HISTOGRAM_ROW_GAP for r in flat)
+    low, high = HISTOGRAM_PLOT_H
+    plot_h = min(max((card.width - fixed) / len(flat), low), high)
+    for row in grid(plot_h):
+        card.add(row, sc.Spacer(HISTOGRAM_ROW_GAP))
     return card
 
 

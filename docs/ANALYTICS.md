@@ -59,6 +59,7 @@ of embed fields. They dumped raw JSON into a code block until 2026-08-27.
 | `/stats bosses` | `boss_fight_view` | Each boss's win rate by act, read against the act's overall rate. **The first image report.** See [Reports as images](#reports-as-images-2026-09-28) |
 | `/stats links` | `link_turn_view` + `link_type_view` | Links per regular and boss turn (zero-link turns included), the share of each link type, and each type's average length against every multi-card link's. `players:` cohort filter. See [Links](#links-2026-10-03) |
 | `/stats surveys` | `survey_answer_view` | The game's one-click survey (game repo `docs/SURVEYS.md`): surveys shown, share answered, comments; where each was shown, split answered / skipped / ignored; then a donut per question, `understood` split run 1, run 3 and later runs, under 5 answers dimmed. **A wide card**, two card-widths. See [Surveys](#surveys-2026-10-13). `players:` cohort filter, **default Everyone but us** (surveys began after the cutoff, so few "new" players have answered). No version cutoff: every row postdates it |
+| `/stats surveys_histograms` | `survey_answer_view` | The same answers for trends, every question a smoothed distribution: `understood` a curve per run, run / fight fun and visuals / UI overlapping, run and fight difficulty summed. A square card, three charts across. See [Surveys](#surveys-2026-10-13). Same `players:` filter and default |
 | `/stats paths` | `games` + `player_cohort_view` | New players' paths, run by run: the tutorial, then whether each run beat their best. `days:` and `runs:`. See [New player paths](#new-player-paths-2026-10-08) |
 | `/stats sessions` | `launches` + `player_cohort_view` | Of the new players whose first launch was on each patch version, the share who launched the game again. New players only, no options. **Service-role only** (`launches` is INSERT-only for anon). See [Sessions](#sessions-2026-10-09) |
 | `/stats card_conversions` | `card_conversion_view` | Cards and aspects new players drafted in their first session, ranked together by how many of those players came back (a game in a later session): the seven most and seven least, each against every new player's rate. **Service-role only.** See [Card conversions](#card-conversions-2026-10-09) |
@@ -535,6 +536,43 @@ are usually shown as pies, and he asked for them.
 A pie is used here and nowhere else. `/stats links` kept bars for link types
 (Turner, 2026-10-03): those are compared with each other, which a pie is bad
 at. A survey question is one whole split a few ways.
+
+**`/stats surveys_histograms`** (`stats_cards.surveys_histograms_card`, Caleb,
+2026-10-14) draws the same rows **for seeing trends rather than reading
+numbers**: every question as a smoothed distribution of its answers. It does
+not replace the donuts, which carry the counts.
+
+- **A square card:** three charts across (`HISTOGRAM_COLUMNS`, cells of
+  `HISTOGRAM_CELL_W`, `Columns(col_width=)`), the plot height solved so the
+  card comes out square, held within `HISTOGRAM_PLOT_H` so a card of few
+  charts does not stretch them into towers.
+- **Curves, not bars** (`stats_charts.DensityCurves`): each answer spread as a
+  normal curve around its place on the axis (a 1-5 score, or a choice's
+  position left to right), each series' area 1 so series answered at
+  different rates compare, a translucent fill under a solid line. The curves
+  stay on the scale, half a step past each end: what would spill past an end
+  is reflected back, since the top answer cannot mean "more than" it. The y
+  axis has no numbers; the shape is the reading.
+- **Overlapping:** `understood` as a curve per run (run 1, run 3, later runs),
+  No to Yes (`CURVE_ORDER`); run and fight fun; visuals and UI, whose ends
+  read Bad and Good (`SURVEY_HISTOGRAM_GROUPS`). Colours are the categorical
+  slots 1 to 3 (blue, orange, aqua): here colour says which series, with a
+  legend line each giving its answers (and average, on a 1-5 question).
+- **Summed:** run and fight difficulty, one curve, "Difficulty": they ask the
+  same thing of different stretches of play.
+- **Every other answered question** has a chart of its own, one ACCENT curve.
+- Under 5 answers a curve is dimmed, as the donuts are.
+
+**Reading it:** smoothing spreads every answer into its neighbours, so a
+question everyone answered the same way still draws as a bell, not a spike,
+and on a three-choice question the spread covers most of the axis. Loss blame
+(Bad luck, My fault, Unfair) has no order, so the curve between its answers
+means nothing; only the heights at the three answers do.
+
+**Tried and dropped (Caleb, 2026-10-14):** bars side by side, then
+overlapping, for the pairs; loss blame drawn beside difficulty in one chart;
+bars for the single questions; `understood` as one average per run (Yes +5,
+Mostly 0, No −5) against a zero baseline. Curves replaced all of them.
 
 ### New player paths (2026-10-08)
 

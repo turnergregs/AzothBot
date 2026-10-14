@@ -148,10 +148,12 @@ class Spacer(Block):
 @dataclass
 class SectionHeader(Block):
     """A small uppercase label with a hairline running to the right edge, and
-    optional detail after it in a quieter ink."""
+    optional detail after it in a quieter ink. `width` is the width it runs
+    across: a card's, or a cell's in a grid."""
     label: str
     detail: str = ""
     height: float = 28
+    width: float = WIDTH
 
     def draw(self, d, top):
         mid = top + px(self.height) // 2 + px(2)
@@ -161,7 +163,7 @@ class SectionHeader(Block):
         if self.detail:
             d.text((x, mid), self.detail, font=font(12), fill=MUTED, anchor="lm")
             x += d.textlength(self.detail, font=font(12)) + px(8)
-        d.line([(x, mid), (px(WIDTH - PAD), mid)], fill=TRACK, width=px(0.5))
+        d.line([(x, mid), (px(self.width - PAD), mid)], fill=TRACK, width=px(0.5))
 
 
 @dataclass
@@ -805,6 +807,129 @@ class Histogram(Block):
                    font=font(11), fill=INK_2, anchor="rt" if away_left else "lt")
 
 
+@dataclass
+class DensityCurves(ImageBlock):
+    """Answers on an ordered set of choices as smoothed distributions, one per
+    series, overlapping: a dequantized histogram, for seeing the shape of the
+    answers and comparing it between series rather than reading a count
+    (/stats surveys_histograms). Answer i (1-based, left to right) is spread
+    as a normal curve of BANDWIDTH steps around i, and each series' area is 1,
+    so a series answered 40 times and one answered 8 compare.
+
+    The curves live on the choices' own range, half a step past each end, and
+    what would spill past an end is reflected back inside it: the top choice
+    cannot mean "more than" it, so its mass stays at that end and a curve meets
+    the edge at the height its answers give it. Letting the tails run out past
+    the scale (tried first) spent a third of the width on answers nobody can
+    give.
+
+    Each series is a translucent fill under a solid line, so where two overlap
+    both read; the lines are drawn after every fill, so none is hidden. The
+    density has no unit a reader needs, so the y axis has none: the shape is
+    the reading.
+
+    `labels` names the choices left to right; a label too wide for its step
+    wraps. `series` is `[(colour, {position: count}, faded)]`, positions
+    1..len(labels); `faded` thins a series: shown, but not asserted. `tags`
+    puts small muted text under a choice ({position: text}: a scale's ends).
+    `width` is the block's width (a cell of a grid), `plot_h` the plot's. Two
+    or more series need a Legend under it.
+    """
+    series: list
+    labels: list
+    tags: dict = field(default_factory=dict)
+    width: float = WIDTH
+    plot_h: float = 104
+    height: float = 0
+
+    TOP = 8
+    BANDWIDTH = 0.6    # in steps: smooth over a handful of answers, no bump per choice
+    SAMPLES = 160
+    FILL = 0.3
+    FADED_FILL = 0.14
+    LABEL_LINE = 13
+
+    def __post_init__(self):
+        self.height = self.TOP + self.plot_h + 6 + self._label_h()
+
+    def _range(self) -> tuple:
+        return 0.5, len(self.labels) + 0.5
+
+    def _step(self) -> float:
+        return (self.width - PAD * 2) / max(len(self.labels), 1)
+
+    def _wrapped(self) -> list:
+        return [wrap(label, self._step() - 10, 11) or [""] for label in self.labels]
+
+    def _label_h(self) -> float:
+        lines = max((len(l) for l in self._wrapped()), default=1)
+        return self.LABEL_LINE * lines + (14 if self.tags else 0) + 6
+
+    def density(self, counts: dict, x: float) -> float:
+        """The smoothed share at `x`, each answer's curve reflected at both
+        ends of the range, so the area inside it is 1."""
+        total = sum(counts.values())
+        if not total:
+            return 0.0
+        lo, hi = self._range()
+        h = self.BANDWIDTH
+        norm = 1 / (h * math.sqrt(2 * math.pi) * total)
+        return norm * sum(n * math.exp(-0.5 * ((x - c) / h) ** 2)
+                          for i, n in counts.items()
+                          for c in (i, 2 * lo - i, 2 * hi - i))
+
+    def _xs(self) -> list:
+        x0, x1 = self._range()
+        return [x0 + (x1 - x0) * i / (self.SAMPLES - 1) for i in range(self.SAMPLES)]
+
+    def draw_on(self, img, d, top):
+        x0, x1 = self._range()
+        left, right = PAD, self.width - PAD
+        base = top + px(self.TOP + self.plot_h)
+        curves = [[self.density(counts, x) for x in self._xs()] for _, counts, _ in self.series]
+        peak = max((y for c in curves for y in c), default=0) or 1
+
+        def at(x: float, y: float) -> tuple:
+            # Unrounded: the curve is drawn supersampled, and points snapped
+            # to whole pixels first come out as a staircase.
+            return (SCALE * (left + (right - left) * (x - x0) / (x1 - x0)),
+                    base - SCALE * self.plot_h * y / (peak * 1.06))
+
+        k = SUPERSAMPLE
+        ox, oy = px(left), base - px(self.plot_h)
+        size = ((px(right) - ox) * k, px(self.plot_h) * k + k)
+
+        def layer(points, colour, alpha, fill: bool):
+            lay = Image.new("RGBA", size, (0, 0, 0, 0))
+            ld = ImageDraw.Draw(lay)
+            pts = [((x - ox) * k, (y - oy) * k) for x, y in points]
+            rgb = tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+            if fill:
+                ld.polygon(pts + [(pts[-1][0], size[1] - k), (pts[0][0], size[1] - k)],
+                           fill=rgb + (round(255 * alpha),))
+            else:
+                ld.line(pts, fill=rgb + (255,), width=round(px(2) * k), joint="curve")
+            lay = lay.resize((size[0] // k, size[1] // k), Image.LANCZOS)
+            img.alpha_composite(lay, (ox, oy))
+
+        paths = [[at(x, y) for x, y in zip(self._xs(), c)] for c in curves]
+        for (colour, _, faded), path in zip(self.series, paths):
+            layer(path, colour, self.FADED_FILL if faded else self.FILL, True)
+        for (colour, _, faded), path in zip(self.series, paths):
+            layer(path, dim(colour, 0.6) if faded else colour, 1, False)
+
+        d.line([(px(left), base), (px(right), base)], fill=MUTED, width=px(0.75))
+        for i, lines in enumerate(self._wrapped(), start=1):
+            x, _ = at(i, 0)
+            d.line([(x, base), (x, base + px(4))], fill=MUTED, width=px(0.75))
+            for j, line in enumerate(lines):
+                d.text((x, base + px(12 + self.LABEL_LINE * j)), line, font=font(11),
+                       fill=INK_2, anchor="mm")
+            if self.tags.get(i):
+                d.text((x, base + px(12 + self.LABEL_LINE * len(lines) + 1)), self.tags[i],
+                       font=font(10), fill=MUTED, anchor="mm")
+
+
 # Shapes are drawn this many times larger into a mask and scaled down, which
 # smooths their edges.
 SUPERSAMPLE = 4
@@ -840,8 +965,14 @@ def smooth_fill(img: Image.Image, outline: list, colour: str, alpha: float = 1.0
 @dataclass
 class Columns(ImageBlock):
     """Stacks of ordinary blocks side by side on a wide card, each stack one
-    card-width wide and drawn exactly as it would be on a card of its own."""
+    card-width wide and drawn exactly as it would be on a card of its own.
+
+    `col_width` narrows the stacks into a grid's cells (/stats
+    surveys_histograms, three across). Blocks in a narrower stack must be
+    told the width too (SectionHeader and DensityCurves take `width`), or they
+    draw past the cell's edge and are cut off."""
     columns: list
+    col_width: float = WIDTH
     height: float = 0
 
     def __post_init__(self):
@@ -851,7 +982,7 @@ class Columns(ImageBlock):
         for i, col in enumerate(self.columns):
             # Opaque, in the card's own surface: text drawn on a clear image
             # and composited comes out thinner at its edges.
-            sub = Image.new("RGBA", (px(WIDTH), px(self.height)), SURFACE)
+            sub = Image.new("RGBA", (px(self.col_width), px(self.height)), SURFACE)
             sub_d = ImageDraw.Draw(sub)
             y = 0
             for block in col:
@@ -860,7 +991,7 @@ class Columns(ImageBlock):
                 else:
                     block.draw(sub_d, y)
                 y += px(block.height)
-            img.paste(sub, (px(WIDTH * i), top))
+            img.paste(sub, (px(self.col_width * i), top))
 
 
 @dataclass

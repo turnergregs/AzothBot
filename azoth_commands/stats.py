@@ -33,6 +33,7 @@ ALL_REPORTS = [
     ("bosses", "stats_bosses", {"players": "new"}),
     ("links", "stats_links", {"players": "new"}),
     ("surveys", "stats_surveys", {"players": "players"}),
+    ("surveys_histograms", "stats_surveys_histograms", {"players": "players"}),
     ("paths", "stats_paths", {"days": 14, "runs": 5}),
     ("sessions", "stats_sessions", {}),
     ("card_conversions", "stats_card_conversions", {}),
@@ -572,6 +573,34 @@ def add_stats_commands(cls):
         await _send_card(interaction, stats_cards.surveys_card(rows, stats_cards.COHORT_LABELS[players]),
                          "surveys.png", colour=0x9B59B6)
 
+    # 2026-10-14, Caleb. The same answers as histograms: the first-run
+    # question as an average score per run, and the run / fight questions and
+    # visuals / UI each in one chart. See stats_cards § surveys_histograms.
+    @stats_cmd.subcommand(name="surveys_histograms", description="In-game survey answers as histograms")
+    @safe_interaction(timeout=20, error_message="❌ Failed to fetch survey stats.")
+    async def stats_surveys_histograms(
+        self,
+        interaction: Interaction,
+        players: str = SlashOption(
+            description="Whose answers to count (default: everyone but us)",
+            required=False,
+            default="players",
+            choices={label: key for key, label in stats_cards.COHORT_LABELS.items()},
+        ),
+    ):
+        try:
+            rows = fetch_all("survey_answer_view")
+        except SupabaseError as e:
+            return _read_failed(e, "survey_answer_view", "2026-10-04_survey_answer_view.sql")
+
+        rows, _ = stats_cards.select_cohort(rows, players, stats_cards.SURVEY_MERGE,
+                                            stats_cards.SURVEY_COUNTS)
+        if not any(int(r.get("responses") or 0) for r in rows if r.get("outcome") == "answered"):
+            return "❌ No survey answers from these players yet."
+        await _send_card(interaction,
+                         stats_cards.surveys_histograms_card(rows, stats_cards.COHORT_LABELS[players]),
+                         "survey_histograms.png", colour=0x9B59B6)
+
     # --- Paths ---
     # 2026-10-08, Caleb. New players' paths: how far the tutorial got, then
     # whether each run beat their best on that hero and ritual, until they
@@ -818,6 +847,7 @@ def add_stats_commands(cls):
     cls.stats_bosses = stats_bosses
     cls.stats_links = stats_links
     cls.stats_surveys = stats_surveys
+    cls.stats_surveys_histograms = stats_surveys_histograms
     cls.stats_paths = stats_paths
     cls.stats_sessions = stats_sessions
     cls.stats_card_conversions = stats_card_conversions
