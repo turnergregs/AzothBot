@@ -746,7 +746,8 @@ TUTORIAL_DECK = 31
 def _g(**kw):
     """A games row with the fields _partition_games actually reads."""
     row = {"uuid": "g", "player_uuid": "p", "result": None,
-           "turns_played": 5, "starter_deck": 29, "game_type": "solo"}
+           "turns_played": 5, "starter_deck": 29, "game_type": "solo",
+           "format": "standard"}
     row.update(kw)
     return row
 
@@ -808,6 +809,32 @@ def test_tutorial_runs_are_split_out_but_not_dropped():
     assert [g["uuid"] for g in tutorial] == ["tut"]
     assert [g["uuid"] for g in regular] == ["real"]
     assert dropped == []
+
+
+def test_a_tutorial_format_run_is_a_tutorial_whatever_its_deck():
+    """REGRESSION (2026-10-14): tutorial runs stopped using the Tutorial Deck
+    on 2026-09-24 and record the Starting Deck or no deck, so the deck-only
+    check counted every one as a regular run and put the tutorial boss in the
+    regular boss record. `format` is what the game pins at run start."""
+    rows = [
+        _g(uuid="starting_deck", format="tutorial", starter_deck=29),
+        _g(uuid="no_deck", format="tutorial", starter_deck=None),
+        _g(uuid="real", format="standard", starter_deck=29),
+    ]
+    regular, tutorial, _ = du._partition_games(rows, {TUTORIAL_DECK})
+
+    assert {g["uuid"] for g in tutorial} == {"starting_deck", "no_deck"}
+    assert [g["uuid"] for g in regular] == ["real"]
+
+
+def test_a_tutorial_deck_run_from_before_format_is_still_a_tutorial():
+    """Rows before 2026-09-11 all read format 'standard'; for those days the
+    deck is the only signal, and a repost of one must still split them out."""
+    regular, tutorial, _ = du._partition_games(
+        [_g(uuid="old", format="standard", starter_deck=TUTORIAL_DECK)], {TUTORIAL_DECK})
+
+    assert [g["uuid"] for g in tutorial] == ["old"]
+    assert regular == []
 
 
 def test_the_opening_turn_drop_is_applied_before_the_tutorial_split():

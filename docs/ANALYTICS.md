@@ -1300,8 +1300,14 @@ it had excluded; that line went with the rest of the methodology asides on
 NULL `turns_played` is *kept*: unknown is not "turn 1". No restart row has ever
 had one, but assuming short is the wrong direction if that changes.
 
-**2. Tutorial runs are split out, not dropped.** Any run whose `starter_deck`
-has `usage_type = 'tutorial'` (deck 31). They get their own line and are
+**2. Tutorial runs are split out, not dropped.** Any run with `format =
+'tutorial'`, or whose `starter_deck` has `usage_type = 'tutorial'` (deck 31).
+`format` is the real signal (pinned at run start; see
+[DB_SCHEMA.md § Format](DB_SCHEMA.md#format)). Until 2026-10-14 only the deck was
+checked, and tutorial runs have recorded the Starting Deck or no deck since
+2026-09-24, so every one of them, and the tutorial's own boss, was counted as a
+regular run. The deck check stays for days before 2026-09-11, when every row
+reads `standard`. They get their own line and are
 excluded from every average, highlight, draft and turn-grain figure. A scripted
 tutorial run's duration, act and combo are not comparable to a drafted one, and
 that is true from *both* ends — developer iteration on the tutorial does **not**
@@ -1313,8 +1319,8 @@ before — a restart that got past the opening turn is still someone playing.
 
 Three failure directions are deliberate:
 
-- **An unreadable or empty `decks` read classifies nothing as a tutorial**, so
-  every game stays in `regular`. Over-reporting real activity beats hiding it —
+- **An unreadable or empty `decks` read classifies nothing as a tutorial by
+  deck**, so only `format` splits runs out. Over-reporting real activity beats hiding it —
   the same reasoning as the live-content filter in `content_index`.
 - **A NULL `starter_deck` stays in `regular`** (186 historical rows have one).
 - **A day of nothing but tutorial play is not a quiet day.** `total_games` can

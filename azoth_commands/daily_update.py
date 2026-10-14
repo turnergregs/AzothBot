@@ -399,7 +399,8 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
 def _fetch_tutorial_deck_ids() -> set[int]:
     """Deck ids whose `usage_type` is 'tutorial'.
 
-    An empty set means "classify nothing as a tutorial", and that is the
+    Only the fallback for rows from before `games.format` existed; see
+    _partition_games. An empty set means "classify nothing by deck", and that is the
     deliberate failure mode: an unreadable or empty `decks` read leaves every
     game in the regular population, which OVER-reports real activity rather than
     hiding it. Same reasoning as the live-content filter in `content_index` --
@@ -434,7 +435,14 @@ def _partition_games(games: list[dict], tutorial_deck_ids: set[int]) -> tuple[li
     `turns_played` is required to be present: NULL is "unknown", not "turn 1",
     and a row that cannot say how far it got is kept rather than assumed short.
 
-    **Tutorial games** -- any run on a deck whose `usage_type` is 'tutorial'.
+    **Tutorial games** -- `format = 'tutorial'`, or a run on a deck whose
+    `usage_type` is 'tutorial'. `format` is the real signal: the game pins it at
+    run start (docs/DB_SCHEMA.md § Format), and tutorial runs have not used the
+    Tutorial Deck since 2026-09-24 -- they record the Starting Deck or no deck,
+    so a deck-only check put every one of them, and the tutorial boss, in the
+    regular population. The deck check stays for days before 2026-09-11, when
+    `format` reads 'standard' on every row.
+
     These are a different population from a normal run whichever end they come
     from: developer iteration on the tutorial (which does NOT trip
     `TestingConfig.is_testing()`, so it uploads like any other run) and a real
@@ -452,7 +460,7 @@ def _partition_games(games: list[dict], tutorial_deck_ids: set[int]) -> tuple[li
         turns = g.get("turns_played")
         if g.get("result") == "restart" and turns is not None and _to_number(turns, 99) <= 1:
             dropped.append(g)
-        elif g.get("starter_deck") in tutorial_deck_ids:
+        elif g.get("format") == "tutorial" or g.get("starter_deck") in tutorial_deck_ids:
             tutorial.append(g)
         else:
             regular.append(g)
