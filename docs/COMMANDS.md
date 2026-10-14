@@ -511,7 +511,7 @@ the authority on what the game does with each column.
 
 | Option | Meaning |
 |---|---|
-| `body` | What the hero says. BBCode; `[term]…[/term]` is the gold of game terms. About 110 characters fit three lines of the bubble. Longer is allowed up to the table's 400 and draws a warning in the reply |
+| `body` | What the hero says. BBCode; `[term]…[/term]` is the gold of game terms. Up to the table's 400 characters. About 110 fit the small box; the game widens the box for more, to about 240 in three lines, and past that it grows down over the logo, which draws a warning in the reply |
 | `speaker` | Whose bubble it is. Autocompletes the unarchived heroes. Left out, **Lumis** (hero 7, `DEFAULT_SPEAKER_ID`: the first hero of the game's unlock chain, the one every player has), written into the row. Were that hero ever archived, the column is left NULL, which the game reads as the same fallback |
 | `starts` | When it goes live. `2026-10-20` or `2026-10-20 18:00`, **read as UTC** unless it carries an offset (`2026-10-20 18:00-05:00`). Left out, the database's `now()` |
 | `ends` | When it stops being shown, same format. Left out, never |

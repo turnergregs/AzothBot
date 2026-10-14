@@ -28,9 +28,11 @@ TABLE = "announcements"
 
 # The table's CHECK on char_length(btrim(body)).
 MAX_BODY = 400
-# About three lines of the bubble. A longer body is allowed, and grows the box
-# downward over the title's logo.
-BUBBLE_CHARS = 110
+# About three lines of the bubble at its widest. The game keeps a small box up
+# to about 110 characters, then widens it to hold three lines, and past about
+# this many grows it downward over the title's logo (the game repo's
+# announcement_bubble.gd, `_text_width_for`). A longer body is allowed.
+BUBBLE_CHARS = 240
 # Who speaks when no speaker is picked: Lumis, the first hero of the game's
 # unlock chain (`UnlockManager.HERO_ORDER[0]`), the one every player has. The
 # game falls back to the same hero for a NULL speaker; writing the id makes the
@@ -235,8 +237,8 @@ def describe(row: dict, speaker_name: str | None = None, row_id: int | None = No
 
     length = visible_length(body)
     if length > BUBBLE_CHARS:
-        lines.append(f"⚠️ {length} characters. About {BUBBLE_CHARS} fit three lines of the bubble; "
-                     f"more grows the box down over the logo.")
+        lines.append(f"⚠️ {length} characters. About {BUBBLE_CHARS} fit three lines of the bubble at "
+                     f"its widest; more grows the box down over the logo.")
 
     if row_id is not None:
         lines.append(f"-# Wrong? Set `archived_at` on row {row_id} in Supabase to pull it, then post a "

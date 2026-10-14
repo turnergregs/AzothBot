@@ -37,7 +37,7 @@ def add_announcement_commands(cls):
         self,
         interaction: Interaction,
         body: str = SlashOption(
-            description="What the hero says. About 110 characters fit; [term]...[/term] is gold."),
+            description="What the hero says, up to 400 characters. [term]...[/term] is gold."),
         speaker: str = SlashOption(
             description="Whose bubble it is (default: Lumis)",
             required=False, autocomplete=True),
