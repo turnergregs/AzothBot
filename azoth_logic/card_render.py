@@ -8,6 +8,10 @@ Discord. Deliberately NOT reproduced:
   * Enhancements and attributes. Both are applied during a run and never present
     on a card as authored.
 
+Generated on the face, as the game generates them (content never writes them):
+a weapon's damage badge and a Magnify badge hanging off the card's left edge
+(`_with_badges`), and a weapon's escalate leading its text (`weapons.lead`).
+
 Three art paths, because the content has three, checked in the game's order
 (`ImageCache.has_animated_art`): procedural art under `image_data.art` (made in
 the game's Codex; computed, never downloaded), then a card whose `image` ends in
@@ -25,7 +29,9 @@ from azoth_logic import art_cache
 from azoth_logic import holo
 from azoth_logic import card_layout as L
 from azoth_logic import eigenfunction_art as ef
+from azoth_logic import inline_icons
 from azoth_logic import rich_text
+from azoth_logic import weapons
 
 ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
 BORDER_DIR = ASSET_ROOT / "card_art" / "borders"
@@ -92,43 +98,90 @@ def _layer(file_name: str, box) -> Image.Image:
     return img
 
 
-def _border(card: dict) -> Image.Image:
-    """The element border, with a split card's second border blended over it.
+BORDER_BLOBS = ASSET_ROOT / "card_art" / "border_blobs.json"
+_blob_cache = None
 
-    Port of `card_border_dim.gdshader`'s fragment stage:
 
-        coverage = clamp(split.a / max(base.a, 1e-4), 0, 1)
-        rgb      = mix(base.rgb, split.rgb, coverage)
-        alpha    = base.a
+def _blobs():
+    global _blob_cache
+    if _blob_cache is None:
+        import json
+        if not BORDER_BLOBS.is_file():
+            raise FileNotFoundError(
+                f"{BORDER_BLOBS} is missing. Run: python -m tools.sync_assets --azoth <path>")
+        _blob_cache = json.loads(BORDER_BLOBS.read_text())["border"]
+    return _blob_cache
 
-    Two details that a plain alpha-composite would get wrong, and which the
-    shader's own comments call out:
 
-      * Coverage is the split's alpha NORMALISED BY THE BASE'S, not the split's
-        alpha directly. That keeps the split opaque along the antialiased rim --
-        where both textures fade together -- while preserving the authored
-        interior fade.
-      * Alpha comes from the BASE alone. The split must not extend the
-        silhouette by a single pixel, or the card gets a second, fatter outline.
+def _blob_distance(px, py, hide_badge_lobe: bool):
+    """Signed distance to the border blobs, in border pixels, negative inside.
 
-    The dim_color / base_dim / split_dim uniforms are skipped: they fade the side
-    you are not hovering, which is in-game state with no meaning in a snapshot.
+    `card_border_blobs.gdshaderinc`'s `border_blobs`: each blob a log-sum-exp
+    smooth maximum of its edge half-planes, the union their minimum. Blob 1 is
+    the small lobe under the top-left corner, which a corner badge drops.
     """
-    base = _layer(L.border_file(card.get("element")), L.BORDER)
-    face = L.split_face(card)
-    if face is None:
-        return base
-    split_file = L.split_border_file(face[0])
-    if split_file is None:
-        return base
-
     import numpy as np
-    b = np.asarray(base, dtype=np.float32) / 255.0
-    sp = np.asarray(_layer(split_file, L.BORDER), dtype=np.float32) / 255.0
-    coverage = np.clip(sp[..., 3] / np.maximum(b[..., 3], 1e-4), 0.0, 1.0)[..., None]
-    rgb = b[..., :3] * (1.0 - coverage) + sp[..., :3] * coverage
-    out = np.dstack([rgb, b[..., 3]])
-    return Image.fromarray((out * 255.0).round().astype("uint8"), "RGBA")
+    blobs = _blobs()["blobs"]
+    d = None
+    for index, blob in enumerate(blobs):
+        if index == 1 and hide_badge_lobe:
+            continue
+        planes = [px * a + py * b - o for a, b, o in blob["planes"]]
+        m = np.maximum.reduce(planes)
+        k = blob["k"]
+        v = m + k * np.log(sum(np.exp((pl - m) / k) for pl in planes))
+        d = v if d is None else np.minimum(d, v)
+    return d
+
+
+def _coverage(d):
+    """`blob_coverage`: clamp(0.5 - d / fwidth(d)), fwidth = |ddx| + |ddy|."""
+    import numpy as np
+    gy, gx = np.gradient(d)
+    return np.clip(0.5 - d / np.maximum(np.abs(gx) + np.abs(gy), 1e-4), 0.0, 1.0)
+
+
+def _border(card: dict, hide_badge_lobe: bool = False) -> Image.Image:
+    """The card body and its element blobs, RGB, over the PreviouslyImage box.
+
+    Port of `card_border_dim.gdshader` (the game stopped loading per-element
+    border PNGs; the blobs are signed distance fields fitted to the old shape):
+
+        rgb = mix(dim_color, base_color, base_coverage)
+        rgb = mix(rgb, split_color, split_coverage)    # split cards only
+
+    A split's second element sits on the left-right MIRROR of the blobs, so its
+    lobes are the base's reflected; its badge lobe is never hidden. A colourless
+    card wears the rainbow, frozen at TIME = 0. The blobs' breathing and edge
+    wave are motion and are not drawn: at rest they sit on the fitted shape.
+    """
+    import numpy as np
+    bw, bh = _blobs()["size"]
+    x0, y0, w, h = L.BORDER
+    W, H = round(w), round(h)
+    # Pixel centres, in border space (the box is the border's 600x816).
+    xs = (np.arange(W, dtype=np.float64) + 0.5) * (bw / w)
+    ys = (np.arange(H, dtype=np.float64) + 0.5) * (bh / h)
+    px, py = np.meshgrid(xs, ys)
+
+    base_cov = _coverage(_blob_distance(px, py, hide_badge_lobe))[..., None]
+    if L.is_colorless(card):
+        u, v = px / bw, py / bh
+        base_col = 0.85 + 0.2 * np.cos(np.dstack([3.0 * u + 2.0, 3.0 * v + 2.0, 3.0 * u + 4.0]))
+    else:
+        base_col = np.asarray(L.element_color(card.get("element")), dtype=np.float64) / 255.0
+    dim = np.asarray(L.FACE_COLOR, dtype=np.float64) / 255.0
+    rgb = dim * (1.0 - base_cov) + base_col * base_cov
+
+    face = L.split_face(card)
+    if face is not None and face[0]:
+        split_cov = _coverage(_blob_distance(bw - px, py, False))[..., None]
+        split_col = np.asarray(L.element_color(face[0]), dtype=np.float64) / 255.0
+        rgb = rgb * (1.0 - split_cov) + split_col * split_cov
+
+    rgb = (np.clip(rgb, 0.0, 1.0) * 255.0).round().astype("uint8")
+    alpha = np.full((H, W), 255, dtype="uint8")
+    return Image.fromarray(np.dstack([rgb, alpha]), "RGBA")
 
 
 def _base_face(card: dict) -> Image.Image:
@@ -138,16 +191,24 @@ def _base_face(card: dict) -> Image.Image:
     """
     canvas = Image.new("RGBA", (L.CARD_W, L.CARD_H), (0, 0, 0, 0))
 
+    # The Background's alpha is the card's silhouette (the shader cuts it in
+    # game); the border paints the body and blobs inside it.
     bg = _layer(L.BACKGROUND_FILE, L.BACKGROUND)
-    canvas.alpha_composite(bg, (round(L.BACKGROUND[0]), round(L.BACKGROUND[1])))
-    canvas.alpha_composite(_border(card), (round(L.BORDER[0]), round(L.BORDER[1])))
+    border = _border(card, hide_badge_lobe=has_badge(card))
+    bx, by = round(L.BORDER[0]), round(L.BORDER[1])
+    silhouette = Image.new("L", border.size, 0)
+    silhouette.paste(bg.getchannel("A"),
+                     (round(L.BACKGROUND[0]) - bx, round(L.BACKGROUND[1]) - by))
+    border.putalpha(silhouette)
+    canvas.alpha_composite(border, (bx, by))
 
     draw = ImageDraw.Draw(canvas)
     colour = L.element_color(card.get("element"))
 
     # --- Valence, in the corner wedge the border art provides ---------------
+    # A colourless card hides its valence corner (BaseCard._apply_colorless_visuals).
     valence = card.get("valence")
-    if valence is not None:
+    if valence is not None and not L.is_colorless(card):
         vx, vy, vw, vh = L.VALENCE_REL
         box = (L.SYMBOL[0] + vx, L.SYMBOL[1] + vy, vw, vh)
         _draw_centered_line(draw, str(int(valence)), _font(L.VALENCE_SIZE), box,
@@ -192,19 +253,104 @@ def _base_face(card: dict) -> Image.Image:
             sub_font, (tx, y, tw, sub_h), colour)
 
     # --- Rules text ---------------------------------------------------------
-    # TextLabel is fit_content with size_flags_vertical = SHRINK_CENTER, so it
-    # grows about the CENTRE of its declared box rather than downward from the
-    # top. A three-line card sits ~46px higher than a naive top-aligned draw.
-    text = str(card.get("text") or "")
+    # Centred in TextLabel's region on its ink (rich_text.typeset). A weapon's
+    # escalate leads it, generated from the card's numbers.
+    text = weapons.text_with_lead(card, str(card.get("text") or ""))
     if text:
-        tf = _font(L.TEXT_SIZE)
-        bx, by, bw, bh = L.TEXT_BOX
-        lines = rich_text.layout(text, tf, L.wrap_width(bw))
-        text_h = rich_text.measure(lines, tf, 0)
-        rich_text.draw_centered(canvas, lines, tf,
-                                (bx, by + (bh - text_h) / 2, bw, text_h),
-                                L.TEXT_COLOR)
+        rich_text.draw_typeset(canvas, rich_text.typeset(text, L.text_region()), L.TEXT_COLOR)
     return canvas
+
+
+# ---------------------------------------------------------------------------
+# Corner badges
+# ---------------------------------------------------------------------------
+
+def magnify_amount(card: dict) -> int:
+    """The extra copies the card's Magnify properties grant (Utils.get_magnify_amount).
+    A number, or the card's valence for `{valence}` / `{self.valence}`; any
+    other run-time amount has nothing to resolve against and counts 0."""
+    total = 0
+    for prop in card.get("properties") or []:
+        if not isinstance(prop, dict) or prop.get("name") != "Magnify":
+            continue
+        amount = prop.get("amount", 1)
+        if isinstance(amount, str) and amount.strip() in ("{valence}", "{self.valence}"):
+            amount = card.get("valence")
+        try:
+            total += int(amount)
+        except (TypeError, ValueError):
+            continue
+    return max(total, 0)
+
+
+def has_badge(card: dict) -> bool:
+    """A weapon's damage, a Magnify, or both (BaseCard._badge_showing)."""
+    return weapons.is_weapon(card) or magnify_amount(card) > 0
+
+
+def _damage_badge_height() -> float:
+    """BaseCard._damage_badge_height: DAMAGE_BADGE_SCALE x the escalate pointer
+    a lone-icon text draws."""
+    font_size = round(rich_text.PREFERRED_SIZE * inline_icons.LONE_ICON_SCALE)
+    return (inline_icons.ESCALATE_HEIGHT_FRACTION * inline_icons.SYMBOL_INK_EM
+            * font_size * L.DAMAGE_BADGE_SCALE)
+
+
+def _with_badges(card: dict, frame: Image.Image) -> Image.Image:
+    """`frame` with the card's corner badges, on a canvas widened on the left
+    by `BADGE_PAD` so they can hang past the card's edge. Unchanged for a card
+    with neither.
+
+    BaseCard._push_badge_uniforms: the damage pointer, in the element's colour,
+    takes the Damage_Badge slot (its left edge, centred on its height); the
+    Magnify glyph is fitted into the Magnify_Badge rect, and moved down below
+    the pointer when both show. The damage is drawn last, on top.
+    """
+    if not has_badge(card):
+        return frame
+    pad = L.BADGE_PAD
+    out = Image.new("RGBA", (frame.width + pad, frame.height), (0, 0, 0, 0))
+    out.alpha_composite(frame, (pad, 0))
+
+    pointer = None
+    pointer_at = (0.0, 0.0)
+    damage = weapons.damage(card)
+    if damage is not None:
+        h = _damage_badge_height()
+        pointer = inline_icons.pointer(str(damage), "", h, fill=L.element_color(card.get("element")))
+        dx, dy, _, dh = L.DAMAGE_BADGE
+        pointer_at = (dx, dy + (dh - h) / 2)
+
+    amount = magnify_amount(card)
+    if amount > 0:
+        glyph = Image.open(inline_icons.SYMBOL_DIR / _magnify_file(amount)).convert("RGBA")
+        mx, my, mw, mh = L.MAGNIFY_BADGE
+        fit = min(mw / glyph.width, mh / glyph.height)
+        gw, gh = glyph.width * fit, glyph.height * fit
+        gx, gy = mx + (mw - gw) / 2, my + (mh - gh) / 2
+        if pointer is not None:
+            cx, cy, r = L.BADGE_CIRCLE_IN_ICON
+            body_top = gy + (cy - r) * gw
+            gy += pointer_at[1] + pointer.image.height + L.MAGNIFY_BELOW_DAMAGE_GAP - body_top
+        out.alpha_composite(glyph.resize((max(1, round(gw)), max(1, round(gh))), Image.LANCZOS),
+                            (round(gx) + pad, round(gy)))
+    if pointer is not None:
+        out.alpha_composite(pointer.image, (round(pointer_at[0]) + pad, round(pointer_at[1])))
+    return out
+
+
+def _magnify_file(amount: int) -> str:
+    """Utils.magnify_token: numbered glyphs to 9, then the big one."""
+    return "magnify_big.png" if amount > 9 else f"magnify_{amount}.png"
+
+
+def compose(card: dict, face: Image.Image, art: Image.Image | None) -> Image.Image:
+    """One finished frame: `face` (from `_base_face`) with `art` in its box and
+    the corner badges. Every renderer of a card face goes through here."""
+    frame = face.copy()
+    if art is not None:
+        frame.alpha_composite(art, (round(L.ART[0]), round(L.ART[1])))
+    return _with_badges(card, frame)
 
 
 def _draw_centered_line(draw, text, font, box, fill, outline=0, outline_color=(0, 0, 0)):
@@ -252,12 +398,32 @@ class _temp:
 
 
 def render_still(card: dict, art_bytes: bytes | None) -> Image.Image:
-    """The card as a single RGBA frame."""
-    face = _base_face(card)
-    art = _art_still(card, art_bytes)
-    if art is not None:
-        face.alpha_composite(art, (round(L.ART[0]), round(L.ART[1])))
-    return face
+    """The card as a single RGBA frame. Wider than the viewport, on the left,
+    when it carries a corner badge (`_with_badges`)."""
+    return compose(card, _base_face(card), _art_still(card, art_bytes))
+
+
+def body_bbox(frames, cutoff: int = ALPHA_CUTOFF):
+    """`alpha_bbox` of the card itself, leaving out a corner badge hanging past
+    its left edge (`_with_badges`). Sheets scale a tile by this, so a badged
+    card is drawn the same size as its neighbours and its badge overhangs."""
+    full = alpha_bbox(frames, cutoff)
+    if frames[0].width != L.CARD_W + L.BADGE_PAD:
+        return full
+    inner = alpha_bbox([f.crop((L.BADGE_PAD, 0, f.width, f.height)) for f in frames], cutoff)
+    return (inner[0] + L.BADGE_PAD, full[1], inner[2] + L.BADGE_PAD, full[3])
+
+
+def fit_width(frames, width: int):
+    """Frames cropped to themselves and scaled so the CARD is `width` wide.
+    Returns (frames, overhang): `overhang` is how far a badge reaches left of
+    the card, in the scaled pixels (0 for most)."""
+    full, body = alpha_bbox(frames), body_bbox(frames)
+    box = (min(full[0], body[0]), full[1], body[2], full[3])
+    scale = width / max(body[2] - body[0], 1)
+    size = (max(1, round((box[2] - box[0]) * scale)), max(1, round((box[3] - box[1]) * scale)))
+    scaled = [f.crop(box).resize(size, Image.LANCZOS) for f in frames]
+    return scaled, size[0] - width
 
 
 def alpha_bbox(frames, cutoff: int = ALPHA_CUTOFF):
@@ -365,12 +531,7 @@ def render_gif(card: dict, art_bytes: bytes | None, duration=4.0, fps=15) -> byt
     art_frames = ef.item_frames(card, art_bytes, primary, secondary,
                                 duration=duration, fps=fps)
 
-    pos = (round(L.ART[0]), round(L.ART[1]))
-    frames = []
-    for art in art_frames:
-        frame = face.copy()
-        frame.alpha_composite(art, pos)
-        frames.append(frame)
+    frames = [compose(card, face, art) for art in art_frames]
     # Every card wears the holographic material in-game
     # (scenes/cards/base_card_material.tres, `_enableHolographic = true`).
     # It is most of what a colourless catalyst looks like: white art and a white

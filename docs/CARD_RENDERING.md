@@ -13,7 +13,22 @@ since replaced.
 ## What it reproduces, and what it doesn't
 
 It recreates `scenes/cards/card.tscn` from the azoth repo: background, element
-border, art, valence, name, subtype and rules text with inline symbols.
+border, art, valence, name, subtype and rules text with inline symbols, plus the
+two things the game generates on a face that content never writes: a weapon's
+damage badge and escalate, and a Magnify badge.
+
+**Brought up to date 2026-10-17**, after the game moved on for seven weeks
+without it. What changed, and where each part is described below:
+
+| The game changed | Since | Here |
+|---|---|---|
+| Rules text is set by its own typesetter (size, balanced breaks, lobe margins, centred on the ink), not a RichTextLabel | 2026-09-27 | [Rules text](#rules-text) |
+| Numbered icons are blank bases with the number set in the card font; bonus and mult are tags | 2026-09-27 | [Inline icons](#inline-icons) |
+| The border is four signed distance fields; the per-element PNGs are gone; a colourless card's blobs are a rainbow | 2026-09 | [The border](#the-border) |
+| Weapons: the `[20damage]` / `[escalate3]` tokens, the corner damage badge, the escalate leading the text | 2026-10-09 to 10-17 | [Weapons and corner badges](#weapons-and-corner-badges) |
+| Magnify glyphs (`[magnify_N]`) and a Magnify corner badge | 2026-09-27 | same |
+| New tokens: `_inv` hearts, `[17life]`, `[perm_bonus]`, `[32perm_bonus]`, the rite / refract / revolving icons; `[ether]` removed | various | a re-sync |
+| A rite's name moved up 20px and follows a short text down; aspects' too | 2026-09-28 | [Rules text](#rules-text) |
 
 **Deliberately not reproduced:**
 
@@ -78,6 +93,132 @@ non-rendering callers want the authored string, so `{luck_chance` stays findable
 Placeholders resolve **before** symbol tokens, matching the game's order: a
 placeholder can sit inside a symbol (`[{levelup.level}life]`). Nothing live does
 that here — levelups are not rendered — so it is insurance, not a fix.
+
+## Rules text
+
+`azoth_logic/typesetter.py` is a port of the game's `Typesetter` and
+`CardLobeMargin` (azoth `scripts/helpers/typesetter.gd`, `docs/TYPESETTER.md`);
+`rich_text.typeset` runs it over words built from the card's tokens, and
+`rich_text.draw_typeset` draws the result.
+
+- **The search.** For every size 32 to 46, cheapest size cost first and
+  stopping once a size's cost alone cannot win, and every line count from the
+  fewest that fit to two more: centre the empty block so each line's available
+  width is known, break each paragraph with the same dynamic program and the
+  same costs (balance, fill, widows, clinging words, punctuation discounts,
+  detached numbers, zigzags), place it on its real ink and check every line
+  where it landed. If nothing fits, the smallest size spills.
+- **A lone icon** (`[2bonus]`, `[magnify_2]`, an escalate alone) skips the
+  search and is set at 1.33 x 40.
+- **The region.** A card's text is centred in TextLabel's rect (x +-220,
+  from the art's bottom to the card's visible bottom edge at y 829.5), its ink
+  16px inside top and bottom. Lines also keep 11px plus the border's breathing
+  from the two bottom-right lobes, read from the same blobs the border is
+  painted from, with a running minimum so a lower line never gets room back.
+  Aspects and rites have no lobes; rites use a 12px clearance.
+- **The name follows the text** on aspects and rites (`aspect_card.gd
+  _on_text_laid_out`): its box sits `clearance` above the first line's ink,
+  never above its authored spot. The rite's name moved up 20px (184.5 ->
+  164.5) when the typesetter went in.
+- **No advance correction.** The typesetter measures with
+  `Font.get_string_size`, which agrees with PIL. The 2.6% `GODOT_ADVANCE_RATIO`
+  below was measured on the old RichTextLabel and now applies only to the name
+  and subtype Labels. Run over every shipped text, the port chose the game's
+  size and breaks for 204 of 223 with the correction and 222 without it.
+
+**Checked against the game.** `tests/fixtures/typeset_reference.json` holds
+what the game's typesetter chose for every shipped card, aspect and rite text,
+and `tests/test_typesetter.py` asserts the port agrees on all but one (the one
+miss is a size one point apart). Regenerate it when the game's typesetter or the
+shipped content changes a lot:
+
+```bash
+# in the azoth repo, windowed (docs/DEVELOPMENT_PROCESS.md)
+printf '[display]\n\nwindow/size/mode=0\nwindow/size/window_width_override=1280\nwindow/size/window_height_override=720\n' > override.cfg
+$GODOT --path . tools/CardRenderTool.tscn -- --windowed --in=all.json --out=/tmp/ts --print > typeset.txt; rm -f override.cfg
+```
+
+`all.json` is a JSON array of `assets/game_data/{cards,aspects,rites}/*.json`
+(each with its `content_type`); the `typeset NAME size N ... | line / line`
+rows are the reference. Leave out texts with run-time tokens: `{...}`
+placeholders, and aspects' rolled `[Easy]` / `[Medium repeatable]` conditions,
+which the tool rolls and the bot (like the Codex) shows as written.
+
+## Inline icons
+
+`azoth_logic/inline_icons.py` is the port of `InlineIcons` and the icon half
+of the typesetter. A token resolves to a file through the vendored
+`card_symbols.json` (or, for a weapon token, through the number in its name),
+and the file to how it is drawn:
+
+| Kind | Files | Drawn as |
+|---|---|---|
+| Recipe: blank base + number | `generic_N`, `Nlife`, `Nlife_inv`, `Ncombo` | `generic_empty` / `life` / `combo` with "N" set in Aldrich on its ink: caps 0.45 of the ink height, held to 0.62 of its width, raised 2%, near-black (white on a black heart for `_inv`), stroked to thicken it |
+| Recipe: tag | `Nbonus` -> "xN", `NptMbonus` -> "xN.M", `Nmult` -> "N" | A rounded rectangle 0.8 x 1.25 x the size tall, as wide as its label plus padding and never narrower than tall; the token's tint lands on it (perma bonus is a gold tag) |
+| Recipe: pointer | `Ndamage`, `escalateN` | A pointer, square left edge and a point right: white with "N" (damage), or gold with a triangle and "N" (escalate) |
+| Symbol | the hexagons, valence and element icons, the pattern icons | Its PNG, anchored on `generic_empty`'s hexagon so a pattern icon's badge hangs below |
+| Operator | `and_icon`, `or_icon` | Bold "&" / "\|\|" words with ordinary spacing |
+| Anything else | `[up]`, `[inert]`, `[magnify_N]`, ... | Its PNG at its token's authored height (50, or 67.5 for life / mult / bonus / magnify) x size / 40 |
+
+Every symbol's anchor is 1.25 x the size; every icon occupies its INK width
+in the line and is centred on the capitals by its anchor. Tints multiply, as
+Godot's `modulate` does, so a hexagon's black outline stays black. Shapes and
+labels are drawn at 4x and scaled down for antialiasing.
+
+## The border
+
+The game paints a card's body and element blobs with `card_border_dim.gdshader`
+over four signed distance fields fitted to the old border PNG
+(`card_border_blobs.gdshaderinc`), and no longer loads the per-element or split
+border PNGs. `card_render._border` is that shader: `sync_assets` parses the
+blobs into `assets/card_art/border_blobs.json`, each blob a log-sum-exp smooth
+maximum of a few half-planes, coverage `clamp(0.5 - d / fwidth(d))`.
+
+- The body is `dim_color` (22, 22, 22); the blobs are the element's colour.
+- **A split card** paints its second element on the left-right mirror of the
+  blobs, which is what the old split PNG was.
+- **A colourless card** (catalyst, boss reward) wears the shader's rainbow,
+  frozen at TIME = 0, and shows no valence corner
+  (`BaseCard._apply_colorless_visuals`).
+- **`hide_badge_lobe`** drops blob 1, the small lobe under the top-left
+  corner, whenever a corner badge shows.
+- The blobs' breathing and edge wave are motion and are not drawn; at rest
+  they sit on the fitted shape. The silhouette is still the background PNG's
+  alpha.
+
+## Weapons and corner badges
+
+A card whose `Weapon` property prints `damage` is a weapon (azoth
+`docs/WEAPONS.md`). `azoth_logic/weapons.py` reads its numbers as
+`GameContentData.get_effective_attr` does: a key on the row first (an upgrade
+tier writes `{"damage": 150}` there), then the property.
+
+- **The escalate leads the text** (`CardTextComposer._lead_with_escalate`):
+  `[escalate3], Draw 1`, or the badge alone for a card that prints nothing
+  else, with the game's wording for when it escalates if not on its play and
+  what each step counts (`Held: [escalate1] per life lost`). The words are the
+  game's `WEAPON_ESCALATES_*` translations, vendored by `sync_assets` into
+  `assets/card_art/weapon_text.json`. A weapon that does not escalate adds no
+  text.
+- **The damage is a corner badge** (`BaseCard._push_badge_uniforms`): the
+  damage pointer in the element's colour with a near-black number, 1.3 x the
+  lone escalate pointer's height, its left edge and vertical centre from
+  `card.tscn`'s hidden `Damage_Badge` node.
+- **Magnify gets a badge too**: the `magnify_N` glyph (`magnify_big` past 9)
+  for the extra copies its Magnify properties grant, fitted into
+  `Magnify_Badge`'s rect and moved below the damage pointer when both show.
+  The printed `[magnify_N]` in the text stays.
+
+Both badges hang past the card's left edge, where the game draws them from
+`base_card_shader` rather than inside the card's viewport. So
+`card_render._with_badges` puts a badged card on a canvas `BADGE_PAD` (56px)
+wider on the left, and every card renderer goes through `card_render.compose`
+(face + art + badges). Sheets scale a tile by the card's body, not its badge
+(`card_render.fit_width`), and give every tile the widest overhang as a left
+margin, so a weapon is the same size as the card beside it.
+
+Not reproduced: the badges' drop shadow and glow rim (the shader unions their
+shapes into the card's), as no drop shadow is drawn for the card either.
 
 ## Holographic sheen
 
@@ -201,7 +342,10 @@ renders as a silent gap, so `Upgraded -> Aspect` came out as `Upgraded   Aspect`
 | File | Role |
 |---|---|
 | `azoth_logic/card_layout.py` | Geometry and type styling, transcribed from `card.tscn` |
-| `azoth_logic/rich_text.py` | Symbol tokens, wrapping, centred layout |
+| `azoth_logic/rich_text.py` | Tokens to runs, words, Label rows (names), and drawing the typeset text |
+| `azoth_logic/inline_icons.py` | How each inline icon is drawn: recipes, tags, weapon pointers, ink and anchor. See [Inline icons](#inline-icons) |
+| `azoth_logic/typesetter.py` | The game's typesetter: size, breaks, lobe margins, placement. See [Rules text](#rules-text) |
+| `azoth_logic/weapons.py` | A weapon's numbers and the escalate text. See [Weapons and corner badges](#weapons-and-corner-badges) |
 | `azoth_logic/placeholders.py` | `{...}` display placeholders — see [Display placeholders](#display-placeholders) |
 | `azoth_logic/eigenfunction_art.py` | `.exr` art — the port of `split_card_image.gdshader` — and `item_frames` / `item_still`, which pick an item's art source |
 | `azoth_logic/procedural_art.py` | Procedural art (`image_data.art`) — the port of `procedural_art.gdshaderinc` and `ArtVisuals`. See [Procedural art](#procedural-art) |
@@ -354,26 +498,9 @@ was wanted.
 11 of 400 cards carry `split: {element, valence}` — a second face. Three things
 change, all driven off that one field:
 
-**A second border, blended not stacked.** `card_border_dim.gdshader` merges both
-into one draw:
-
-```
-coverage = clamp(split.a / max(base.a, 1e-4), 0, 1)
-rgb      = mix(base.rgb, split.rgb, coverage)
-alpha    = base.a
-```
-
-Two details a plain alpha-composite gets wrong, both called out in the shader's
-own comments:
-
-- Coverage is the split's alpha **normalised by the base's**, not the split's
-  alpha directly. At the antialiased rim both textures fade together, so raw
-  alpha lets the base bleed through and the split's edge reads as a soft double
-  line. (Measured over the 3,691 rim pixels of the anima/sol pair: normalised
-  coverage averages 0.96, raw 0.87 — and the residual against the split colour is
-  0.011 vs 0.048.)
-- Alpha comes from the **base alone**. If the split contributed alpha it would
-  widen the silhouette and the card would gain a second, fatter outline.
+**A second element on the mirrored blobs.** See [The border](#the-border). Until
+2026-10-17 this blended a second border PNG over the first, a port of the
+shader's texture era; the game draws the mirrored SDF now.
 
 **A second valence** in the opposite top corner (`VALENCE2_REL`), hidden by
 default in `card.tscn` and shown only by `set_split_card_visuals()`.
@@ -392,17 +519,16 @@ as split at a glance.
 
 Each of these is somewhere the code alone is misleading. All are pinned by tests.
 
-**Symbols are sized 50px, not the label's 40.** `base_card.gd:979` calls
-`Utils.replace_icon_from_dict(resolved_base)` with **no size argument**, so every
-card symbol uses that function's `font_size = 50` default. Confirmed by rendering
-one token on an otherwise identical card in Godot and differencing against a
-blank one: base height is exactly 1.25 × the label's 40px font. Sizing off the
-label makes every symbol 20% too small and changes line breaks.
+**Symbols were sized 50px, not the label's 40** — in the RichTextLabel era.
+The typesetter keeps the proportion (a symbol's anchor is 1.25 x the size) but
+measures it on the ink and scales it with the chosen size; see
+[Inline icons](#inline-icons).
 
-**Godot's advance is ~2.6% wider than PIL's.** Measured on `"per card drawn"` at
-size 40: Godot 321px, PIL 312.8px. Cap heights match exactly, so this is spacing,
-not scale — but it flips break decisions on near-full lines.
-`card_layout.wrap_width()` shrinks the wrap width by that ratio.
+**Godot's Label advance is ~2.6% wider than PIL's.** Measured on `"per card
+drawn"` at size 40 in the old RichTextLabel: Godot 321px, PIL 312.8px.
+`card_layout.wrap_width()` still applies it to the name and subtype Labels. It
+does **not** apply to rules text: the typesetter measures with
+`Font.get_string_size`, which matches PIL (see [Rules text](#rules-text)).
 
 **The valence outline is black.** `ValenceLabel` sets `outline_size = 3` but not
 `font_outline_color`, so it takes Godot's black theme default — black text with a
@@ -462,6 +588,9 @@ sinking the whole sheet.
 | Grid | 10 columns, 200px cards | 110 cards → 2110×3640, ~2 MB |
 | Grid cap | 200 cards | Refused with a message rather than silently truncated |
 | Hand | 6 cards, 300px, 26° spread | Seeded draws are reproducible |
+
+A badged card's badge overhangs its tile into a left margin every tile in the
+sheet shares (see [Weapons and corner badges](#weapons-and-corner-badges)).
 
 The hand fans about a pivot **below** the cards, so they splay from a common
 point. Rotating each card about its own centre reads as scattered rather than
@@ -786,9 +915,15 @@ python -m tools.sync_assets --azoth ../azoth
 python -m tools.sync_assets --azoth ../azoth --dry-run   # report only
 ```
 
-It copies the borders, background and every symbol the tokens reference, and
-regenerates `assets/card_art/card_symbols.json` by parsing `Utils.replace_dict`
-out of `utils.gd` — so a new symbol token needs a sync, not a code change.
+It copies the background, the font, the Bessel table and every symbol the
+tokens reference, and generates three files from the game's source:
+`assets/card_art/card_symbols.json` from `Utils.replace_dict`,
+`border_blobs.json` from `card_border_blobs.gdshaderinc` and
+`weapon_text.json` from the `WEAPON_ESCALATES_*` translations. A new symbol
+token, a refitted border or reworded weapon badge needs a sync, not a code
+change. A new numbered FAMILY (a recipe) or weapon token does need code:
+`inline_icons.RECIPES`. The sync never deletes, so a symbol the game retires
+stays vendored until removed by hand.
 
 **It does not copy the aspect and rite backgrounds, and cannot.** They are shader
 output, not files in the game repo — see [The backgrounds are
@@ -815,11 +950,16 @@ here is the checklist:
    `centre + offset` from the scene. Node moved, resized, font changed → update
    the constant.
 3. **Check the render path in `base_card.gd`.** `configure_display()`,
-   `apply_card_image()` and `_render_dynamic_text()` are where behaviour lives.
-4. **Re-verify the measured constants above** if text or symbols look off. The
+   `apply_card_image()` and `_render_dynamic_text()` are where behaviour lives;
+   `_push_badge_uniforms()` lays out the corner badges.
+4. **Check the typesetter.** `typesetter.gd` and `inline_icons.gd` against
+   `azoth_logic/typesetter.py` and `inline_icons.py` (constants by the same
+   names), then regenerate `tests/fixtures/typeset_reference.json`
+   ([Rules text](#rules-text)).
+5. **Re-verify the measured constants above** if text or symbols look off. The
    method that produced them: render a card in Godot, render the same card here,
    and difference the two.
-5. **Run the tests.** `pytest tests/test_card_render.py` fails on layout drift —
+6. **Run the tests.** `pytest tests/test_card_render.py` fails on layout drift —
    but only where a constant is asserted on. There is no golden-file comparison
    against Godot in the suite (see [TESTING.md § Gaps](TESTING.md#gaps)), so a
    node that moves without changing a pinned constant will not be caught.
@@ -838,12 +978,24 @@ Needs a real display driver — `--headless` installs the dummy renderer, whose
 `texture_2d_get()` returns null, so viewport captures come back empty. This is a
 development aid only; the bot never calls it.
 
+Launch it **windowed** (the `override.cfg` + `-- --windowed` recipe in the azoth
+repo's `docs/DEVELOPMENT_PROCESS.md`; a plain launch goes fullscreen). Two
+things it does not show: the corner badges (they are drawn by the card's
+shader, outside the viewport it captures) and the card's rounded silhouette
+(captured before the shader crops it). `--print` logs each text's chosen size
+and breaks, which is what the typesetter fixture is made from. Aspects are
+cloned for a run first, so their rolled conditions come out as icons.
+
 ## Known differences from the game
 
-- **Line breaks can differ by a word.** PIL and Godot shape text differently; the
-  advance correction gets most of the way, not all.
-- **Long text overflows the card bottom.** The game does this too — verified on
-  `Multmaxer` — so it is reproduced rather than fixed.
+- **Rules text matches the game's size and breaks for 222 of 223 shipped
+  texts** ([Rules text](#rules-text)). Glyph shaping still differs a little
+  (PIL vs Godot's FreeType settings), so a line's ink can sit a pixel off.
+- **Text that fits nowhere spills** at 32pt, as the game's does.
+- **Rolled aspect conditions read as written** (`[Easy]: $20`): the game rolls
+  them when a run starts; out of a run, the Codex shows the same tag.
+- **The catalyst rainbow and the border's breathing are frozen** at one moment;
+  in game both move.
 - **Subtype-less cards render a blank line here, `Arcane` in-game.** That is a
   *game* bug: `card.tscn` ships `TypeLabel` with `text = "[center]Arcane"` and
   `base_card.gd` only overwrites it when `subtypes` is non-empty, so the scene

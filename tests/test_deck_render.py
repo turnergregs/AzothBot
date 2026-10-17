@@ -536,3 +536,23 @@ def test_faces_of_different_shapes_are_centred_not_stretched(sides, monkeypatch)
         [_card("A"), _card("B")], ["card", "aspect"], ["Base", "Upgraded"])
     sheet = Image.open(io.BytesIO(data))
     assert sheet.height >= tall.height, "the row fits the tallest face"
+
+
+def test_a_badged_card_is_drawn_the_same_size_as_its_neighbours(monkeypatch):
+    """A corner badge hangs past the card's left edge. Tiles are scaled by the
+    card body and every tile gets the badge's overhang as a left margin, so a
+    weapon is not drawn smaller than the card beside it."""
+    from azoth_logic import card_render
+    monkeypatch.setattr(deck_render, "fetch_art_many", lambda cards, kinds=None: {})
+    plain = {"name": "Plain", "element": "sol", "valence": 2, "text": "Draw 1"}
+    # Magnify's glyph overhangs furthest, about half its width past the edge.
+    badged = {"name": "Swell", "element": "blood", "valence": 1, "text": "[magnify_2]",
+              "properties": [{"name": "Magnify", "amount": 2}]}
+    tiles = deck_render._faces([plain, badged], 200)
+    assert tiles[0].size == tiles[1].size
+    assert tiles[0].width > 200, "the plain tile carries the badge's margin too"
+    # The lower half of a tile is all card: no badge reaches it.
+    lower = [card_render.alpha_bbox([t.crop((0, t.height // 2, t.width, t.height))]) for t in tiles]
+    assert abs((lower[0][2] - lower[0][0]) - (lower[1][2] - lower[1][0])) <= 2, "one card size"
+    assert abs(lower[0][0] - lower[1][0]) <= 2, "the cards line up"
+    assert lower[1][0] > 5, "the badge's margin is left of the card"

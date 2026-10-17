@@ -28,7 +28,42 @@ BORDER     = _box(-300, -409, 300, 407)     # PreviouslyImage -- the element bor
 ART        = _box(-137, -129, 138, 146)     # Image -- 275x275, the EXR/PNG art
 SYMBOL     = _box(-270, -368.5, -202, -300.5)   # Symbol -- 68x68, top-left corner
 TITLE_BOX  = _box(-175, -348.5, 175, -162.5)    # VBoxContainer: name + subtype
-TEXT_BOX   = _box(-206, 251.5, 194, 307.5)      # TextLabel -- rules text
+# TextLabel, a TypesetLabel since 2026-09-27: the space the text is centred in.
+# Top is the art's bottom; the bottom is clipped to the card's visible
+# silhouette (BaseCard.silhouette_viewport_rect, y 64.5 -> 829.5), then both are
+# inset by `clearance` (TypesetLabel's default, 16). Centred on the viewport.
+TEXT_REGION = _box(-220, 146, 220, 406)
+SILHOUETTE_BOTTOM = 829.5
+TEXT_CLEARANCE = 16.0
+# card.tscn's TextLabel keeps this from the bottom lobes (lobe_reference =
+# PreviouslyImage, whose box is the border's own 600x816 pixel space).
+TEXT_LOBE_CLEARANCE = 11.0
+
+
+def text_region():
+    """TextLabel's typesetter region, lobes included."""
+    from azoth_logic.typesetter import Region
+    x, y, w, h = TEXT_REGION
+    return Region(x, y, x + w, min(y + h, SILHOUETTE_BOTTOM), clearance=TEXT_CLEARANCE,
+                  lobes=True, to_border=(-BORDER[0], -BORDER[1]),
+                  lobe_clearance=TEXT_LOBE_CLEARANCE)
+
+# The corner badges hang off the card's left edge, past the viewport -- the
+# game draws them in base_card_shader, where nothing in the SubViewport reaches.
+# Both reference nodes are anchors_preset 0: offsets from the viewport ORIGIN,
+# not its centre.
+DAMAGE_BADGE = (-5.0, 223.5, 88.0, 69.0)             # Damage_Badge: left edge, v-centre
+MAGNIFY_BADGE = (-47.333344, 200.33333, 124.913974, 112.66667)   # Magnify_Badge
+# BaseCard: the damage pointer is this x the lone escalate pointer's height.
+DAMAGE_BADGE_SCALE = 1.3
+# BaseCard.MAGNIFY_BELOW_DAMAGE_GAP: between the pointer and Magnify's body.
+MAGNIFY_BELOW_DAMAGE_GAP = 10.0
+# BaseCard.BADGE_CIRCLE_IN_ICON: Magnify's round body in its glyph, as fractions
+# of the glyph's width (x, y, radius).
+BADGE_CIRCLE_IN_ICON = (26.48 / 51.0, 26.0 / 51.0, 22.12 / 51.0)
+# How far left of the viewport a badge can reach, plus a margin: the canvas a
+# badged card is drawn on is this much wider.
+BADGE_PAD = 56
 
 # ValenceLabel is a child of Symbol, so its offsets are relative to SYMBOL.
 VALENCE_REL = (15.667, 2.0, 41.0, 57.0)     # x, y, w, h within SYMBOL
@@ -59,7 +94,6 @@ NAME_OUTLINE_COLOR = (255, 255, 255)        # explicitly overridden in card.tscn
 SUBTYPE_SIZE = 35       # TypeLabel normal_font_size
 TITLE_SEPARATION = 15   # VBoxContainer theme_override_constants/separation
 
-TEXT_SIZE = 40          # TextLabel normal_font_size
 TEXT_COLOR = (255, 255, 255)
 
 VALENCE_SIZE = 60       # ValenceLabel font_size
@@ -70,9 +104,12 @@ VALENCE_OUTLINE = GODOT_OUTLINE_3
 # an outline. (NameLabel is the opposite: it overrides the colour to white.)
 VALENCE_OUTLINE_COLOR = (0, 0, 0)
 
-# Godot lays text out ~2.6% wider than PIL does for the same font and size.
-# Measured on the rules line "per card drawn" at size 40: Godot 321px, PIL
-# 312.8px. Cap heights match exactly, so this is advance/spacing, not scale.
+# Godot's RichTextLabel laid text out ~2.6% wider than PIL does for the same
+# font and size. Measured on the rules line "per card drawn" at size 40: Godot
+# 321px, PIL 312.8px. Cap heights match exactly, so this is advance/spacing, not
+# scale. Used now only for the name and subtype: rules text goes through the
+# typesetter, which measures with Font.get_string_size and agrees with PIL
+# uncorrected (azoth_logic/typesetter.py).
 #
 # It only matters for WRAPPING: a line that just fits in PIL can overflow in
 # Godot, so break points drift and the card reads differently. Shrinking the
@@ -86,7 +123,7 @@ def wrap_width(box_width: float) -> float:
     return box_width / GODOT_ADVANCE_RATIO
 
 # Element colours, matching GlobalVars / the game's symbol tints. Used for the
-# subtype line and the art's accent zone.
+# border blobs, the subtype line, the art's accent zone and the damage badge.
 ELEMENT_COLORS = {
     "blood": (255, 0, 0),
     "sol": (249, 164, 16),
@@ -94,27 +131,16 @@ ELEMENT_COLORS = {
 }
 DEFAULT_ELEMENT_COLOR = (255, 255, 255)
 
-# Border file per element, from BaseCard.border_paths. A null element -> default.
-BORDER_FILES = {
-    "default": "blurred_white_border_noline.png",
-    "anima": "blurred_anima_border_noline.png",
-    "blood": "blurred_blood_border_noline.png",
-    "sol": "blurred_sol_border_noline.png",
-}
 BACKGROUND_FILE = "blurred_card_background2.png"
-
-# A split card draws a SECOND border over the first. BaseCard.border_paths keys
-# these "split_<element>", falling back to the default border for anything else.
-SPLIT_BORDER_FILES = {
-    "anima": "blurred_second_anima_border3.png",
-    "blood": "blurred_second_blood_border3.png",
-    "sol": "blurred_second_sol_border3.png",
-}
+# card_border_dim.gdshader's dim_color: the card body painted under the blobs.
+FACE_COLOR = (22, 22, 22)
 
 
-def split_border_file(element):
-    """The overlay border for a split card's second face, or None."""
-    return SPLIT_BORDER_FILES.get((element or "").lower())
+def is_colorless(card) -> bool:
+    """No element: a catalyst or a boss reward. The game paints its border
+    blobs in a rainbow and shows no valence corner
+    (BaseCard._apply_colorless_visuals)."""
+    return not (card.get("element") or "")
 
 
 def split_face(card):
@@ -131,8 +157,3 @@ def split_face(card):
 
 def element_color(element):
     return ELEMENT_COLORS.get((element or "").lower(), DEFAULT_ELEMENT_COLOR)
-
-
-def border_file(element):
-    key = (element or "default").lower()
-    return BORDER_FILES.get(key, BORDER_FILES["default"])

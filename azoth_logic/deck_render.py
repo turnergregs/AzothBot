@@ -20,7 +20,6 @@ from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageDraw
 
 from azoth_logic import art_cache
-from azoth_logic import card_layout as L
 from azoth_logic import card_render
 from azoth_logic import eigenfunction_art as ef
 from azoth_logic import holo
@@ -183,22 +182,30 @@ def _faces(cards, width: int, kinds=None):
     scaled = []
     for i, card in enumerate(cards):
         kind = kinds[i] if kinds else "card"
-        face = _still_for(card, kind, art.get(id(card)))
-        face = face.crop(card_render.alpha_bbox([face]))
-        height = max(1, round(face.height * width / face.width))
-        scaled.append(face.resize((width, height), Image.LANCZOS))
+        (face,), overhang = card_render.fit_width([_still_for(card, kind, art.get(id(card)))], width)
+        scaled.append((face, overhang))
+    return _uniform_tiles(scaled, width)
 
-    # A grid needs uniform tiles -- `render_grid` sizes every cell from the
-    # first face. The residual 1% of height difference is padded, never scaled
-    # away: stretching to match is the distortion this function just removed.
-    tall = max(f.height for f in scaled)
+
+def _uniform_tiles(scaled, width: int) -> list:
+    """Faces from `card_render.fit_width` on tiles of one size.
+
+    A grid needs uniform tiles -- `render_grid` sizes every cell from the
+    first face. The residual 1% of height difference is padded, never scaled
+    away: stretching to match is the distortion `_faces` removed. A corner
+    badge hangs left of its card (`card_render._with_badges`), so every tile
+    gets the widest overhang as a left margin, keeping the cards themselves
+    one size and in line.
+    """
+    margin = max(o for _, o in scaled)
+    tall = max(f.height for f, _ in scaled)
     out = []
-    for face in scaled:
-        if face.height == tall:
+    for face, overhang in scaled:
+        if face.height == tall and overhang == margin:
             out.append(face)
             continue
-        tile = Image.new("RGBA", (width, tall), (0, 0, 0, 0))
-        tile.alpha_composite(face, (0, (tall - face.height) // 2))
+        tile = Image.new("RGBA", (width + margin, tall), (0, 0, 0, 0))
+        tile.alpha_composite(face, (margin - overhang, (tall - face.height) // 2))
         out.append(tile)
     return out
 
@@ -253,13 +260,7 @@ def _frames_for(item, kind, art, duration: float, fps: int) -> list:
         arts = ef.item_frames(item, art, primary, secondary, duration=duration, fps=fps)
     if arts:
         face = card_render._base_face(item)
-        pos = (round(L.ART[0]), round(L.ART[1]))
-        frames = []
-        for art_frame in arts:
-            frame = face.copy()
-            frame.alpha_composite(art_frame, pos)
-            frames.append(frame)
-        return frames
+        return [card_render.compose(item, face, art_frame) for art_frame in arts]
 
     if kind == "aspect":
         base, accent = fate_render.aspect_art_colors(item)
@@ -331,10 +332,8 @@ def _comparison_sides(items, kinds, art, width: int, animate: bool,
     for index, (item, kind) in enumerate(zip(items, kinds)):
         frames = (_frames_for(item, kind, art.get(id(item)), duration, fps)
                   if animate else [_still_for(item, kind, art.get(id(item)))])
-        box = card_render.alpha_bbox(frames)
-        cropped = [f.crop(box) for f in frames]
-        height = max(1, round(cropped[0].height * width / cropped[0].width))
-        frames = [f.resize((width, height), Image.LANCZOS) for f in cropped]
+        # The CARD is `width` wide; a corner badge overhangs it on the left.
+        frames, overhang = card_render.fit_width(frames, width)
 
         # After the resize, not before: the sheen is a smooth gradient, so
         # there is nothing to lose by computing it over four times fewer pixels.
@@ -345,8 +344,19 @@ def _comparison_sides(items, kinds, art, width: int, animate: bool,
         level = (holo_levels or [])[index] if holo_levels else 0.0
         if level:
             frames = holo.apply_all(frames, intensity=level)
-        sides.append(frames)
-    return sides
+        sides.append((frames, overhang))
+    # Every side gets the widest badge overhang as a left margin, so the cards
+    # line up and keep one size.
+    margin = max(overhang for _, overhang in sides)
+    return [[_pad_left(f, margin - overhang) for f in frames] for frames, overhang in sides]
+
+
+def _pad_left(frame, pad: int):
+    if pad <= 0:
+        return frame
+    out = Image.new("RGBA", (frame.width + pad, frame.height), (0, 0, 0, 0))
+    out.alpha_composite(frame, (pad, 0))
+    return out
 
 
 def render_comparison(items, kinds, labels, holo_levels=None,
@@ -387,7 +397,9 @@ def render_comparison(items, kinds, labels, holo_levels=None,
 
     sides = _comparison_sides(items, kinds, art, card_width, moving, duration, fps,
                               holo_levels)
-    cw = card_width
+    # Every side carries the same left margin for a hanging badge (0 for most).
+    cw = max(side[0].width for side in sides)
+    margin = cw - card_width
     # A card crop and an aspect crop are different shapes, so the faces can
     # differ in height. The row is as tall as the tallest and the others are
     # centred in it -- stretching either to match would put back exactly the
@@ -407,11 +419,11 @@ def render_comparison(items, kinds, labels, holo_levels=None,
     draw = ImageDraw.Draw(board)
     font = card_render._font(COMPARE_LABEL_SIZE)
     for i, label in enumerate(labels):
-        x = COMPARE_GUTTER + i * (cw + COMPARE_GUTTER)
-        # Centred under its own face, not under the sheet.
+        x = COMPARE_GUTTER + i * (cw + COMPARE_GUTTER) + margin
+        # Centred under its own card, not under the sheet or the badge.
         left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
         draw.text(
-            (x + (cw - (right - left)) // 2 - left,
+            (x + (card_width - (right - left)) // 2 - left,
              COMPARE_GUTTER + ch + (COMPARE_LABEL_BAND - (bottom - top)) // 2 - top),
             label, font=font, fill=(235, 235, 235))
 

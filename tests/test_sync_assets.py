@@ -73,20 +73,66 @@ def test_a_complete_set_reports_clean(tmp_path, monkeypatch, capsys):
     dest.mkdir(parents=True)
     (dest / "only.png").write_bytes(b"x")
 
-    # A complete fake checkout: every border, the font and the Bessel table the
-    # script copies.
+    # A complete fake checkout: the background, the font and the Bessel table
+    # the script copies, and the two files it parses.
     azoth = tmp_path / "azoth"
     (azoth / "scripts/autoloads").mkdir(parents=True)
     (azoth / "scripts/autoloads/utils.gd").write_text("var replace_dict = {\n}\n")
-    for rel in list(sync_assets.BORDERS.values()) + [sync_assets.BACKGROUND,
-                                                     sync_assets.FONT,
-                                                     sync_assets.BESSEL_TABLE]:
+    for rel in (sync_assets.BACKGROUND, sync_assets.FONT, sync_assets.BESSEL_TABLE):
         src = azoth / rel
         src.parent.mkdir(parents=True, exist_ok=True)
         src.write_bytes(b"x")
+    blobs = azoth / sync_assets.BORDER_BLOBS
+    blobs.parent.mkdir(parents=True, exist_ok=True)
+    blobs.write_text(FAKE_BLOBS)
+    translations = azoth / sync_assets.TRANSLATIONS
+    translations.parent.mkdir(parents=True, exist_ok=True)
+    translations.write_text("keys,en\nWEAPON_ESCALATES_PER_HELD,per card held\n")
 
     assert sync_assets.sync(azoth, dry_run=True) == 0
     assert "not managed by this script" in capsys.readouterr().out
+
+
+FAKE_BLOBS = """const vec2 BORDER_PX = vec2(600.0, 816.0);
+
+float border_blob_0(vec2 p) {
+	float v0 = dot(p, vec2(0.995542, 0.094319)) - 146.544790;
+	float v1 = dot(p, vec2(0.039147, -0.999233)) - -110.280764;
+	float m = max(v0, v1);
+	const float K = 12.547462;
+	return m + K * log(exp((v0 - m) / K) + exp((v1 - m) / K));
+}
+"""
+
+
+def test_border_blobs_parse_negative_offsets(tmp_path):
+    """`- -110.28` is a plane whose offset is negative, not a typo to skip."""
+    inc = tmp_path / "blobs.gdshaderinc"
+    inc.write_text(FAKE_BLOBS)
+    parsed = sync_assets.parse_border_blobs(inc)
+    assert parsed["size"] == [600.0, 816.0]
+    (blob,) = parsed["blobs"]
+    assert blob["planes"] == [[0.995542, 0.094319, 146.54479], [0.039147, -0.999233, -110.280764]]
+    assert blob["k"] == 12.547462
+
+
+def test_border_blobs_parse_from_the_real_game():
+    azoth = Path(__file__).resolve().parent.parent.parent / "azoth"
+    inc = azoth / sync_assets.BORDER_BLOBS
+    if not inc.is_file():
+        pytest.skip("no azoth checkout beside this repo")
+    parsed = sync_assets.parse_border_blobs(inc)
+    assert len(parsed["blobs"]) == 4, "card_render and the typesetter read blobs 1, 2 and 3"
+
+
+def test_weapon_text_parses_from_the_real_game():
+    azoth = Path(__file__).resolve().parent.parent.parent / "azoth"
+    csv = azoth / sync_assets.TRANSLATIONS
+    if not csv.is_file():
+        pytest.skip("no azoth checkout beside this repo")
+    strings = sync_assets.parse_weapon_text(csv)
+    assert all(k.startswith("WEAPON_ESCALATES_") for k in strings)
+    assert any("{ESCALATE}" in v for v in strings.values())
 
 
 def test_a_non_azoth_path_is_refused(tmp_path):

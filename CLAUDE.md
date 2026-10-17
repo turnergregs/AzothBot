@@ -148,6 +148,15 @@ All docs live in `docs/`. Read before changing a system.
   is also the game's behaviour. It is applied inside `rich_text.tokenize`, the one
   function every drawn string passes through, so a new render surface cannot miss
   it; `/show` prints rather than draws and calls it itself.
+- **Card text is laid out by a port of the game's typesetter** (2026-10-17):
+  `azoth_logic/typesetter.py` (size 32-46, breaks, lobe margins, ink
+  centring) over icons built by `azoth_logic/inline_icons.py` (numbers on
+  blank bases, bonus / mult tags, weapon pointers). It is checked against
+  what the game chose for every shipped text
+  (`tests/fixtures/typeset_reference.json`); regenerate that fixture when the
+  game's typesetter changes. Weapons and Magnify get corner badges hanging off
+  the card's left edge, so a badged face is `BADGE_PAD` wider. See
+  `docs/CARD_RENDERING.md` § Rules text and § Weapons and corner badges.
 - **Renders must not run on the event loop.** They download art and run PIL/numpy
   for seconds at a time. `asyncio.wait_for` cannot interrupt blocking work, so a
   render left inline starves the gateway heartbeat *and* defeats its own timeout.
@@ -169,7 +178,7 @@ always-on. See `docs/DEPLOYMENT.md`.
 
 ## Testing
 
-**pytest, 1168 tests, all offline** (`docs/TESTING.md`):
+**pytest, 1211 tests, all offline** (`docs/TESTING.md`):
 
 ```bash
 .venv/bin/python -m pytest
@@ -187,8 +196,9 @@ only raises when someone runs the command in Discord. It shells out to `pyflakes
 and fails on undefined names only.
 
 Still uncovered: command BODIES are never executed, renders are not compared
-against Godot (except procedural art's field, which is: see
-`docs/CARD_RENDERING.md` § Procedural art), and the turn-grain queries have
+against Godot pixel for pixel (procedural art's field is, and so are the
+typesetter's chosen sizes and breaks: see `docs/CARD_RENDERING.md` § Procedural
+art and § Rules text), and the turn-grain queries have
 never run against live data. No
 CI. See `docs/TESTING.md` § Gaps.
 

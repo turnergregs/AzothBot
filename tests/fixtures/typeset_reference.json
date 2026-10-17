@@ -1,0 +1,1930 @@
+{
+ "_comment": "What the game's typesetter chose for every shipped card, aspect and rite text (2026-10-17): its size and the line breaks, icons shown as @. Made with the azoth repo's tools/CardRenderTool.tscn --print over assets/game_data/{cards,aspects,rites}; texts with run-time tokens ({...}, rolled [Difficulty] conditions) left out. A card's text includes its generated weapon escalate. See docs/CARD_RENDERING.md section Rules text.",
+ "texts": [
+  {
+   "kind": "card",
+   "text": "Draw 1, Gain [1life] per card drawn this link",
+   "size": 40,
+   "lines": [
+    "Draw 1, Gain @",
+    "per card drawn",
+    "this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Gain [1life] per [not_sol] in the bin",
+   "size": 40,
+   "lines": [
+    "Gain @ per @",
+    "in the bin"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[magnify_4]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Gain $10",
+   "size": 40,
+   "lines": [
+    "Gain $10"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2bonus]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, [4bonus]",
+   "size": 40,
+   "lines": [
+    "Draw 1, @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2, then Boost a card in hand",
+   "size": 40,
+   "lines": [
+    "Draw 2, then Boost",
+    "a card in hand"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Each link this turn, Create a Rite, Exhaust",
+   "size": 40,
+   "lines": [
+    "Each link this turn,",
+    "Create a Rite,",
+    "Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Peek 1, gain $ equal to its #",
+   "size": 40,
+   "lines": [
+    "Peek 1, gain $",
+    "equal to its #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 per linked card with higher #",
+   "size": 38,
+   "lines": [
+    "Draw 1 per linked",
+    "card with higher #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate8] when recalled",
+   "size": 40,
+   "lines": [
+    "@ when recalled"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2bonus] per aspect",
+   "size": 40,
+   "lines": [
+    "@ per aspect"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Gain [10life] next turn",
+   "size": 40,
+   "lines": [
+    "Gain @ next turn"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: [escalate1] per card played",
+   "size": 40,
+   "lines": [
+    "Held: @",
+    "per card played"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Seek a lower # than this, take all revealed",
+   "size": 40,
+   "lines": [
+    "Seek a lower #",
+    "than this, take",
+    "all revealed"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: Heal to full",
+   "size": 39,
+   "lines": [
+    "Miracle: Heal to full"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: [escalate2]",
+   "size": 40,
+   "lines": [
+    "Held: @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2. Miracle: Discard 2",
+   "size": 40,
+   "lines": [
+    "Draw 2. Miracle:",
+    "Discard 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Peek 3, Take all [not_blood], Recycle the rest",
+   "size": 40,
+   "lines": [
+    "Peek 3, Take all @ ,",
+    "Recycle the rest"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, [4bonus]",
+   "size": 40,
+   "lines": [
+    "Draw 1, @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Lose [4life], Create a Rite",
+   "size": 40,
+   "lines": [
+    "Lose @ ,",
+    "Create a Rite"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "$3, Gain [3life]",
+   "size": 40,
+   "lines": [
+    "$3, Gain @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2, Gain [2life]",
+   "size": 40,
+   "lines": [
+    "Draw 2, Gain @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2, [2damage] per card in hand",
+   "size": 40,
+   "lines": [
+    "Draw 2, @",
+    "per card in hand"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[magnify_1]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Tutor a card with # equal to hand size and play it",
+   "size": 40,
+   "lines": [
+    "Tutor a card with #",
+    "equal to hand",
+    "size and play it"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 per card binned this link",
+   "size": 40,
+   "lines": [
+    "Draw 1 per card",
+    "binned this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate4] on leaving hand without being played",
+   "size": 40,
+   "lines": [
+    "@ on leaving",
+    "hand without",
+    "being played"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[4bonus] per [shiny] this link",
+   "size": 40,
+   "lines": [
+    "@ per @ this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate2] per linked card",
+   "size": 40,
+   "lines": [
+    "@ per linked card"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2bonus] per linked card in this element",
+   "size": 40,
+   "lines": [
+    "@ per linked card",
+    "in this element"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw and Discard 1 per linked card",
+   "size": 40,
+   "lines": [
+    "Draw and Discard 1",
+    "per linked card"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Next link ignores link requirements",
+   "size": 40,
+   "lines": [
+    "Next link ignores",
+    "link requirements"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Scry 6",
+   "size": 40,
+   "lines": [
+    "Scry 6"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 per other linked card at this #",
+   "size": 40,
+   "lines": [
+    "Draw 1 per other",
+    "linked card",
+    "at this #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall 2",
+   "size": 40,
+   "lines": [
+    "Recall 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 if link length is 3",
+   "size": 40,
+   "lines": [
+    "Draw 1 if link",
+    "length is 3"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Dissolve 1, Draw equal to its #",
+   "size": 40,
+   "lines": [
+    "Dissolve 1, Draw",
+    "equal to its #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: [3damage], Gain [1life]",
+   "size": 40,
+   "lines": [
+    "Held: @ , Gain @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2perm_bonus], Lose [6life]",
+   "size": 40,
+   "lines": [
+    "@ , Lose @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Shuffle bin into deck, Draw 1, Exhaust",
+   "size": 38,
+   "lines": [
+    "Shuffle bin into deck,",
+    "Draw 1, Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recycle any number of cards, Draw that many",
+   "size": 40,
+   "lines": [
+    "Recycle any number",
+    "of cards, Draw",
+    "that many"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "On life gained, Recall this",
+   "size": 40,
+   "lines": [
+    "On life gained,",
+    "Recall this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Reduce the highest # in your hand",
+   "size": 40,
+   "lines": [
+    "Reduce the highest",
+    "# in your hand"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Play top 2 cards of deck",
+   "size": 40,
+   "lines": [
+    "Play top 2",
+    "cards of deck"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Discard hand, Recall 3",
+   "size": 40,
+   "lines": [
+    "Discard hand,",
+    "Recall 3"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[1.4bonus] per card drawn this link",
+   "size": 40,
+   "lines": [
+    "@ per card",
+    "drawn this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Replay the first card next link, Exhaust",
+   "size": 39,
+   "lines": [
+    "Replay the first card",
+    "next link, Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "On card at this # played, play this from the bin",
+   "size": 41,
+   "lines": [
+    "On card at this #",
+    "played, play this",
+    "from the bin"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate4]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "In two links, all cards gain [magnify_1]",
+   "size": 40,
+   "lines": [
+    "In two links,",
+    "all cards gain @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall 1, play it",
+   "size": 40,
+   "lines": [
+    "Recall 1, play it"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "You may Trash 1 in hand to Draw 2",
+   "size": 40,
+   "lines": [
+    "You may Trash 1",
+    "in hand to Draw 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[magnify_2]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2",
+   "size": 40,
+   "lines": [
+    "Draw 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Tutor 1 next turn, Exhaust",
+   "size": 40,
+   "lines": [
+    "Tutor 1 next",
+    "turn, Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: $20",
+   "size": 40,
+   "lines": [
+    "Miracle: $20"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 4, Discard 2 at random",
+   "size": 40,
+   "lines": [
+    "Draw 4, Discard 2",
+    "at random"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[4bonus]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Gain [1life]",
+   "size": 40,
+   "lines": [
+    "Gain @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall 1 at random",
+   "size": 40,
+   "lines": [
+    "Recall 1 at random"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2bonus] per [1life] below [10life]",
+   "size": 38,
+   "lines": [
+    "@ per @ below @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "On life lost, Recall this",
+   "size": 40,
+   "lines": [
+    "On life lost,",
+    "Recall this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall 2, lose [6life]",
+   "size": 40,
+   "lines": [
+    "Recall 2, lose @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "$15, Gain [15life]",
+   "size": 40,
+   "lines": [
+    "$15, Gain @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 next turn, Exhaust",
+   "size": 40,
+   "lines": [
+    "Draw 1 next",
+    "turn, Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[1.5bonus] per card in hand",
+   "size": 40,
+   "lines": [
+    "@ per card",
+    "in hand"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, [2damage] per card drawn this link",
+   "size": 40,
+   "lines": [
+    "Draw 1, @ per card",
+    "drawn this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Seek a higher # than this",
+   "size": 40,
+   "lines": [
+    "Seek a higher #",
+    "than this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate2] per card held",
+   "size": 40,
+   "lines": [
+    "@ per card held"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: Draw 1, Lose [1life]",
+   "size": 40,
+   "lines": [
+    "Held: Draw 1,",
+    "Lose @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Create 2 Rites",
+   "size": 40,
+   "lines": [
+    "Create 2 Rites"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Peek 3, Take 1, Dissolve the rest",
+   "size": 40,
+   "lines": [
+    "Peek 3, Take 1,",
+    "Dissolve the rest"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Discard 1, Draw equal to its #",
+   "size": 40,
+   "lines": [
+    "Discard 1, Draw",
+    "equal to its #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2bonus] per odd card this link",
+   "size": 40,
+   "lines": [
+    "@ per odd",
+    "card this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Play top card of deck",
+   "size": 40,
+   "lines": [
+    "Play top card",
+    "of deck"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 3, Recycle 2 on top of deck",
+   "size": 40,
+   "lines": [
+    "Draw 3, Recycle 2",
+    "on top of deck"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Create 1 easy pattern in hand, exhaust",
+   "size": 37,
+   "lines": [
+    "Create 1 easy pattern",
+    "in hand, exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2, Scry 2",
+   "size": 40,
+   "lines": [
+    "Draw 2, Scry 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, then Transmute this",
+   "size": 40,
+   "lines": [
+    "Draw 1, then",
+    "Transmute this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Your next link deals 300% damage",
+   "size": 40,
+   "lines": [
+    "Your next link deals",
+    "300% damage"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 per other linked card in this element",
+   "size": 40,
+   "lines": [
+    "Draw 1 per other",
+    "linked card",
+    "in this element"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate2] per linked card in this element",
+   "size": 40,
+   "lines": [
+    "@ per linked card",
+    "in this element"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Seek a card in this element, take all revealed",
+   "size": 40,
+   "lines": [
+    "Seek a card",
+    "in this element,",
+    "take all revealed"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2, Lose [4life]",
+   "size": 40,
+   "lines": [
+    "Draw 2, Lose @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[1.4bonus] per card discarded this link",
+   "size": 39,
+   "lines": [
+    "@ per card",
+    "discarded this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: Create a Rite",
+   "size": 40,
+   "lines": [
+    "Miracle:",
+    "Create a Rite"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, Dissolve 1",
+   "size": 40,
+   "lines": [
+    "Draw 1, Dissolve 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[magnify_3]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Replay 6",
+   "size": 40,
+   "lines": [
+    "Replay 6"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[1perm_mult]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: [escalate1] per life lost",
+   "size": 40,
+   "lines": [
+    "Held: @",
+    "per life lost"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 if link length is 2",
+   "size": 40,
+   "lines": [
+    "Draw 1 if link",
+    "length is 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: Clone the next card played",
+   "size": 40,
+   "lines": [
+    "Miracle: Clone the",
+    "next card played"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Replay 1",
+   "size": 40,
+   "lines": [
+    "Replay 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Play a random card from hand",
+   "size": 40,
+   "lines": [
+    "Play a random",
+    "card from hand"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Discard hand, Draw 3",
+   "size": 40,
+   "lines": [
+    "Discard hand,",
+    "Draw 3"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Tutor a card at this #",
+   "size": 40,
+   "lines": [
+    "Tutor a card",
+    "at this #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate4]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[1mult]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Discard hand, [2bonus] per card discarded",
+   "size": 38,
+   "lines": [
+    "Discard hand, @",
+    "per card discarded"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Peek 1, Replay linked cards matching its #",
+   "size": 40,
+   "lines": [
+    "Peek 1, Replay",
+    "linked cards",
+    "matching its #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate3] when drawn",
+   "size": 40,
+   "lines": [
+    "@ when drawn"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[64bonus] if hand, bin and deck are equal",
+   "size": 40,
+   "lines": [
+    "@ if hand,",
+    "bin and deck",
+    "are equal"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Replay next link, Exhaust",
+   "size": 40,
+   "lines": [
+    "Replay next",
+    "link, Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 3, Discard 3 next link",
+   "size": 40,
+   "lines": [
+    "Draw 3, Discard 3",
+    "next link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2bonus] per even card this link",
+   "size": 40,
+   "lines": [
+    "@ per even",
+    "card this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Seek a non-pattern card, take all revealed",
+   "size": 40,
+   "lines": [
+    "Seek a non-pattern",
+    "card, take",
+    "all revealed"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: [8bonus]",
+   "size": 40,
+   "lines": [
+    "Held: @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2 next link",
+   "size": 40,
+   "lines": [
+    "Draw 2 next link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[16bonus] if total valence this link is prime",
+   "size": 40,
+   "lines": [
+    "@ if total valence",
+    "this link is prime"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: Upgrade a random card",
+   "size": 40,
+   "lines": [
+    "Miracle: Upgrade",
+    "a random card"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: [escalate1] per aspect triggered",
+   "size": 40,
+   "lines": [
+    "Held: @ per",
+    "aspect triggered"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1",
+   "size": 40,
+   "lines": [
+    "Draw 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall 1",
+   "size": 40,
+   "lines": [
+    "Recall 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall 1 on top of deck",
+   "size": 40,
+   "lines": [
+    "Recall 1 on top",
+    "of deck"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Dissolve 2, Draw 1",
+   "size": 40,
+   "lines": [
+    "Dissolve 2, Draw 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[life] becomes 15",
+   "size": 40,
+   "lines": [
+    "@ becomes 15"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Replay 2, [magnify_1]",
+   "size": 40,
+   "lines": [
+    "Replay 2, @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall each card at this #",
+   "size": 40,
+   "lines": [
+    "Recall each",
+    "card at this #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, Lose [2life]",
+   "size": 40,
+   "lines": [
+    "Draw 1, Lose @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Peek 1, Draw equal to its #",
+   "size": 40,
+   "lines": [
+    "Peek 1, Draw",
+    "equal to its #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Play a card at random from the bin",
+   "size": 40,
+   "lines": [
+    "Play a card",
+    "at random",
+    "from the bin"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Create a Rite, Exhaust",
+   "size": 40,
+   "lines": [
+    "Create a Rite,",
+    "Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: A card in hand gains [magnify_1]",
+   "size": 40,
+   "lines": [
+    "Miracle: A card",
+    "in hand gains @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Replay 1, [magnify_1]",
+   "size": 40,
+   "lines": [
+    "Replay 1, @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Held: [escalate8] per Rite activated",
+   "size": 40,
+   "lines": [
+    "Held: @ per",
+    "Rite activated"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Gain [5life]",
+   "size": 40,
+   "lines": [
+    "Gain @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[1.3bonus] per card in bin",
+   "size": 40,
+   "lines": [
+    "@ per card in bin"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Scry 1",
+   "size": 40,
+   "lines": [
+    "Scry 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2, then Reduce this",
+   "size": 40,
+   "lines": [
+    "Draw 2, then",
+    "Reduce this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: Discard 2, Tutor 2",
+   "size": 40,
+   "lines": [
+    "Miracle:",
+    "Discard 2,",
+    "Tutor 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1 per linked element",
+   "size": 40,
+   "lines": [
+    "Draw 1 per",
+    "linked element"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1",
+   "size": 40,
+   "lines": [
+    "Draw 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, [4bonus]",
+   "size": 40,
+   "lines": [
+    "Draw 1, @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[1.4bonus] per card this link",
+   "size": 40,
+   "lines": [
+    "@ per card",
+    "this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, lose [life] equal to its #, you may repeat this",
+   "size": 40,
+   "lines": [
+    "Draw 1, lose @",
+    "equal to its #, you",
+    "may repeat this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, Recall 1 on top of deck",
+   "size": 40,
+   "lines": [
+    "Draw 1, Recall 1",
+    "on top of deck"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, [magnify_1]",
+   "size": 40,
+   "lines": [
+    "Draw 1, @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 3 if hand size equals this link length",
+   "size": 40,
+   "lines": [
+    "Draw 3 if hand",
+    "size equals",
+    "this link length"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, $1 per card in hand",
+   "size": 40,
+   "lines": [
+    "Draw 1, $1",
+    "per card in hand"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Recall 1",
+   "size": 40,
+   "lines": [
+    "Recall 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 3, Lose [1life] per card in hand",
+   "size": 40,
+   "lines": [
+    "Draw 3, Lose @",
+    "per card in hand"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2",
+   "size": 40,
+   "lines": [
+    "Draw 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Discard 2, Draw 2",
+   "size": 40,
+   "lines": [
+    "Discard 2, Draw 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 1, Discard 1",
+   "size": 40,
+   "lines": [
+    "Draw 1, Discard 1"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[life] loss becomes Draw this link",
+   "size": 40,
+   "lines": [
+    "@ loss becomes",
+    "Draw this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[4perm_bonus]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw #, then Boost this",
+   "size": 40,
+   "lines": [
+    "Draw #, then",
+    "Boost this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Discard hand, Draw that many",
+   "size": 40,
+   "lines": [
+    "Discard hand,",
+    "Draw that many"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate3] per linked card at this #",
+   "size": 40,
+   "lines": [
+    "@ per linked",
+    "card at this #"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[2bonus] per unique # this link",
+   "size": 40,
+   "lines": [
+    "@ per unique #",
+    "this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2, [magnify_2]",
+   "size": 40,
+   "lines": [
+    "Draw 2, @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2 next turn, Exhaust",
+   "size": 40,
+   "lines": [
+    "Draw 2 next",
+    "turn, Exhaust"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 2",
+   "size": 40,
+   "lines": [
+    "Draw 2"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "On Rite used, Recall this",
+   "size": 40,
+   "lines": [
+    "On Rite used,",
+    "Recall this"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Remove 1 from each Discard this link",
+   "size": 40,
+   "lines": [
+    "Remove 1 from each",
+    "Discard this link"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Peek 5, Take 2, Recycle the rest",
+   "size": 40,
+   "lines": [
+    "Peek 5, Take 2,",
+    "Recycle the rest"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Miracle: [2perm_bonus]",
+   "size": 40,
+   "lines": [
+    "Miracle: @"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "Draw 3, Recycle 1 on top of deck",
+   "size": 40,
+   "lines": [
+    "Draw 3, Recycle 1",
+    "on top of deck"
+   ]
+  },
+  {
+   "kind": "card",
+   "text": "[escalate6]",
+   "size": 53,
+   "lines": [
+    "@"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+2 Aspect slots",
+   "size": 40,
+   "lines": [
+    "+2 Aspect slots"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "[5valence] gain \"Miracle: [2perm_bonus]\"",
+   "size": 40,
+   "lines": [
+    "@ gain \"Miracle: @ \""
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Copies the aspect on the right",
+   "size": 40,
+   "lines": [
+    "Copies the aspect",
+    "on the right"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "-1 Max Hand Size every 4 links",
+   "size": 40,
+   "lines": [
+    "-1 Max Hand Size",
+    "every 4 links"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Exhaust every 7th card played",
+   "size": 40,
+   "lines": [
+    "Exhaust every 7th",
+    "card played"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Every 3 links, Draw 1",
+   "size": 40,
+   "lines": [
+    "Every 3 links, Draw 1"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+1 Max Hand Size",
+   "size": 40,
+   "lines": [
+    "+1 Max Hand Size"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Every 3 links, [8bonus]",
+   "size": 40,
+   "lines": [
+    "Every 3 links, @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "On Discard, Draw 1",
+   "size": 40,
+   "lines": [
+    "On Discard, Draw 1"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "On Rite used, [4perm_mult]",
+   "size": 40,
+   "lines": [
+    "On Rite used, @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Add 1 to each Replay gained",
+   "size": 40,
+   "lines": [
+    "Add 1 to each",
+    "Replay gained"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Retrigger all miracles",
+   "size": 40,
+   "lines": [
+    "Retrigger all miracles"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Copies the aspect on the left",
+   "size": 40,
+   "lines": [
+    "Copies the aspect",
+    "on the left"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "-5 Max Life every 3 links",
+   "size": 39,
+   "lines": [
+    "-5 Max Life every 3 links"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+2 Luck",
+   "size": 40,
+   "lines": [
+    "+2 Luck"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Boss patterns grow harder every 5 links",
+   "size": 40,
+   "lines": [
+    "Boss patterns grow",
+    "harder every 5 links"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+20 Max HP",
+   "size": 40,
+   "lines": [
+    "+20 Max HP"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "On 2-card links, [2perm_mult]",
+   "size": 40,
+   "lines": [
+    "On 2-card links, @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Each link, [1perm_mult] per linked [1valence]",
+   "size": 38,
+   "lines": [
+    "Each link, @ per linked @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "On links of 1, [8bonus] to next link",
+   "size": 40,
+   "lines": [
+    "On links of 1,",
+    "@ to next link"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Retrigger all held abilities",
+   "size": 37,
+   "lines": [
+    "Retrigger all held abilities"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+2 Rite Slots",
+   "size": 40,
+   "lines": [
+    "+2 Rite Slots"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Replay the first card played each turn",
+   "size": 40,
+   "lines": [
+    "Replay the first card",
+    "played each turn"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Each link, [2bonus] per held [2valence]",
+   "size": 39,
+   "lines": [
+    "Each link, @ per held @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "When trashed, [2bonus] next link per turn held",
+   "size": 40,
+   "lines": [
+    "When trashed, @",
+    "next link per turn held"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+2 Power",
+   "size": 40,
+   "lines": [
+    "+2 Power"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Links of 2 or less gain [16bonus]",
+   "size": 40,
+   "lines": [
+    "Links of 2",
+    "or less gain @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Create 1 Pattern every 4 links, doubling each time",
+   "size": 38,
+   "lines": [
+    "Create 1 Pattern every 4",
+    "links, doubling each time"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "[2perm_bonus] on card miracled",
+   "size": 40,
+   "lines": [
+    "@ on card miracled"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+1 Starting Hand Size",
+   "size": 40,
+   "lines": [
+    "+1 Starting Hand Size"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "On card leaving bin, [2perm_mult]",
+   "size": 40,
+   "lines": [
+    "On card leaving bin, @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+1 to each Recall",
+   "size": 40,
+   "lines": [
+    "+1 to each Recall"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "[4valence] gain [inert]",
+   "size": 40,
+   "lines": [
+    "@ gain @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Every 2 turns, upgrade a random card",
+   "size": 40,
+   "lines": [
+    "Every 2 turns,",
+    "upgrade a random card"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Each turn, create a Rite",
+   "size": 39,
+   "lines": [
+    "Each turn, create a Rite"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "+2 Greed",
+   "size": 40,
+   "lines": [
+    "+2 Greed"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "[3valence] gain [magnify_1]",
+   "size": 40,
+   "lines": [
+    "@ gain @"
+   ]
+  },
+  {
+   "kind": "aspect",
+   "text": "Each link, a card in hand gets an attribute",
+   "size": 39,
+   "lines": [
+    "Each link, a card in hand",
+    "gets an attribute"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Add Adorned to selected card",
+   "size": 40,
+   "lines": [
+    "Add Adorned to",
+    "selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "[8bonus] next link",
+   "size": 40,
+   "lines": [
+    "@ next link"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Add Lucky to selected card",
+   "size": 40,
+   "lines": [
+    "Add Lucky to",
+    "selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Trash selected card",
+   "size": 40,
+   "lines": [
+    "Trash selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Tutor 1",
+   "size": 40,
+   "lines": [
+    "Tutor 1"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "$20",
+   "size": 40,
+   "lines": [
+    "$20"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Up to 2 selected cards become [anima]",
+   "size": 40,
+   "lines": [
+    "Up to 2 selected",
+    "cards become @"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Select two cards. -1 valence to the left, +1 to the right.",
+   "size": 40,
+   "lines": [
+    "Select two cards.",
+    "-1 valence to the left,",
+    "+1 to the right."
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "-1 valence to selected card",
+   "size": 40,
+   "lines": [
+    "-1 valence to",
+    "selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "+1 valence to up to 2 selected cards",
+   "size": 40,
+   "lines": [
+    "+1 valence to up to 2",
+    "selected cards"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Add Etched to selected card",
+   "size": 40,
+   "lines": [
+    "Add Etched to",
+    "selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Upgrade selected card",
+   "size": 40,
+   "lines": [
+    "Upgrade selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Draw 3",
+   "size": 40,
+   "lines": [
+    "Draw 3"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Add Glass to selected card",
+   "size": 40,
+   "lines": [
+    "Add Glass to",
+    "selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Up to 2 selected cards become [sol]",
+   "size": 40,
+   "lines": [
+    "Up to 2 selected",
+    "cards become @"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Add Honed to selected card",
+   "size": 40,
+   "lines": [
+    "Add Honed to",
+    "selected card"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Up to 2 selected cards become [blood]",
+   "size": 40,
+   "lines": [
+    "Up to 2 selected",
+    "cards become @"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Create a random aspect",
+   "size": 40,
+   "lines": [
+    "Create a random aspect"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Select 2 cards. The left becomes a copy of the right",
+   "size": 40,
+   "lines": [
+    "Select 2 cards.",
+    "The left becomes",
+    "a copy of the right"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Create 2 random Rites",
+   "size": 40,
+   "lines": [
+    "Create 2 random Rites"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Redraw a hand or refresh the draft",
+   "size": 40,
+   "lines": [
+    "Redraw a hand",
+    "or refresh the draft"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Gain [10life]",
+   "size": 40,
+   "lines": [
+    "Gain @"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Recall 1",
+   "size": 40,
+   "lines": [
+    "Recall 1"
+   ]
+  },
+  {
+   "kind": "rite",
+   "text": "Add Sealed to selected card",
+   "size": 40,
+   "lines": [
+    "Add Sealed to",
+    "selected card"
+   ]
+  }
+ ]
+}

@@ -15,7 +15,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from azoth_logic import card_layout as L
-from azoth_logic import card_render, eigenfunction_art as ef, rich_text
+from azoth_logic import card_render, eigenfunction_art as ef, inline_icons, rich_text
 
 
 # ---------------------------------------------------------------------------
@@ -33,15 +33,60 @@ def test_art_box_matches_the_image_node():
     assert (round(w), round(h)) == ef.ART_SIZE
 
 
-@pytest.mark.parametrize("element,expected", [
-    ("sol", "blurred_sol_border_noline.png"),
-    ("blood", "blurred_blood_border_noline.png"),
-    ("anima", "blurred_anima_border_noline.png"),
-    (None, "blurred_white_border_noline.png"),      # 64 of 400 cards are colourless
-    ("nonsense", "blurred_white_border_noline.png"),
-])
-def test_border_selection(element, expected):
-    assert L.border_file(element) == expected
+# ---------------------------------------------------------------------------
+# The border: card_border_dim.gdshader's blobs, not PNGs
+# ---------------------------------------------------------------------------
+
+# Border-space points inside each blob (the border box is the border's own
+# 600x816 pixels): the big top-left corner (0), the small lobe under it (1),
+# and the same corner's left-right mirror, where a split's element sits.
+IN_CORNER = (30, 30)
+IN_BADGE_LOBE = (8, 200)
+IN_MIRRORED_CORNER = (570, 30)
+
+
+def _px(img, at):
+    return tuple(int(v) for v in np.asarray(img)[at[1], at[0], :3])
+
+
+@pytest.mark.parametrize("element", ["sol", "blood", "anima"])
+def test_the_blobs_wear_the_element_colour(element):
+    border = card_render._border({"element": element})
+    assert _px(border, IN_CORNER) == L.element_color(element)
+    assert _px(border, (300, 400)) == L.FACE_COLOR, "the body between the blobs"
+
+
+def test_a_colourless_card_wears_the_rainbow():
+    """BaseCard._apply_colorless_visuals sets `rainbow` on the border material:
+    a catalyst's blobs cycle colour instead of being plain white."""
+    border = card_render._border({"element": None})
+    a, b = _px(border, IN_CORNER), _px(border, (560, 780))
+    assert a != (255, 255, 255) and a != b, "rainbow varies across the card"
+
+
+def test_the_badge_lobe_is_dropped_only_when_asked():
+    """`hide_badge_lobe` drops blob 1, the lobe a corner badge sits on."""
+    shown = card_render._border({"element": "sol"})
+    hidden = card_render._border({"element": "sol"}, hide_badge_lobe=True)
+    assert _px(shown, IN_BADGE_LOBE) == L.element_color("sol")
+    assert _px(hidden, IN_BADGE_LOBE) == L.FACE_COLOR
+    assert _px(hidden, IN_CORNER) == L.element_color("sol"), "the corner stays"
+
+
+def test_a_badged_card_drops_the_lobe_on_its_face():
+    face = card_render._base_face(dict(WEAPON))
+    x = round(L.BORDER[0]) + IN_BADGE_LOBE[0]
+    y = round(L.BORDER[1]) + IN_BADGE_LOBE[1]
+    assert _px(face, (x, y)) == L.FACE_COLOR
+
+
+def test_the_blobs_are_generated_from_the_game():
+    """border_blobs.json is parsed out of card_border_blobs.gdshaderinc by
+    sync_assets: four blobs, each a few planes and a softness."""
+    blobs = card_render._blobs()
+    assert blobs["size"] == [600.0, 816.0]
+    assert len(blobs["blobs"]) == 4
+    assert all(len(b["planes"]) >= 3 and b["k"] > 0 for b in blobs["blobs"])
 
 
 def test_wrap_width_is_narrower_than_the_box():
@@ -117,26 +162,76 @@ def test_valence_outline_is_black():
 # Symbol tokens
 # ---------------------------------------------------------------------------
 
-def test_symbols_are_sized_from_the_function_default_not_the_label():
-    """base_card.gd:979 calls replace_icon_from_dict() with NO size argument, so
-    symbols use its `font_size = 50` default even though TextLabel's font is 40.
-
-    Measured in Godot by rendering one token on an otherwise identical card and
-    differencing against a blank one: base height 50px, i.e. 1.25x the label's
-    40. Sizing off the label instead makes every symbol 20% too small.
-    """
-    assert rich_text.SYMBOL_BASE_SIZE == 50
-    (_, img), = [(k, v) for k, v in rich_text.tokenize("[3valence]") if k == "img"]
-    assert img.height == 50
+def _icon(token, size=40):
+    (icon,) = [v for k, v in rich_text.tokenize(token, size) if k == "img"]
+    return icon
 
 
-def test_life_mult_bonus_render_oversized():
-    """Utils.replace_icon_from_dict multiplies these families by 1.35."""
-    normal = [v for k, v in rich_text.tokenize("[3valence]") if k == "img"][0]
-    for token in ("[1life]", "[2mult]", "[4bonus]"):
-        big = [v for k, v in rich_text.tokenize(token) if k == "img"][0]
-        assert big.height == round(rich_text.SYMBOL_BASE_SIZE * 1.35)
-        assert big.height > normal.height
+def test_symbols_share_one_height():
+    """The typesetter sizes every symbol (the recipes and the hexagons) so its
+    ANCHOR is symbol_ink_em (1.25) x the font size, whatever its PNG's padding."""
+    for size in (32, 40, 46):
+        icon = _icon("[3valence]", size)
+        assert icon.anchor[3] == pytest.approx(1.25 * size, abs=1.0)
+
+
+def test_pattern_icons_share_the_hexagon_anchor():
+    """A set's badge hangs below its hexagon instead of shrinking it: every file
+    on the hexagon canvas is anchored on generic_empty's hexagon."""
+    valence, pattern = _icon("[3valence]"), _icon("[set_3]")
+    assert pattern.anchor[3] == pytest.approx(valence.anchor[3], abs=1.0)
+    assert pattern.ink[3] > valence.ink[3], "the badge hangs below"
+
+
+def test_other_icons_keep_their_tag_height_scaled_with_the_size():
+    """`[up]` is not a symbol: its whole texture is the [img] height (50, from
+    Utils.icon_height_for) x size / 40."""
+    assert _icon("[up]", 40).image.height == 50
+    assert _icon("[up]", 32).image.height == 40
+
+
+def test_bonus_and_mult_are_tags_that_widen():
+    """Bonus and mult are drawn as a rounded tag one height for every number,
+    widening to fit it, never narrower than tall."""
+    two, sixteen, mult = _icon("[2bonus]"), _icon("[16bonus]"), _icon("[4mult]")
+    height = 0.8 * 1.25 * 40
+    for icon in (two, sixteen, mult):
+        assert icon.image.height == round(height)
+        assert icon.image.width >= icon.image.height
+    assert sixteen.image.width > two.image.width
+
+
+def test_numbered_icons_share_their_base():
+    """`[4life]` and `[9life]` are life.png with a number set on it, not two
+    PNGs with their own ink."""
+    assert _icon("[4life]").ink == _icon("[9life]").ink
+    assert _icon("[4life]").image.size == _icon("[9life]").image.size
+
+
+def test_weapon_tokens_have_no_table_entry():
+    """`[20damage]` and `[escalate3]` are read out of the token, so any number
+    draws -- there is no 137damage.png and needs to be none."""
+    for token in ("[2damage]", "[137damage]", "[escalate3]"):
+        assert token not in rich_text._tokens()
+        icon = _icon(token)
+        assert icon.image.height == round(0.8 * 1.25 * 40)
+    assert _icon("[137damage]").image.width > _icon("[2damage]").image.width
+
+
+def test_damage_pointer_is_white_and_escalate_gold():
+    def body(icon):
+        px = np.asarray(icon.image)
+        y = icon.image.height // 2
+        return tuple(int(v) for v in px[y, 3, :3])
+    assert body(_icon("[5damage]")) == (255, 255, 255)
+    assert body(_icon("[escalate5]")) == inline_icons.ESCALATE_AMOUNT_COLOR
+
+
+def test_and_or_are_bold_words():
+    runs = rich_text.tokenize("[2valence][and][3valence]")
+    assert [k for k, _ in runs] == ["img", "bold", "img"]
+    atoms = rich_text._atoms(runs, inline_icons.font(40))
+    assert [a[0] for a in atoms] == ["img", "space", "bold", "space", "img"]
 
 
 def test_longest_token_wins():
@@ -153,10 +248,12 @@ def test_element_tokens_are_tinted():
     tokens = rich_text._tokens()
     assert tokens["[sol]"]["color"] == "#F9A410"
     assert tokens["[sol]"]["file"] == tokens["[blood]"]["file"]
-    img = [v for k, v in rich_text.tokenize("[sol]") if k == "img"][0]
-    px = np.array(img)
-    opaque = px[px[..., 3] > 200]
-    assert len(opaque) and abs(int(opaque[:, 0].mean()) - 0xF9) < 12
+    px = np.array(_icon("[sol]").image)
+    # A multiply, as Godot's modulate is: the white fill takes the colour and
+    # the hexagon's black outline stays black.
+    fill = px[(px[..., 3] > 200) & (px[..., :3].max(axis=2) > 120)]
+    assert len(fill) and abs(int(fill[:, 0].mean()) - 0xF9) < 12
+    assert (px[(px[..., 3] > 200)][:, :3].max(axis=1) < 60).any(), "outline stays dark"
 
 
 def test_plain_text_passes_through():
@@ -358,10 +455,17 @@ def test_card_with_no_subtype_renders_blank_not_a_placeholder():
 
 
 def test_missing_symbol_asset_names_the_fix(monkeypatch):
-    monkeypatch.setattr(rich_text, "_symbol_cache", {})
-    monkeypatch.setattr(rich_text, "SYMBOL_DIR", rich_text.SYMBOL_DIR / "nope")
-    with pytest.raises(FileNotFoundError, match="sync_assets"):
-        rich_text.tokenize("[1life]")
+    for cached in (inline_icons._texture, inline_icons.build, inline_icons.ink_rect,
+                   inline_icons.anchor_rect):
+        cached.cache_clear()
+    monkeypatch.setattr(inline_icons, "SYMBOL_DIR", inline_icons.SYMBOL_DIR / "nope")
+    try:
+        with pytest.raises(FileNotFoundError, match="sync_assets"):
+            rich_text.tokenize("[1life]")
+    finally:
+        for cached in (inline_icons._texture, inline_icons.build, inline_icons.ink_rect,
+                       inline_icons.anchor_rect):
+            cached.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -399,61 +503,22 @@ def test_single_sided_art_keeps_a_white_base():
     assert secondary == ef.ELEMENT_COLORS["anima"]
 
 
-@pytest.mark.parametrize("element,expected", [
-    ("sol", "blurred_second_sol_border3.png"),
-    ("blood", "blurred_second_blood_border3.png"),
-    ("anima", "blurred_second_anima_border3.png"),
-    ("nonsense", None), (None, None), ("", None),
-])
-def test_split_border_selection(element, expected):
-    assert L.split_border_file(element) == expected
+def test_a_split_paints_its_element_on_the_mirrored_blobs():
+    """A split's second element sits on the left-right mirror of the blobs; the
+    base's corner keeps its own."""
+    plain = card_render._border(dict(SPLIT, split=None))
+    split = card_render._border(SPLIT)
+    assert _px(split, IN_CORNER) == L.element_color("anima")
+    assert _px(split, IN_MIRRORED_CORNER) == L.element_color("sol")
+    assert _px(plain, IN_MIRRORED_CORNER) == L.FACE_COLOR
 
 
-def test_split_border_does_not_widen_the_silhouette():
-    """card_border_dim.gdshader takes alpha from the BASE texture alone. If the
-    split contributed alpha, the card would gain a second, fatter outline."""
-    plain = np.asarray(card_render._border(dict(SPLIT, split=None)))
-    split = np.asarray(card_render._border(SPLIT))
-    assert np.array_equal(plain[..., 3], split[..., 3]), "alpha must be untouched"
-    assert not np.array_equal(plain[..., :3], split[..., :3]), "colour must change"
-
-
-def test_split_stays_opaque_along_the_antialiased_rim():
-    """Coverage is `split.a / base.a`, not `split.a`.
-
-    That normalisation exists for the rim: where both textures fade together,
-    the raw split alpha is partial, so the base border bleeds through and the
-    split's edge reads as a soft double line. Dividing by the base's alpha keeps
-    the split fully opaque there while preserving its authored interior fade.
-
-    Measured over the 3,691 rim pixels of the anima/sol pair: normalised
-    coverage averages 0.96, raw 0.87.
-    """
-    base = np.asarray(card_render._layer(L.border_file("anima"), L.BORDER),
-                      dtype=np.float32) / 255.0
-    sp = np.asarray(card_render._layer(L.split_border_file("sol"), L.BORDER),
-                    dtype=np.float32) / 255.0
-    rim = (base[..., 3] > 0.15) & (base[..., 3] < 0.85) & (sp[..., 3] > 0.05)
-    assert rim.sum() > 100, "fixture should have an antialiased rim to test"
-
-    blended = np.asarray(card_render._border(SPLIT), dtype=np.float32) / 255.0
-    # Both forms land "mostly split" at the rim, so a loose comparison passes
-    # either way. What separates them is HOW cleanly: normalised coverage
-    # resolves essentially onto the split colour (measured residual 0.011),
-    # while raw coverage leaves the base bleeding through at ~4x that (0.048).
-    residual = np.abs(blended[..., :3] - sp[..., :3]).sum(axis=2)[rim].mean()
-    assert residual < 0.025, (
-        f"rim should resolve onto the split colour; residual {residual:.4f} "
-        f"suggests coverage is not normalised by the base's alpha")
-
-
-def test_split_border_changes_only_where_the_overlay_covers():
-    """Coverage is the split's alpha normalised by the base's, so pixels the
-    overlay does not reach keep the base border exactly."""
+def test_split_border_changes_only_where_the_mirror_covers():
     plain = np.asarray(card_render._border(dict(SPLIT, split=None)), dtype=int)
     split = np.asarray(card_render._border(SPLIT), dtype=int)
     changed = np.abs(plain[..., :3] - split[..., :3]).sum(axis=2) > 8
-    assert 0.01 < changed.mean() < 0.9, "the overlay should cover part of the border, not all"
+    assert 0.01 < changed.mean() < 0.9, "the mirror should cover part of the face, not all"
+    assert (np.asarray(card_render._border(SPLIT))[..., 3] == 255).all()
 
 
 def test_split_card_draws_a_second_valence():
@@ -654,3 +719,65 @@ def test_the_alpha_cutoff_is_where_the_rim_is_thin():
     wide and 98% of the card is fully opaque, so the midpoint is imperceptible
     -- but a cutoff at the extremes would either eat the edge or fringe it."""
     assert 64 <= card_render.ALPHA_CUTOFF <= 192
+
+
+# ---------------------------------------------------------------------------
+# Corner badges (BaseCard._push_badge_uniforms)
+# ---------------------------------------------------------------------------
+
+WEAPON = {"name": "Edge", "element": "anima", "valence": 9, "subtypes": ["Weapon"],
+          "text": "Draw 2", "properties": [{"name": "Weapon", "damage": 100}]}
+MAGNIFIED = {"name": "Swell", "element": "blood", "valence": 1, "subtypes": [],
+             "text": "[magnify_2]", "properties": [{"name": "Magnify", "amount": 2}]}
+
+
+def test_a_card_without_a_badge_keeps_the_viewport():
+    assert card_render.render_still(CARD, None).size == (L.CARD_W, L.CARD_H)
+    assert not card_render.has_badge(CARD)
+
+
+def test_the_damage_badge_hangs_off_the_left_edge_in_the_element_colour():
+    """The canvas widens by BADGE_PAD so the pointer can reach past x = 0, as the
+    game's shader draws it past the card's SubViewport."""
+    img = card_render.render_still(WEAPON, None)
+    assert img.size == (L.CARD_W + L.BADGE_PAD, L.CARD_H)
+    dx, dy, _, dh = L.DAMAGE_BADGE
+    # Just inside the pointer's left edge, on its centre line, left of the card.
+    at = (round(L.BADGE_PAD + dx) + 3, round(dy + dh / 2))
+    assert _px(img, at) == L.element_color("anima")
+    assert np.asarray(img)[at[1], at[0], 3] == 255
+
+
+def test_the_damage_badge_reads_the_upgraded_number():
+    """An upgrade tier writes `damage` on the row, which wins over the Weapon
+    property (GameContentData.get_effective_attr)."""
+    base = np.asarray(card_render.render_still(WEAPON, None), dtype=int)
+    grown = np.asarray(card_render.render_still(dict(WEAPON, damage=150), None), dtype=int)
+    dx, dy, dw, dh = L.DAMAGE_BADGE
+    band = (slice(round(dy), round(dy + dh)), slice(0, round(L.BADGE_PAD + dx + dw)))
+    assert np.abs(base[band] - grown[band]).sum() > 0
+
+
+def test_magnify_gets_a_badge_too():
+    assert card_render.magnify_amount(MAGNIFIED) == 2
+    img = card_render.render_still(MAGNIFIED, None)
+    assert img.size == (L.CARD_W + L.BADGE_PAD, L.CARD_H)
+    left = np.asarray(img)[:, :L.BADGE_PAD, 3]
+    assert (left > 128).sum() > 200, "the glyph reaches past the card's edge"
+
+
+def test_magnify_moves_below_the_damage():
+    both = dict(WEAPON, properties=WEAPON["properties"] + [{"name": "Magnify", "amount": 1}])
+    alone = np.asarray(card_render.render_still(dict(MAGNIFIED), None))[:, :L.BADGE_PAD, 3]
+    under = np.asarray(card_render.render_still(both, None))[:, :L.BADGE_PAD, 3]
+    lowest = lambda a: np.where((a > 128).any(axis=1))[0].max()
+    assert lowest(under) > lowest(alone)
+
+
+def test_the_escalate_leads_the_rules_text():
+    """The escalate pointer is generated text: a weapon that escalates prints
+    more than the same card that does not."""
+    still = lambda card: np.asarray(card_render._base_face(card), dtype=int)
+    plain = still(WEAPON)
+    escalating = still(dict(WEAPON, properties=[{"name": "Weapon", "damage": 100, "escalate": 3}]))
+    assert np.abs(plain - escalating).sum() > 0

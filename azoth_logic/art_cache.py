@@ -55,7 +55,7 @@ ART_TTL = 7 * 24 * 3600
 # bot serving an image that no longer matches the code. That happened on
 # 2026-08-28: the comparison stopped squashing its faces, the version did not
 # move, and every already-cached comparison kept its distortion.
-RENDERER_VERSION = "2026-09-25.2"      # rites draw image_data.background
+RENDERER_VERSION = "2026-10-17.1"      # typesetter port, new icons, weapon/Magnify badges, SDF border
 
 # Size caps, enforced on write. Exceeding one evicts oldest-first down to
 # EVICT_TO of the cap, so a write does not trigger a scan every time.

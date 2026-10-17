@@ -46,7 +46,12 @@ ASPECT_BACKGROUND = BACKGROUND_FULL
 ASPECT_ART        = _box(-105, -300.5, 105, -90.5)           # 210x210
 ASPECT_TYPE       = _box(-119, -225, 121, -168)
 ASPECT_NAME       = _box(-219, 164.5, 219, 221.5)
-ASPECT_TEXT       = _box(-243, 236.5, 242, 350.5)
+# TextLabel, a TypesetLabel since 2026-09-27: the region the text is centred
+# in on its ink, bottom clipped to the card's silhouette, inset by `clearance`.
+ASPECT_TEXT       = _box(-243, 221.5, 243, 448.5)
+ASPECT_TEXT_CLEARANCE = 16.0
+# The visible card's bottom edge (BaseCard.silhouette_viewport_rect).
+SILHOUETTE_BOTTOM = 829.5
 
 ASPECT_BACKGROUND_FILE = "aspect_background.png"
 
@@ -55,7 +60,6 @@ ASPECT_BACKGROUND_FILE = "aspect_background.png"
 ASPECT_NAME_SIZE = 55
 ASPECT_TYPE_SIZE = 30
 ASPECT_TYPE_COLOR = (24, 24, 24)        # Color(0.0941176, ...)
-ASPECT_TEXT_SIZE = 40
 ASPECT_TEXT_COLOR = (255, 255, 255)
 
 # Fallbacks for an aspect with no image_data, from aspect_card.gd's initialisers.
@@ -67,16 +71,18 @@ ASPECT_DEFAULT_SECONDARY = (237, 79, 95)
 RITE_BACKGROUND_NODE = _box(-330.007, -448.8, 330.007, 448.8)     # scene box, FYI
 RITE_BACKGROUND = BACKGROUND_FULL
 RITE_ART        = _box(-167, -187.5, 167, 187.5)             # 334x375
-RITE_NAME       = _box(-219, 184.5, 219, 241.5)
+# Moved up 20px (184.5 -> 164.5) with the typesetter, to match the aspect.
+RITE_NAME       = _box(-219, 164.5, 219, 221.5)
 RITE_TYPE       = _box(-116, 363, 124, 420)
-RITE_TEXT       = _box(-249, 232, 249, 388)
+RITE_TEXT       = _box(-249, 221.5, 249, 448.5)
+# 12, not the default 16: three-line rites need the room (TYPESETTER.md).
+RITE_TEXT_CLEARANCE = 12.0
 
 RITE_NAME_SIZE = 55
 RITE_NAME_COLOR = (4, 183, 255)              # Color(0.015686275, 0.7176471, 1)
 RITE_NAME_OUTLINE_COLOR = (4, 108, 248)      # Color(0.015686275, 0.42352942, 0.972549)
 RITE_TYPE_SIZE = 30
 RITE_TYPE_COLOR = (24, 24, 24)
-RITE_TEXT_SIZE = 40
 RITE_TEXT_COLOR = (238, 84, 16)              # Color(0.93333334, 0.32941177, 0.0627451)
 
 NAME_OUTLINE = GODOT_OUTLINE_3

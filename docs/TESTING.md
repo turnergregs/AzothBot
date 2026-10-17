@@ -1,6 +1,6 @@
 # Testing
 
-AzothBot uses **pytest**. 1168 tests, all offline — nothing in the suite touches
+AzothBot uses **pytest**. 1211 tests, all offline — nothing in the suite touches
 the live database.
 
 ```bash
@@ -13,7 +13,9 @@ Added 2026-08-26. Before that there was no suite at all.
 
 | File | Tests | Covers |
 |---|---|---|
-| `tests/test_card_render.py` | 74 | The card face: geometry from `card.tscn`, symbol tokens, wrapping, split borders, the measured constants |
+| `tests/test_card_render.py` | 81 | The card face: geometry from `card.tscn`, the inline icons (one symbol height, the hexagon anchor, tags that widen, numbers on a shared base, weapon tokens with no table entry, and / or as bold words), the blob border (element colour, the catalyst rainbow, the badge lobe, a split on the mirrored blobs), the corner badges (damage in the element colour past the card's edge, the upgraded number, Magnify and Magnify below the damage), the escalate leading the text, the measured constants |
+| `tests/test_typesetter.py` | 7 | The port of the game's typesetter, **against the game**: every shipped text's size and breaks as the game chose them (`tests/fixtures/typeset_reference.json`), centring on the ink, the lone icon, the lobe margins and their running minimum, the smallest-size spill, clinging words |
+| `tests/test_weapons.py` | 13 | A weapon's numbers (the row's own key over the Weapon property, as an upgrade tier writes) and the escalate text: the icon alone on play, the game's wording for every `escalate_on`, what a step counts, life lost ignoring `escalate_per`, and every value having vendored wording |
 | `tests/test_fate_render.py` | 58 | Aspects and rites: backgrounds, mask recolouring, the reversed aspect palette, and that `rites.py` binds no table name |
 | `tests/test_rite_schema.py` | 12 | Which side of the `events` -> `rites` rename the database is on: a missing-table error (PGRST205 or 42P01) means before, any other failure raises rather than guessing old, the answer is cached yet a migration applied while running is picked up, a change of side is printed, and both spellings map to the current one |
 | `tests/test_supabase_helpers.py` | 46 | The access layer: the RLS pre-flight guard, raise-don't-swallow, query construction, deck item refs |
@@ -31,9 +33,9 @@ Added 2026-08-26. Before that there was no suite at all.
 | `tests/test_taxonomy.py` | 26 | The vocabularies that were six tables: canonical lists match the game, in-use values are unioned in, a failed read never loses the hardcoded list |
 | `tests/test_bulk_apply.py` | 21 | The client half of the transactional bulk write: payload passed through unmangled, malformed input refused without a round trip, database errors made readable |
 | `tests/test_content_index.py` | 31 | The autocomplete index: TTL, explicit invalidation, ref encoding, match ranking — and **liveness**: retired content hidden, `/add_to_deck` still seeing it, a live name beating a retired one, and the empty-live-set fallback that stops a failed deck read from hiding all 626 rows |
-| `tests/test_deck_render.py` | 38 | Grid and hand layout, art deduplication, per-kind bucket routing — plus the upgrade comparison: gif-vs-png selection, a still side holding while the other animates, and cache keys that cover both faces |
+| `tests/test_deck_render.py` | 39 | Grid and hand layout (a badged card drawn the size of its neighbours, its badge in a shared margin), art deduplication, per-kind bucket routing — plus the upgrade comparison: gif-vs-png selection, a still side holding while the other animates, and cache keys that cover both faces |
 | `tests/test_placeholders.py` | 25 | The `{...}` display placeholders, transcribed from the game's own suite: flat odds for every live row, Godot's half-away-from-zero rounding, and a malformed or run-state token staying visible |
-| `tests/test_sync_assets.py` | 8 | The vendored-asset sync, and the shader-exported backgrounds it deliberately cannot sync |
+| `tests/test_sync_assets.py` | 13 | The vendored-asset sync, the two files it parses out of the game (the border's blobs, negative offsets included, and the weapon badge's wording), and the shader-exported backgrounds it deliberately cannot sync |
 | `tests/test_procedural_art.py` | 60 | Procedural art (`image_data.art`): the numpy port against GPU samples of the game's own shader (`tests/fixtures/procedural_art_reference.json`) for every family, silhouette, warp, Neumann circles and the wobble, colour zones included; and the routing: art wins over `image`, is never downloaded, animates with no bytes, and misses the render cache when it changes |
 | `tests/test_announcements.py` | 40 | `/announce`: what is refused before it reaches every player (an over-long body, unpaired or mis-cased `[term]` tags, a version that is not dotted numbers, an end that is past or not after the start), times stored in UTC, only the given columns sent so the table's defaults apply, and the command body itself run against a fake interaction: unauthorized, preview and refused input all write nothing |
 

@@ -57,11 +57,7 @@ def _background(file_name: str, box, tint=None) -> Image.Image:
 
 
 def _draw_text_block(canvas, text, font, box, color, stroke=0, stroke_color=(0, 0, 0)):
-    """Wrapped, centred text, vertically centred on its box.
-
-    Both scenes set the label to fit_content with centred alignment, so the block
-    grows about the box's middle rather than downward from its top.
-    """
+    """Wrapped, centred text, vertically centred on its box (the name Label)."""
     if not text:
         return
     bx, by, bw, bh = box
@@ -69,6 +65,29 @@ def _draw_text_block(canvas, text, font, box, color, stroke=0, stroke_color=(0, 
     height = rich_text.measure(lines, font, 0)
     rich_text.draw_centered(canvas, lines, font, (bx, by + (bh - height) / 2, bw, height),
                             color, stroke=stroke, stroke_color=stroke_color)
+
+
+def _draw_name_and_text(canvas, item, name_font, name_box, name_color, name_outline,
+                        text_region, clearance, text_color) -> None:
+    """The rules text typeset in its region, then the name over it.
+
+    The name FOLLOWS the text down (aspect_card.gd `_on_text_laid_out`, which
+    rite_card inherits): its box sits `clearance` above the first line's ink,
+    never above its authored spot. A three-line text fills its space and the
+    name stays put; a one-line text draws the name down to sit over it.
+    """
+    text = str(item.get("text") or "")
+    rx, ry, rw, rh = text_region
+    nx, ny, nw, nh = name_box
+    if text:
+        from azoth_logic.typesetter import Region
+        region = Region(rx, ry, rx + rw, min(ry + rh, F.SILHOUETTE_BOTTOM), clearance=clearance)
+        laid = rich_text.typeset(text, region)
+        rich_text.draw_typeset(canvas, laid, text_color)
+        if laid.lines:
+            ny = max(ny, laid.ink_top - clearance - nh)
+    _draw_text_block(canvas, item.get("name"), name_font, (nx, ny, nw, nh), name_color,
+                     stroke=F.NAME_OUTLINE, stroke_color=name_outline)
 
 
 # ---------------------------------------------------------------------------
@@ -87,12 +106,10 @@ def _aspect_face(aspect: dict) -> Image.Image:
     bg = _background(F.ASPECT_BACKGROUND_FILE, F.ASPECT_BACKGROUND, tint=primary)
     canvas.alpha_composite(bg, (round(F.ASPECT_BACKGROUND[0]), round(F.ASPECT_BACKGROUND[1])))
 
-    # Name and type. The name's outline is its own colour, so it reads as weight.
-    _draw_text_block(canvas, aspect.get("name"), card_render._font(F.ASPECT_NAME_SIZE),
-                     F.ASPECT_NAME, secondary,
-                     stroke=F.NAME_OUTLINE, stroke_color=secondary)
-    _draw_text_block(canvas, aspect.get("text"), card_render._font(F.ASPECT_TEXT_SIZE),
-                     F.ASPECT_TEXT, F.ASPECT_TEXT_COLOR)
+    # The name's outline is its own colour, so it reads as weight.
+    _draw_name_and_text(canvas, aspect, card_render._font(F.ASPECT_NAME_SIZE),
+                        F.ASPECT_NAME, secondary, secondary,
+                        F.ASPECT_TEXT, F.ASPECT_TEXT_CLEARANCE, F.ASPECT_TEXT_COLOR)
     return canvas
 
 
@@ -219,11 +236,9 @@ def _rite_text(canvas, rite: dict) -> None:
     name_outline = foreground or F.RITE_NAME_OUTLINE_COLOR
     text_color = foreground or F.RITE_TEXT_COLOR
 
-    _draw_text_block(canvas, rite.get("name"), card_render._font(F.RITE_NAME_SIZE),
-                     F.RITE_NAME, name_color,
-                     stroke=F.NAME_OUTLINE, stroke_color=name_outline)
-    _draw_text_block(canvas, rite.get("text"), card_render._font(F.RITE_TEXT_SIZE),
-                     F.RITE_TEXT, text_color)
+    _draw_name_and_text(canvas, rite, card_render._font(F.RITE_NAME_SIZE),
+                        F.RITE_NAME, name_color, name_outline,
+                        F.RITE_TEXT, F.RITE_TEXT_CLEARANCE, text_color)
 
 
 def _rite_background_frames(rite: dict, overrides):

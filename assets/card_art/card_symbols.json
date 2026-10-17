@@ -73,6 +73,14 @@
    "file": "16mult.png",
    "color": "#ffc631"
   },
+  "[17life]": {
+   "file": "17life.png",
+   "color": null
+  },
+  "[17life_inv]": {
+   "file": "17life_inv.png",
+   "color": null
+  },
   "[1anima]": {
    "file": "generic_1.png",
    "color": "#8769E9"
@@ -91,6 +99,10 @@
   },
   "[1life]": {
    "file": "1life.png",
+   "color": null
+  },
+  "[1life_inv]": {
+   "file": "1life_inv.png",
    "color": null
   },
   "[1mult]": {
@@ -145,6 +157,10 @@
    "file": "2life.png",
    "color": null
   },
+  "[2life_inv]": {
+   "file": "2life_inv.png",
+   "color": null
+  },
   "[2mult]": {
    "file": "2mult.png",
    "color": null
@@ -181,6 +197,10 @@
    "file": "32bonus.png",
    "color": null
   },
+  "[32perm_bonus]": {
+   "file": "32bonus.png",
+   "color": "#ffc631"
+  },
   "[3anima]": {
    "file": "generic_3.png",
    "color": "#8769E9"
@@ -199,6 +219,10 @@
   },
   "[3life]": {
    "file": "3life.png",
+   "color": null
+  },
+  "[3life_inv]": {
+   "file": "3life_inv.png",
    "color": null
   },
   "[3mult]": {
@@ -243,6 +267,10 @@
   },
   "[4life]": {
    "file": "4life.png",
+   "color": null
+  },
+  "[4life_inv]": {
+   "file": "4life_inv.png",
    "color": null
   },
   "[4mult]": {
@@ -437,10 +465,6 @@
    "file": "9mult.png",
    "color": "#ffc631"
   },
-  "[]": {
-   "file": "ether_dark.png",
-   "color": null
-  },
   "[and]": {
    "file": "and_icon.png",
    "color": null
@@ -483,10 +507,6 @@
   },
   "[down]": {
    "file": "down_icon2.png",
-   "color": null
-  },
-  "[ether]": {
-   "file": "ether_dark.png",
    "color": null
   },
   "[generic_1]": {
@@ -613,6 +633,46 @@
    "file": "link_6.png",
    "color": null
   },
+  "[magnify_1]": {
+   "file": "magnify_1.png",
+   "color": null
+  },
+  "[magnify_2]": {
+   "file": "magnify_2.png",
+   "color": null
+  },
+  "[magnify_3]": {
+   "file": "magnify_3.png",
+   "color": null
+  },
+  "[magnify_4]": {
+   "file": "magnify_4.png",
+   "color": null
+  },
+  "[magnify_5]": {
+   "file": "magnify_5.png",
+   "color": null
+  },
+  "[magnify_6]": {
+   "file": "magnify_6.png",
+   "color": null
+  },
+  "[magnify_7]": {
+   "file": "magnify_7.png",
+   "color": null
+  },
+  "[magnify_8]": {
+   "file": "magnify_8.png",
+   "color": null
+  },
+  "[magnify_9]": {
+   "file": "magnify_9.png",
+   "color": null
+  },
+  "[magnify_big]": {
+   "file": "magnify_big.png",
+   "color": null
+  },
   "[non_1_valence]": {
    "file": "non_1_valence.png",
    "color": null
@@ -689,9 +749,25 @@
    "file": "or_icon.png",
    "color": null
   },
+  "[perm_bonus]": {
+   "file": "bonus.png",
+   "color": "#ffc631"
+  },
   "[perm_mult]": {
    "file": "mult.png",
    "color": "#ffc631"
+  },
+  "[refract]": {
+   "file": "refract_icon.png",
+   "color": null
+  },
+  "[revolving]": {
+   "file": "revolving_icon.png",
+   "color": null
+  },
+  "[ritualistic]": {
+   "file": "rite_icon2.png",
+   "color": null
   },
   "[sequence]": {
    "file": "generic_sequence.png",

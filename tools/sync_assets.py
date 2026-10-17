@@ -6,11 +6,20 @@ DRIFT whenever the game's art changes. This script is how you refresh them:
 
     python -m tools.sync_assets --azoth ../azoth
 
-It also regenerates `assets/card_art/card_symbols.json` from `Utils.replace_dict`
-in `scripts/autoloads/utils.gd`, so the `[1life]`-style token map stays in step
-with the game rather than being transcribed by hand.
+It also regenerates three files from the game's source rather than having them
+transcribed by hand:
 
-Run it after any change to card borders, card symbols, or the symbol tokens.
+  * `assets/card_art/card_symbols.json` from `Utils.replace_dict` in
+    `scripts/autoloads/utils.gd` -- the `[1life]`-style token map;
+  * `assets/card_art/border_blobs.json` from
+    `scenes/cards/card_border_blobs.gdshaderinc` -- the card border's four
+    blobs, which the game draws as signed distance fields (it stopped loading
+    the per-element border PNGs);
+  * `assets/card_art/weapon_text.json` from the game's translations -- the
+    words a weapon's escalate badge is set in (`WEAPON_ESCALATES_*`).
+
+Run it after any change to the card border, card symbols, the symbol tokens or
+the weapon badge's wording.
 See docs/CARD_RENDERING.md.
 
 WHAT THIS SCRIPT CANNOT DO: the aspect and rite backgrounds under
@@ -31,20 +40,8 @@ from pathlib import Path
 
 BOT_ROOT = Path(__file__).resolve().parent.parent
 
-# Borders and background, from BaseCard.border_paths in scripts/cards/base_card.gd.
-# Keys are what a card's `element` field holds; "default" covers a null element.
-BORDERS = {
-    "default": "assets/images/cards/borders/blurred_white_border_noline.png",
-    "anima": "assets/images/cards/borders/blurred_anima_border_noline.png",
-    "blood": "assets/images/cards/borders/blurred_blood_border_noline.png",
-    "sol": "assets/images/cards/borders/blurred_sol_border_noline.png",
-    # Split cards draw a second border over the first. Phase 2.
-    "split_anima": "assets/images/cards/borders/blurred_second_anima_border3.png",
-    "split_blood": "assets/images/cards/borders/blurred_second_blood_border3.png",
-    "split_sol": "assets/images/cards/borders/blurred_second_sol_border3.png",
-}
-
-# The Background TextureRect in scenes/cards/card.tscn.
+# The Background TextureRect in scenes/cards/card.tscn. Its alpha is the card's
+# silhouette; the border blobs are painted inside it (card_render._border).
 BACKGROUND = "assets/images/cards/borders/blurred_card_background2.png"
 
 FONT = "assets/fonts/Aldrich-Regular.ttf"
@@ -60,6 +57,16 @@ DEST_BACKGROUNDS = "assets/card_art/backgrounds"
 DEST_SYMBOLS = "assets/card_art/symbols"
 DEST_FONTS = "assets/fonts"
 SYMBOL_MAP = "assets/card_art/card_symbols.json"
+
+# The card border's blobs: card_border_dim.gdshader draws these, and nothing
+# else, since the per-element border PNGs were retired.
+BORDER_BLOBS = "scenes/cards/card_border_blobs.gdshaderinc"
+DEST_BORDER_BLOBS = "assets/card_art/border_blobs.json"
+
+# The weapon badge's words, from the game's translation table.
+TRANSLATIONS = "assets/localization/translations.csv"
+WEAPON_TEXT_PREFIX = "WEAPON_ESCALATES_"
+DEST_WEAPON_TEXT = "assets/card_art/weapon_text.json"
 
 # Shader-exported backgrounds. NOT copied -- only checked for. See the module
 # docstring. `fate_layout.rite_variant()` decides which of the four a rite gets;
@@ -112,6 +119,49 @@ def parse_symbol_tokens(utils_gd: Path) -> dict:
     return tokens
 
 
+# One edge half-plane of a blob:  float v0 = dot(p, vec2(a, b)) - o;
+_PLANE = re.compile(
+    r"float\s+v\d+\s*=\s*dot\(p,\s*vec2\(\s*(?P<a>-?[\d.]+),\s*(?P<b>-?[\d.]+)\s*\)\)"
+    r"\s*-\s*(?P<o>-?[\d.]+)\s*;")
+_BLOB = re.compile(r"float\s+border_blob_(?P<i>\d+)\(vec2 p\)\s*\{(?P<body>.*?)\n\}", re.S)
+_BLOB_K = re.compile(r"const\s+float\s+K\s*=\s*(?P<k>[\d.]+)\s*;")
+_BLOB_SIZE = re.compile(r"BORDER_PX\s*=\s*vec2\(\s*(?P<w>[\d.]+),\s*(?P<h>[\d.]+)\s*\)")
+
+
+def parse_border_blobs(shader_inc: Path) -> dict:
+    """The blobs as {"size": [w, h], "blobs": [{"planes": [[a, b, o], ...], "k": K}]}.
+
+    Each blob is a log-sum-exp smooth maximum of its planes `dot(p, n) - o`,
+    softened by K, in a w x h border-pixel space. The file is generated (fitted
+    to the old border PNG) and could be refitted, which is why it is parsed
+    rather than copied into Python by hand.
+    """
+    text = shader_inc.read_text(encoding="utf-8")
+    size = _BLOB_SIZE.search(text)
+    blobs = []
+    for m in sorted(_BLOB.finditer(text), key=lambda m: int(m.group("i"))):
+        body = m.group("body")
+        planes = [[float(p.group("a")), float(p.group("b")), float(p.group("o"))]
+                  for p in _PLANE.finditer(body)]
+        k = _BLOB_K.search(body)
+        blobs.append({"planes": planes, "k": float(k.group("k"))})
+    if size is None or not blobs:
+        raise ValueError(f"no border blobs found in {shader_inc}")
+    return {"size": [float(size.group("w")), float(size.group("h"))], "blobs": blobs}
+
+
+def parse_weapon_text(translations_csv: Path) -> dict:
+    """Every WEAPON_ESCALATES_* key's English, as {key: text}."""
+    import csv
+    out = {}
+    with translations_csv.open(encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            key = row.get("keys") or ""
+            if key.startswith(WEAPON_TEXT_PREFIX):
+                out[key] = row.get("en") or ""
+    return out
+
+
 def _copy(src: Path, dst: Path, report: list) -> bool:
     if not src.is_file():
         report.append(f"MISSING  {src}")
@@ -152,16 +202,14 @@ def sync(azoth: Path, dry_run: bool = False) -> int:
         if not _copy(src, dst, report):
             missing += 1
 
-    # Borders and the card background.
-    for name, rel in list(BORDERS.items()) + [("background", BACKGROUND)]:
-        src = azoth / rel
-        dst = BOT_ROOT / DEST_BORDERS / Path(rel).name
-        if dry_run:
-            if not src.is_file():
-                report.append(f"MISSING  {src}"); missing += 1
-            continue
-        if not _copy(src, dst, report):
-            missing += 1
+    # The card background. The border is no longer a file: see BORDER_BLOBS.
+    src = azoth / BACKGROUND
+    dst = BOT_ROOT / DEST_BORDERS / Path(BACKGROUND).name
+    if dry_run:
+        if not src.is_file():
+            report.append(f"MISSING  {src}"); missing += 1
+    elif not _copy(src, dst, report):
+        missing += 1
 
     # The card font.
     src = azoth / FONT
@@ -202,6 +250,25 @@ def sync(azoth: Path, dry_run: bool = False) -> int:
             "tokens": {t: {"file": i["file"], "color": i["color"]}
                        for t, i in sorted(tokens.items())},
         }
+        out.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
+        report.append(f"wrote    {out.relative_to(BOT_ROOT)}")
+
+    for rel, dest, parse, what in (
+            (BORDER_BLOBS, DEST_BORDER_BLOBS, parse_border_blobs, "border blobs"),
+            (TRANSLATIONS, DEST_WEAPON_TEXT, parse_weapon_text, "weapon badge text")):
+        src = azoth / rel
+        if not src.is_file():
+            report.append(f"MISSING  {src}")
+            missing += 1
+            continue
+        parsed = parse(src)
+        print(f"parsed {what} from {rel}")
+        if dry_run:
+            continue
+        out = BOT_ROOT / dest
+        payload = {"_comment": f"Generated by tools/sync_assets.py from {rel} in the "
+                               "azoth repo. Do not edit by hand."}
+        payload["strings" if parse is parse_weapon_text else "border"] = parsed
         out.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
         report.append(f"wrote    {out.relative_to(BOT_ROOT)}")
 
