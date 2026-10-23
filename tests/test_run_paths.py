@@ -42,6 +42,14 @@ def test_a_run_closed_before_its_first_save_beat_nothing():
     assert rp.acts_beaten({"act_reached": None, "result": None}) == 0
 
 
+def test_a_boss_won_counts_when_act_reached_never_caught_up():
+    """A run left right after a boss win has no act_reached; one restarted
+    before the next act still reads the act it beat. The won boss turn says."""
+    assert rp.acts_beaten({"act_reached": None, "result": None, "boss_won_act": 1}) == 1
+    assert rp.acts_beaten({"act_reached": 1, "result": "restart", "boss_won_act": 1}) == 1
+    assert rp.acts_beaten({"act_reached": 3, "result": "death", "boss_won_act": 1}) == 2
+
+
 def test_the_tutorial_row_is_the_best_opening_tutorial():
     path = rp.steps([run(100, fmt="tutorial", act=1, result="restart"),
                      run(99, fmt="tutorial", act=3), run(98)], NOW)
@@ -50,6 +58,11 @@ def test_the_tutorial_row_is_the_best_opening_tutorial():
 
 def test_a_tutorial_that_beat_nothing_is_died():
     assert rp.steps([run(100, fmt="tutorial", act=1)], NOW)[0][1] == "Died"
+
+
+def test_a_tutorial_left_after_beating_its_first_boss_is_act_1():
+    left = dict(run(100, fmt="tutorial", act=None, result=None), boss_won_act=1)
+    assert rp.steps([left], NOW)[0][1] == "Act 1"
 
 
 def test_a_player_who_started_with_a_regular_run_has_no_tutorial():
@@ -187,6 +200,24 @@ def test_the_fetch_reads_only_the_window(monkeypatch, fake_supabase):
     assert got_since == since
     assert ("gte", "started_at", since.isoformat()) in fs.log["games"]["filters"]
     assert paths.players == 1
+
+
+def test_the_fetch_marks_the_boss_turns_a_run_won(monkeypatch, fake_supabase):
+    """A tutorial left after its act 1 boss has no act_reached; its won boss
+    turn is what puts it in Act 1 rather than Died."""
+    left = dict(run(50, fmt="tutorial", act=None, result=None),
+                uuid="g1", player_uuid="fresh", game_type="solo")
+    fs = fake_supabase({
+        "games": [left],
+        "player_cohort_view": [{"player_uuid": "fresh", "cohort": "new"}],
+        "turns": [{"game_uuid": "g1", "act": 1}],
+    })
+    monkeypatch.setattr(h, "supabase", fs)
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    paths, _ = stats.new_player_paths(NOW, 14, 5)
+    assert ("eq", "boss_result", "win") in fs.log["turns"]["filters"]
+    assert ("in", "game_uuid", ["g1"]) in fs.log["turns"]["filters"]
+    assert [n.label for n in paths.rows[0]] == ["Act 1"]
 
 
 # --- The card ---------------------------------------------------------------

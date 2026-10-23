@@ -71,10 +71,18 @@ def parse_time(value) -> datetime:
 
 def acts_beaten(game: dict) -> int:
     """A win beats every act; otherwise every act before the one the run ended
-    in. `act_reached` is NULL on a run closed before its first save: act 1."""
+    in, or every act up to the last boss it beat, whichever is further.
+
+    `act_reached` lags a boss win. It is only written when the run's outcome is
+    sent, so a run the player left and never came back to has it NULL, and a
+    run restarted between a boss win and the next act reads the act it just
+    beat. A tutorial left after its act 1 boss is the common case: the prompts
+    end there and many new players close the game. `boss_won_act` is the
+    highest act whose boss turn the run won, from `turns`
+    (`stats.new_player_paths`); without it, a NULL `act_reached` is act 1."""
     if game.get("result") in WINS:
         return WON
-    return int(game.get("act_reached") or 1) - 1
+    return max(int(game.get("act_reached") or 1) - 1, int(game.get("boss_won_act") or 0))
 
 
 def tutorial_label(beaten: int) -> str:

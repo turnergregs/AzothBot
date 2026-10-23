@@ -590,7 +590,14 @@ the next.
   a player whose first run was a regular one.
 - **Each row after it is one run:** blue when it beat more acts than any earlier
   run on the same hero and ritual, orange otherwise (deaths, restarts, runs left
-  unfinished). Acts beaten is `act_reached - 1`, a win beats them all. A first
+  unfinished). Acts beaten is `act_reached - 1`, or the highest act whose boss
+  turn the run won (`turns.boss_result = 'win'`) if that is further; a win
+  beats them all. The boss turn is needed because `act_reached` is only written
+  with the run's outcome: a run left and never resumed has it NULL, and one
+  restarted between a boss win and the next act reads the act it beat. Until
+  2026-10-23 the card read `act_reached` alone, which put every tutorial left
+  right after its act 1 boss (where the prompts end, and where many new players
+  close the game) under `Died`: 12 of the 25 there on the 2026-10-23 report. A first
   run on a hero must beat act 1 to count, or every first try on a new hero would
   read as one. The tutorial sets no best for the hero it plays. Colour carries
   the result: the run rows have counts and no labels.
@@ -607,7 +614,9 @@ the next.
 - **The read** is a window, not the whole table: `games` by `started_at`
   (`fetch_all`'s `("gte", ...)` filter, added for this), then which of those
   players had any run before it, then their cohorts, player uuids in batches of
-  100. None of it is service-role only. `stats.new_player_paths` is the one
+  100, then the won boss turns of those players' runs (`turns`, game uuids in
+  batches of 100). `turns` makes it service-role only, like the daily report's
+  turn figures: an anon key gets an error, not a card. `stats.new_player_paths` is the one
   function both callers use. The graph is `azoth_logic/run_paths.py` (pure); the
   card `stats_cards.paths_card`.
 - **Drawing.** Bands are 80% opaque so a crossing shows, and every shape is

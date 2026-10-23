@@ -210,27 +210,44 @@ def _read_failed(e: SupabaseError, views, *migrations: str) -> str:
     return f"❌ {shown} could not be read: {detail}" + (f" ({code})" if code else "")
 
 
-PATH_COLUMNS = ["player_uuid", "started_at", "starting_hero", "ritual", "format",
+PATH_COLUMNS = ["uuid", "player_uuid", "started_at", "starting_hero", "ritual", "format",
                 "act_reached", "result", "version"]
-# Player uuids per `in` filter: they travel in the URL, and a launch week could
-# bring hundreds of new players.
+# Uuids per `in` filter: they travel in the URL, and a launch week could bring
+# hundreds of new players.
 _UUID_BATCH = 100
 
 
-def _in_batches(table: str, columns: list, uuids: list, filters: dict) -> list:
+def _in_batches(table: str, columns: list, uuids: list, filters: dict,
+                key: str = "player_uuid") -> list:
     rows = []
     for i in range(0, len(uuids), _UUID_BATCH):
-        rows += fetch_all(table, columns, {**filters, "player_uuid": uuids[i:i + _UUID_BATCH]})
+        rows += fetch_all(table, columns, {**filters, key: uuids[i:i + _UUID_BATCH]})
     return rows
+
+
+def _mark_boss_wins(by_player: dict) -> None:
+    """Set `boss_won_act` on each run: the highest act whose boss turn it won.
+
+    `games.act_reached` lags a boss win (run_paths.acts_beaten says when), so a
+    tutorial left right after its act 1 boss read as Died. `boss_result` is
+    NULL on regular turns, so `win` alone picks the won boss turns."""
+    games = {g["uuid"]: g for runs in by_player.values() for g in runs if g.get("uuid")}
+    for t in _in_batches("turns", ["game_uuid", "act"], sorted(games),
+                         {"boss_result": "win"}, key="game_uuid"):
+        g = games.get(t.get("game_uuid"))
+        if g is not None and t.get("act") is not None:
+            g["boss_won_act"] = max(g.get("boss_won_act") or 0, int(t["act"]))
 
 
 def new_player_paths(until: datetime, days: int, runs: int):
     """`(paths, since)`: the run_paths graph of the new players who arrived in
     the `days` before `until`. Shared by /stats paths and the daily report.
 
-    Three reads, none of them service-role only: the window's solo runs, which
-    of their players had ANY run before it (they arrived earlier), and those
-    players' cohorts. Raises SupabaseError like fetch_all.
+    Four reads: the window's solo runs, which of their players had ANY run
+    before it (they arrived earlier), those players' cohorts, and the boss
+    turns their runs won. The last is `turns`, so this needs the service-role
+    key, as the daily report's turn figures already do. Raises SupabaseError
+    like fetch_all.
     """
     since = until - timedelta(days=days)
     games = [g for g in fetch_all("games", PATH_COLUMNS,
@@ -242,6 +259,7 @@ def new_player_paths(until: datetime, days: int, runs: int):
     cohorts = {r["player_uuid"]: r["cohort"] for r in _in_batches(
         "player_cohort_view", ["player_uuid", "cohort"], uuids, {})}
     by_player = run_paths.new_arrivals(games, earlier, cohorts)
+    _mark_boss_wins(by_player)
     return run_paths.build(by_player, until, runs), since
 
 
