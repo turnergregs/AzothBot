@@ -10,6 +10,7 @@ repo's docs/SURVEYS.md.
 # The question as the player read it.
 QUESTIONS = {
     "understood": "I understood how to play.",
+    "tutorial_ready": "I feel ready to play on my own.",
     "fun": "How fun was that run?",
     "loss": "That loss felt like:",
     "difficulty": "That run's difficulty felt:",
@@ -27,6 +28,7 @@ QUESTIONS = {
 # A few words for a row label.
 SHORT = {
     "understood": "Understood",
+    "tutorial_ready": "Ready after tutorial",
     "fun": "Fun",
     "loss": "Loss felt",
     "difficulty": "Difficulty",
@@ -41,22 +43,24 @@ SHORT = {
     "new_attacks": "New attacks",
 }
 
-# The order questions are reported in: the first-run question, then the run
+# The order questions are reported in: the first-run question and the one
+# asked as the tutorial ends, then the run
 # questions, then the fight ones, then the ones about the game as a whole, then
 # the returning-player ones about a single change.
-ORDER = ["understood", "fun", "loss", "difficulty", "choices", "length", "variety",
+ORDER = ["understood", "tutorial_ready", "fun", "loss", "difficulty", "choices", "length", "variety",
          "fight_fun", "fight_difficulty", "ui", "visuals", "cards", "new_attacks"]
 
 # Choice questions' answers, in the order the card shows them.
 CHOICES = {
     "understood": ["yes", "mostly", "no"],
+    "tutorial_ready": ["yes", "mostly", "somewhat", "no"],
     "loss": ["bad_luck", "my_fault", "unfair"],
     "difficulty": ["too_easy", "just_right", "too_hard"],
     "fight_difficulty": ["too_easy", "just_right", "too_hard"],
 }
 
 ANSWERS = {
-    "yes": "Yes", "mostly": "Mostly", "no": "No",
+    "yes": "Yes", "mostly": "Mostly", "somewhat": "Somewhat", "no": "No",
     "bad_luck": "Bad luck", "my_fault": "My fault", "unfair": "Unfair",
     "too_easy": "Too easy", "just_right": "Just right", "too_hard": "Too hard",
 }
@@ -76,13 +80,14 @@ SCALE_ENDS = {
 
 # Where a survey was shown, by `survey_responses.moment`.
 MOMENTS = {
+    "tutorial_end": "Tutorial end",
     "boss_win": "Act intro",
     "loss": "Death",
     "victory": "Victory",
     "quit_to_menu": "Quit",
     "restart": "Restart",
 }
-MOMENT_ORDER = ["boss_win", "loss", "victory", "quit_to_menu", "restart"]
+MOMENT_ORDER = ["tutorial_end", "boss_win", "loss", "victory", "quit_to_menu", "restart"]
 
 
 def question(question_id) -> str:
