@@ -1089,6 +1089,26 @@ def item_card(name: str, kind: str, groups: list, by: str = "version",
 DAILY_MOST, DAILY_LEAST = 3, 2
 
 
+def _daily_boss_section(card: sc.Card, title: str, record: dict, against_average: bool) -> None:
+    """One boss per row from `record` ({name: [wins, finished fights]}), most
+    fought first. `against_average` draws the section's average across each
+    bar and each boss's difference from it."""
+    if not record:
+        return
+    wins = sum(w for w, _ in record.values())
+    fights = sum(f for _, f in record.values())
+    card.add(sc.SectionHeader(title, f"won {wins} of {fights}"))
+    average = wins / fights if fights else 0
+    for name in sorted(record, key=lambda n: (-record[n][1], n)):
+        w, f = record[name]
+        card.add(sc.BarRow(name, w / f, value_text=f"{round(100 * w / f)}%",
+                           count_text=f"{w}/{f}",
+                           delta=sc.signed((w / f - average) * 100) if against_average else "",
+                           faded=f < MIN_BOSS_FIGHTS,
+                           reference=average if against_average else None, fill=sc.NEUTRAL))
+    card.add(sc.Spacer(4))
+
+
 def daily_card(stats: dict, day: str) -> sc.Card:
     # Who it counts goes in the header, as every report's does: everyone,
     # developers included, and no version cutoff (yesterday's builds are
@@ -1113,15 +1133,19 @@ def daily_card(stats: dict, day: str) -> sc.Card:
     card.add(sc.Spacer(4))
 
     acts = {int(a): int(n) for a, n in (stats.get("act_distribution") or {}).items() if n}
-    if acts:
+    # Tutorial runs as their own row (2026-11-03), under the solo runs.
+    tutorial_acts = {int(a): int(n) for a, n in (stats.get("tutorial_acts") or {}).items() if n}
+    if acts or tutorial_acts:
         right = sc.WIDTH - sc.PAD
         card.add(sc.SectionHeader("How far runs got"))
         card.add(sc.ColumnHeads([("Furthest act", sc.PAD + sc.LABEL_W, "lm"),
                                  ("Beat act 3", right - sc.ActStripRow.COUNT_W, "rm"),
                                  ("Runs", right, "rm")]))
         # Reaching act 4 means the act 3 boss fell.
-        card.add(sc.ActStripRow("Solo runs", acts, sum(n for a, n in acts.items() if a >= 4)))
-        card.add(sc.act_legend(acts))
+        for label, group in (("Solo runs", acts), ("Tutorial", tutorial_acts)):
+            if group:
+                card.add(sc.ActStripRow(label, group, sum(n for a, n in group.items() if a >= 4)))
+        card.add(sc.act_legend({*acts, *tutorial_acts}))
         card.add(sc.Spacer(4))
 
     tg = stats.get("turn_grain") or {}
@@ -1129,18 +1153,18 @@ def daily_card(stats: dict, day: str) -> sc.Card:
         card.add(sc.Note(f"Boss fights and level-ups unavailable: {tg['error']}"[:90]))
         card.add(sc.Spacer(4))
 
-    record = tg.get("boss_record") or {}
-    if record:
-        wins = sum(w for w, _ in record.values())
-        fights = sum(f for _, f in record.values())
-        card.add(sc.SectionHeader("Boss fights", f"won {wins} of {fights}"))
-        average = wins / fights if fights else 0
-        for name in sorted(record, key=lambda n: (-record[n][1], n)):
-            w, f = record[name]
-            card.add(sc.BarRow(name, w / f, value_text=f"{round(100 * w / f)}%",
-                               count_text=f"{w}/{f}", delta=sc.signed((w / f - average) * 100),
-                               faded=f < MIN_BOSS_FIGHTS, reference=average, fill=sc.NEUTRAL))
+    _daily_boss_section(card, "Boss fights", tg.get("boss_record") or {}, against_average=True)
+
+    # The tutorial runs' boss fights (2026-11-03): their own section, with no
+    # average line, since a scripted fight says nothing about the regular ones.
+    # Its read fails for the same reason as the regular one, so only a failure
+    # of its own gets a note.
+    tutorial_tg = stats.get("tutorial_grain") or {}
+    if tutorial_tg.get("error") and not tg.get("error"):
+        card.add(sc.Note(f"Tutorial boss fights unavailable: {tutorial_tg['error']}"[:90]))
         card.add(sc.Spacer(4))
+    _daily_boss_section(card, "Tutorial boss fights", tutorial_tg.get("boss_record") or {},
+                        against_average=False)
 
     rewards = tg.get("top_rewards") or []
     if rewards:

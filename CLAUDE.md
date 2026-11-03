@@ -130,8 +130,10 @@ All docs live in `docs/`. Read before changing a system.
 - **The daily report counts three populations, not one.** `_partition_games`
   drops opening-turn restarts (`result = 'restart'` **and `turns_played <= 1`** —
   `turn_count` increments at the *start* of a turn, so 1 means "abandoned during
-  turn 1" and 2 already means one completed turn), splits tutorial-deck runs onto
-  their own line, and every other figure derives from what is left. Developer
+  turn 1" and 2 already means one completed turn), splits tutorial runs onto
+  their own rows (a tile, an act bar, and their own boss fights section since
+  2026-11-03, never pooled with the regular bosses), and every other figure
+  derives from what is left. Developer
   iteration on the tutorial does **not** trip `TestingConfig.is_testing()`, which
   only fires on content overrides — that is why it has to be filtered here at
   all. An unreadable `decks` read classifies nothing as tutorial rather than

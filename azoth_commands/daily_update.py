@@ -619,6 +619,17 @@ def _count_runs(games: list[dict]) -> tuple[int, int, int]:
     return solo, coop, legacy
 
 
+def _act_distribution(games: list[dict]) -> dict[int, int]:
+    """{furthest act: runs} over `games`, from the acts actually present. A run
+    with no `act_reached` is left out."""
+    acts = {}
+    for g in games:
+        act = _to_number(g.get("act_reached"))
+        if act >= 1:
+            acts[int(act)] = acts.get(int(act), 0) + 1
+    return acts
+
+
 def _fetch_daily_stats(day: date):
     """Query supabase for one CST day's game activity stats.
 
@@ -680,6 +691,14 @@ def _fetch_daily_stats(day: date):
     # every turn-grain row (docs/DB_SCHEMA.md caveat 9).
     solo_uuids = [g["uuid"] for g in regular if g.get("uuid") and g.get("game_type") == "solo"]
     turn_grain = _fetch_turn_grain_stats(solo_uuids)
+
+    # The tutorial runs' own boss fights (Turner, 2026-11-03), read the same way
+    # and drawn in a section of their own. Kept out of `turn_grain`: a scripted
+    # tutorial fight beside a drafted one would move every boss's win rate and
+    # the average they are read against.
+    tutorial_uuids = [g["uuid"] for g in tutorial_games
+                      if g.get("uuid") and g.get("game_type") == "solo"]
+    tutorial_grain = _fetch_turn_grain_stats(tutorial_uuids)
 
     # Draft data for yesterday's games
     game_uuids = [g["uuid"] for g in regular if g.get("uuid")]
@@ -746,12 +765,10 @@ def _fetch_daily_stats(day: date):
     #
     # The whole `regular` population, restarts included: this is a count of how
     # far people got, not an average, so a short run is a real data point rather
-    # than something that drags a mean down.
-    act_distribution = {}
-    for g in regular:
-        act = _to_number(g.get("act_reached"))
-        if act >= 1:
-            act_distribution[int(act)] = act_distribution.get(int(act), 0) + 1
+    # than something that drags a mean down. Tutorial runs get their own row
+    # (2026-11-03), counted the same way.
+    act_distribution = _act_distribution(regular)
+    tutorial_acts = _act_distribution(tutorial_games)
 
     boss_error = turn_grain.get("error")
     total_boss_fights = turn_grain.get("boss_turns", 0)
@@ -779,6 +796,8 @@ def _fetch_daily_stats(day: date):
         "tutorial_games": len(tutorial_games),
         "tutorial_restarts": tutorial_restarts,
         "tutorial_players": tutorial_players,
+        "tutorial_acts": tutorial_acts,
+        "tutorial_grain": tutorial_grain,
         "dropped_opening_turn": len(dropped_games),
         "boss_error": boss_error,
         "turn_grain": turn_grain,

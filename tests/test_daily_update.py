@@ -932,8 +932,9 @@ def test_daily_stats_derives_every_number_from_the_regular_population(monkeypatc
     monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
 
     seen = {}
+    grain_calls = []
     monkeypatch.setattr(du, "_fetch_turn_grain_stats",
-                        lambda uuids: seen.setdefault("turn_grain", list(uuids)) and {} or {})
+                        lambda uuids: grain_calls.append(list(uuids)) or {"uuids": list(uuids)})
     monkeypatch.setattr(du, "_fetch_draft_stats",
                         lambda uuids, by: seen.setdefault("draft", list(uuids)) and {} or {})
 
@@ -947,8 +948,14 @@ def test_daily_stats_derives_every_number_from_the_regular_population(monkeypatc
     assert stats["total_playtime_sec"] == 1507    # not 1598
     assert stats["game_results"] == {"death": 1}
     # The downstream fetches saw the regular uuids ONLY.
-    assert seen["turn_grain"] == ["real"]
+    assert stats["turn_grain"] == {"uuids": ["real"]}
     assert seen["draft"] == ["real"]
+    # The tutorial's boss fights are read on their own (2026-11-03), never
+    # pooled with the regular ones, and the dropped run is in neither.
+    assert stats["tutorial_grain"] == {"uuids": ["tut"]}
+    assert sorted(grain_calls) == [["real"], ["tut"]]
+    assert stats["act_distribution"] == {3: 1}
+    assert stats["tutorial_acts"] == {1: 1}
 
 
 def test_the_day_is_bucketed_on_started_at_not_finished_at(monkeypatch):

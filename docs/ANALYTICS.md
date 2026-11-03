@@ -1190,9 +1190,13 @@ failure never uses the day up. A quiet day is still one line of text.
 
 Top to bottom: tiles (players, new, solo runs, time played; then co-op runs,
 legacy runs, and tutorial runs when there were any); one act bar for the day with the beat-act-3 share (reaching
-act 4 means the act 3 boss fell); **boss fights per boss** (`boss_record`,
+act 4 means the act 3 boss fell), and a **Tutorial** bar under it for the
+tutorial runs; **boss fights per boss** (`boss_record`,
 new: the text report gave only a total, and a day of Veln winning every fight
-hid in it), against the day's overall rate; level-up reward pick rates; and the
+hid in it), against the day's overall rate; **tutorial boss fights** (2026-11-03,
+Turner: the tutorial's own boss, and any regular boss a tutorial run reached,
+with no average line or difference, since they are not read against the regular
+fights); level-up reward pick rates; and the
 three most and two least picked items, cards, aspects and rites together
 (`item_rates`). It is a digest, not a verdict: one day is too little to flag, so
 nothing is flagged and most rows are dimmed by the usual minimums.
@@ -1280,7 +1284,7 @@ the abandoned-run population `open_run` exists to expose. See
 #### Three populations, not one (2026-09-08)
 
 `_partition_games` splits the day's `games` rows before anything else reads
-them, and **every number in the report except the tutorial line and the unique-
+them, and **every number in the report except the tutorial rows and the unique-
 player count derives from the `regular` bucket**. The split was added after a
 report read *"15 games started — of which 13 were restarts"*: 13 of those 15
 rows were runs on the Tutorial Deck, nine of them a developer iterating on the
@@ -1316,8 +1320,11 @@ had one, but assuming short is the wrong direction if that changes.
 checked, and tutorial runs have recorded the Starting Deck or no deck since
 2026-09-24, so every one of them, and the tutorial's own boss, was counted as a
 regular run. The deck check stays for days before 2026-09-11, when every row
-reads `standard`. They get their own line and are
-excluded from every average, highlight, draft and turn-grain figure. A scripted
+reads `standard`. They get their own rows (the Tutorial tile, the Tutorial act
+bar, and since 2026-11-03 a Tutorial boss fights section read by a second
+`_fetch_turn_grain_stats` call over the tutorial's solo uuids, `tutorial_grain`)
+and are excluded from every regular average, highlight, draft and turn-grain
+figure. A scripted
 tutorial run's duration, act and combo are not comparable to a drafted one, and
 that is true from *both* ends — developer iteration on the tutorial does **not**
 trip `TestingConfig.is_testing()` (which only fires on content overrides), so it
