@@ -747,7 +747,8 @@ in the game repo), so they take `players:`; `pool` is content and does not.
   **Draft packs** (game 2026-09-29, `2026-09-29_draft_packs.sql`): a pack offered
   in a draft is a `type` bucket whose `picked` means **opened**, so "By type" gains
   a Packs row; a **Packs** section under it has an open-rate bar per kind (named
-  as printed on the pack: Atoms, Catalysts, Aspects, Rites, from `pack_type`),
+  as printed on the pack: Cards, Catalysts, Aspects, Rites, Attacks, from `pack_type`;
+  the card pack was labelled Atoms until 2026-11-05),
   flagged against the rest, and its header gives the share of opened packs that
   gave a pick (`in_pack` picks over opens; the rest were Skipped). What is
   offered inside an opened pack still counts as offered everywhere else, element
@@ -1178,6 +1179,15 @@ being enough at two.) Enabling a channel goes through the same sweep.
 The report is one image (`stats_cards.daily_card`), titled "Daily Report", with
 the day and "Everyone" (developers included) in its header and no text under it
 (2026-10-02; it had a footer, and was titled "Yesterday", until then).
+
+**Shop upgrade picks** (2026-11-05, Turner) follow the level-up picks: how many
+Upgrade packs were bought that day, and each shop level-up's pick rate, taken
+over offered, from the `shopreward` rows' `reward_name`
+(`daily_update._shop_upgrade_stats`). The Upgrade pack itself is logged as a
+`pack` item only when bought, so it read as picked every time in the draft
+ranking, beside the booster packs; it is left out of that ranking now, which
+keeps the packs (Cards, Catalysts, Aspects, Rites, Attacks) apart from the
+shop's upgrades.
 **A second image follows it** (2026-10-08): the new player paths card
 (`/stats paths`, [New player paths](#new-player-paths-2026-10-08)) for the 14
 days up to the end of the reported day, so a backfilled report shows the paths
@@ -1426,7 +1436,9 @@ Three fixes (2026-10-02): only content types (`card`, `aspect`, `ritual`,
 `rite`/`event`) are ever looked up, a pack is named by `pack_type` as printed
 on it (`stats_cards.PACK_LABELS`) and ranked with the type tag "pack", and
 anything else (a shop level-up, `shopreward`) is left out, so a new kind of
-draft item cannot take the report down again; a build failure is posted to the
+draft item cannot take the report down again (since 2026-11-05 the Upgrade
+pack, `pack_type 'upgrade'`, is left out of the ranking too, and the shop
+level-ups have a section of their own: see [Drawn as one image](#drawn-as-one-image-2026-09-29)); a build failure is posted to the
 channel once; and every missed day is backfilled.
 
 ### Fixed 2026-08-26

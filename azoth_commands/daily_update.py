@@ -190,14 +190,45 @@ def _content_item_types() -> set[str]:
     return {"card", "aspect", "ritual"} | set(rite_schema.CONTENT_TYPES)
 
 
+# The shop's Upgrade pack (game 2026-09-30): logged as a draft item with
+# `pack_type 'upgrade'` when bought, its rewards as `shopreward` items in a
+# draft of their own, each named by `reward_name`.
+UPGRADE_PACK = "upgrade"
+SHOP_REWARD = "shopreward"
+
+
+def _shop_upgrade_stats(items: list[dict]) -> dict:
+    """How many Upgrade packs were bought, and each shop level-up's pick rate:
+    taken over offered, as the level-up picks are read, since the common ones
+    are simply offered more."""
+    bought = sum(1 for i in items if i["item_type"] == "pack" and i.get("pack_type") == UPGRADE_PACK)
+    offered, taken = {}, {}
+    for item in items:
+        name = item.get("reward_name")
+        if item["item_type"] != SHOP_REWARD or not name:
+            continue
+        offered[name] = offered.get(name, 0) + 1
+        if item.get("picked"):
+            taken[name] = taken.get(name, 0) + 1
+    rates = {name: {"taken": taken.get(name, 0), "offered": n, "rate": taken.get(name, 0) / n}
+             for name, n in offered.items()}
+    return {"bought": bought,
+            "rewards": sorted(rates.items(), key=lambda kv: (-kv[1]["rate"], -kv[1]["offered"], kv[0]))}
+
+
 def _item_name(item: dict, name_map: dict) -> str | None:
     """A draft item's display name, or None for a kind the report does not rank.
 
     A pack is named by its kind, as printed on it (the type tag says it is a
-    pack). A shop level-up is a reward, not a draft pick, and is left out.
+    pack). A shop level-up is a reward, not a draft pick, and is left out, and
+    so is the Upgrade pack that holds it: it is logged as a pack only when
+    bought, so it read as picked every time, and it has its own section
+    (_shop_upgrade_stats).
     """
     kind = item["item_type"]
     if kind == "pack":
+        if item.get("pack_type") == UPGRADE_PACK:
+            return None
         return stats_cards.PACK_LABELS.get(item.get("pack_type"), item.get("pack_type") or "Unknown")
     if kind not in _content_item_types() or item.get("item_id") is None:
         return None
@@ -287,7 +318,7 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
         chunk = draft_uuids[i:i + 50]
         rows = (
             supabase.table("draft_items")
-            .select("id, draft_uuid, item_type, item_id, picked, pack_type")
+            .select("id, draft_uuid, item_type, item_id, picked, pack_type, reward_name")
             .in_("draft_uuid", chunk)
             .execute()
         ).data or []
@@ -393,6 +424,7 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
         "most_picked_rites": _rank_most(rites, limit=1),
         "least_picked_rites": _rank_least(rites, limit=1),
         "top_performers": top_performers,
+        "shop_upgrades": _shop_upgrade_stats(all_items),
     }
 
 

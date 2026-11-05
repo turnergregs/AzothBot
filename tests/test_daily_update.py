@@ -1084,9 +1084,13 @@ def test_a_pack_is_named_by_its_kind_and_never_looked_up(monkeypatch):
                 {"id": 2, "draft_uuid": "d1", "item_type": "pack", "item_id": None,
                  "pack_type": "card", "picked": False},
                 {"id": 3, "draft_uuid": "d1", "item_type": "shopreward", "item_id": None,
-                 "pack_type": None, "picked": True},
+                 "pack_type": None, "picked": True, "reward_name": "Forge"},
                 {"id": 4, "draft_uuid": "d1", "item_type": "shopreward", "item_id": None,
-                 "pack_type": None, "picked": True},
+                 "pack_type": None, "picked": False, "reward_name": "Etch"},
+                {"id": 7, "draft_uuid": "d1", "item_type": "pack", "item_id": None,
+                 "pack_type": "upgrade", "picked": True},
+                {"id": 8, "draft_uuid": "d1", "item_type": "pack", "item_id": None,
+                 "pack_type": "upgrade", "picked": True},
                 {"id": 5, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": True},
                 {"id": 6, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": False}],
             "cards": [{"id": 10, "name": "Salvage"}]}
@@ -1110,8 +1114,14 @@ def test_a_pack_is_named_by_its_kind_and_never_looked_up(monkeypatch):
 
     rates = {(i["item_type"], i["item_name"]): (i["picked"], i["offered"])
              for i in stats["item_rates"]}
-    assert rates == {("pack", "Atoms"): (1, 2), ("card", "Salvage"): (1, 2)}, \
-        "packs ranked by their printed name; a shop level-up is a reward, not a pick"
+    assert rates == {("pack", "Cards"): (1, 2), ("card", "Salvage"): (1, 2)}, \
+        "packs ranked by their printed name; a shop level-up and its Upgrade pack are not picks"
+    shop = stats["shop_upgrades"]
+    assert shop["bought"] == 2
+    assert dict(shop["rewards"]) == {
+        "Forge": {"taken": 1, "offered": 1, "rate": 1.0},
+        "Etch": {"taken": 0, "offered": 1, "rate": 0.0},
+    }, "each shop level-up's pick rate, apart from the draft's packs"
 
 
 # ---------------------------------------------------------------------------

@@ -645,8 +645,8 @@ TYPE_LABELS = {"card": "Cards", "aspect": "Aspects", "rite": "Rites", "pack": "P
 # Draft packs (game 2026-09-29, 2026-09-29_draft_packs.sql): a pack offered in a
 # draft is a `type` bucket whose `picked` means OPENED, with its kind in the
 # `pack_type` dimension. Labelled by the name printed on the pack.
-PACK_LABELS = {"card": "Atoms", "catalyst": "Catalysts", "aspect": "Aspects", "rite": "Rites",
-               "upgrade": "Upgrade"}
+PACK_LABELS = {"card": "Cards", "catalyst": "Catalysts", "aspect": "Aspects", "rite": "Rites",
+               "weapon": "Attacks", "upgrade": "Upgrade"}
 KIND_LABELS = {"upgrade": "Upgraded", "attribute": "Attribute", "enhancement": "Enhanced"}
 
 
@@ -1172,6 +1172,16 @@ def daily_card(stats: dict, day: str) -> sc.Card:
         for name, r in rewards:
             card.add(sc.BarRow(name, r["taken"] / r["offered"],
                                value_text=f"{round(100 * r['taken'] / r['offered'])}%",
+                               count_text=f"{r['taken']}/{r['offered']}", fill=sc.NEUTRAL))
+        card.add(sc.Spacer(4))
+
+    # The shop's Upgrade pack: how many were bought, and which reward each
+    # pick took, apart from the draft's packs below (2026-11-05, Turner).
+    shop = (stats.get("draft") or {}).get("shop_upgrades") or {}
+    if shop.get("rewards"):
+        card.add(sc.SectionHeader("Shop upgrade picks", f"{shop.get('bought', 0)} bought"))
+        for name, r in shop["rewards"]:
+            card.add(sc.BarRow(name, r["rate"], value_text=f"{round(100 * r['rate'])}%",
                                count_text=f"{r['taken']}/{r['offered']}", fill=sc.NEUTRAL))
         card.add(sc.Spacer(4))
 

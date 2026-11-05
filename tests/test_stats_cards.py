@@ -632,7 +632,7 @@ def test_packs_are_a_type_and_get_a_section_of_their_own():
     assert heads == ["By type", "Packs", "By element", "By valence", "By embellishment"]
     assert _section_rows(card, "By type")[-1].label == "Packs"
     rows = _section_rows(card, "Packs")
-    assert [r.label for r in rows] == ["Atoms", "Aspects", "Rites"]
+    assert [r.label for r in rows] == ["Cards", "Aspects", "Rites"]
     assert rows[0].count_text == "14/30"
 
 
