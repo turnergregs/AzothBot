@@ -60,6 +60,11 @@ DEFAULT_SOFTNESS = 0.2
 SOFTNESS_MIN, SOFTNESS_MAX = 0.02, 0.6
 DEFAULT_ROUNDNESS = 0.25
 ROUNDNESS_MAX = 0.33
+# The shader's ART_TRIANGLE_GROW (procedural_art.gdshaderinc): a triangle
+# silhouette is drawn this much bigger than the biggest triangle that fits the
+# quad, so it is as tall as the quad and its bottom corners run past it.
+TRIANGLE_GROW = 1.1547
+
 # The shader's art_envelope order: the three families' own domains first.
 SILHOUETTES = ("triangle", "circle", "square", "hexagon", "pentagon", "heart")
 FAMILY_FRAMING = {
@@ -464,8 +469,10 @@ class Field:
         qx = (self.u - 0.5) * 2.0
         qy = -((self.v - 0.5) * 2.0)
         # The envelope: warped with the waves, fixed to the quad (scale, centre
-        # and rotation move only the waves inside it).
-        ex, ey = qx * (1.0 + lk.warp), qy * (1.0 + lk.warp)
+        # and rotation move only the waves inside it). A triangle silhouette is
+        # drawn TRIANGLE_GROW times bigger, waves and all.
+        grow = TRIANGLE_GROW if lk.silhouette == "triangle" else 1.0
+        ex, ey = qx * (1.0 + lk.warp) / grow, qy * (1.0 + lk.warp) / grow
         if lk.warp > 0.0:
             w = lk.warp_seed * 6.2831853
             dx = np.sin(ey * 1.7 + w * 1.3) + 0.5 * np.sin(ex * 2.3 + ey * 0.9 + w * 2.1)
@@ -473,9 +480,9 @@ class Field:
             ex, ey = ex + lk.warp * dx, ey + lk.warp * dy
         soft = max(lk.softness, 0.02)
         envelope = _smoothstep(0.0, soft, -envelope_distance(lk.silhouette, ex, ey, lk.roundness))
-        if lk.warp > 0.0:
-            # Where the bend still pushes the outline past the quad, the quad's
-            # own square fades it first.
+        if lk.warp > 0.0 or grow > 1.0:
+            # Where the bend or the triangle's growth pushes the outline past
+            # the quad, the quad's own square fades it first.
             envelope = envelope * _smoothstep(0.0, soft, 1.0 - np.maximum(np.abs(qx), np.abs(qy)))
         self.envelope = envelope
 
