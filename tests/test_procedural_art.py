@@ -80,7 +80,13 @@ def test_zones_match_the_gpu(case):
 def test_the_fixture_covers_every_family_and_silhouette():
     arts = [c["art"] for c in REFERENCE["cases"]]
     assert {a["family"] for a in arts} == set(pa.FAMILIES)
-    assert {pa.silhouette_of(a) for a in arts} == set(pa.SILHOUETTES)
+    assert {pa.silhouette_of(a) for a in arts} == set(pa.SILHOUETTES) | {pa.CUSTOM}
+    outlines = [pa.read_outline(a.get("outline")) for a in arts if pa.silhouette_of(a) == pa.CUSTOM]
+    assert {p["shape"] for o in outlines for p in o["pieces"]} == set(pa.OUTLINE_SHAPES), \
+        "every outline piece shape is covered"
+    assert any(a.get("fit") for a in arts if pa.silhouette_of(a) == pa.CUSTOM), "fit to width is covered"
+    assert any(p["cut"] for o in outlines for p in o["pieces"]), "a cut piece is covered"
+    assert {a.get("fill", {}).get("base") for a in arts} >= {"parts", "parts_inverted"}
     assert any(a.get("framing") == "cropped" for a in arts), "older looks still read"
     assert any(a.get("warp") for a in arts)
     assert any(a["family"] == "circle" and 0 in a.get("is_dirichlet", [1]) for a in arts), \

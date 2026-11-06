@@ -89,7 +89,19 @@ DEFAULT_ART = {
     "framing": "whole",
     "fill": {"base": "sign"},
 }
-FILL_BASES = ("off", "on", "sign", "sign_inverted", "centre", "centre_inverted")
+FILL_BASES = ("off", "on", "sign", "sign_inverted", "centre", "centre_inverted",
+              "parts", "parts_inverted")
+# A custom outline (ArtOutline in the game, docs/OUTLINE_ART_PLAN.md): the
+# silhouette a look names when its `outline` holds pieces.
+CUSTOM = "custom"
+OUTLINE_SHAPES = ("circle", "ellipse", "box", "triangle", "pentagon", "hexagon")
+OUTLINE_MAX_PIECES = 8
+OUTLINE_AT_LIMIT = 1.2
+OUTLINE_SIZE_MIN, OUTLINE_SIZE_MAX = 0.05, 1.2
+OUTLINE_BLEND_MAX = 0.4
+OUTLINE_DEFAULT_BLEND = 0.12
+# ArtOutline.fit's sampling, matched so both draw the same fit.
+FIT_ROWS, FIT_SAMPLES, FIT_EXTENT_ROWS = 48, 49, 25
 
 # procedural_art.gdshaderinc: per-term wobble clocks.
 _WOBBLE_F1 = (1.000, 1.310, 0.870, 1.130, 0.790, 1.230)
@@ -205,10 +217,55 @@ def silhouette_of(look: dict) -> str:
     picked = str(look.get("silhouette", ""))
     if picked in SILHOUETTES:
         return picked
+    if picked == CUSTOM and read_outline(look.get("outline")):
+        return CUSTOM
     if str(look.get("framing", "whole")) == "cropped":
         return SQUARE
     family = str(look.get("family", TRIANGLE))
     return family if family in SILHOUETTES else TRIANGLE
+
+
+def _clamp(value, lo, hi):
+    return min(max(value, lo), hi)
+
+
+def _pair(value, fallback):
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return float(value[0]), float(value[1])
+    return fallback
+
+
+def read_piece(entry) -> dict:
+    """ArtOutline.read_piece: one piece checked and clamped, or {}."""
+    if not isinstance(entry, dict) or str(entry.get("shape", "")) not in OUTLINE_SHAPES:
+        return {}
+    shape = str(entry["shape"])
+    ax, ay = _pair(entry.get("at"), (0.0, 0.0))
+    sx, sy = _pair(entry.get("size"), (0.4, 0.4))
+    if shape == "circle":
+        sy = sx
+    turn = float(entry.get("turn", 0.0))
+    turn = (turn + np.pi) % (2.0 * np.pi) - np.pi
+    return {
+        "shape": shape,
+        "at": (_clamp(ax, -OUTLINE_AT_LIMIT, OUTLINE_AT_LIMIT), _clamp(ay, -OUTLINE_AT_LIMIT, OUTLINE_AT_LIMIT)),
+        "size": (_clamp(sx, OUTLINE_SIZE_MIN, OUTLINE_SIZE_MAX), _clamp(sy, OUTLINE_SIZE_MIN, OUTLINE_SIZE_MAX)),
+        "turn": turn,
+        "cut": bool(entry.get("cut", False)),
+        "zone": 1 if int(entry.get("zone", 0)) == 1 else 0,
+    }
+
+
+def read_outline(outline) -> dict:
+    """ArtOutline.read: the outline checked and clamped, or {}."""
+    if not isinstance(outline, dict) or not isinstance(outline.get("pieces"), list):
+        return {}
+    pieces = [p for p in (read_piece(e) for e in outline["pieces"]) if p][:OUTLINE_MAX_PIECES]
+    return {
+        "mirror": bool(outline.get("mirror", True)),
+        "blend": _clamp(float(outline.get("blend", OUTLINE_DEFAULT_BLEND)), 0.0, OUTLINE_BLEND_MAX),
+        "pieces": pieces,
+    }
 
 
 def fill_index(look: dict) -> int:
@@ -230,6 +287,9 @@ class Look:
             if isinstance(center, list) and len(center) >= 2 else (0.0, 0.0)
         self.rotation = float(look.get("rotation", 0.0))
         self.silhouette = silhouette_of(look)
+        self.outline = read_outline(look.get("outline")) if self.silhouette == CUSTOM else {}
+        # The look's, not the outline's: an outline is shared between looks.
+        self.fit = bool(look.get("fit", False))
         self.softness = min(max(float(look.get("softness", DEFAULT_SOFTNESS)), SOFTNESS_MIN), SOFTNESS_MAX)
         self.roundness = min(max(float(look.get("roundness", DEFAULT_ROUNDNESS)), 0.0), ROUNDNESS_MAX)
         self.peak = peak_amplitude(self.terms)
@@ -421,8 +481,167 @@ def _sd_heart(ex, ey, r):
     return np.where(py + px > 1.0, upper, lower)
 
 
-def envelope_distance(silhouette: str, ex, ey, roundness: float):
+def _piece_distance(piece: dict, px, py, r):
+    """art_piece_distance: one piece of a custom outline."""
+    ax, ay = piece["at"]
+    sx, sy = max(piece["size"][0], 0.01), max(piece["size"][1], 0.01)
+    c, s = np.cos(piece["turn"]), np.sin(piece["turn"])
+    dx, dy = px - ax, py - ay
+    lx, ly = c * dx + s * dy, -s * dx + c * dy
+    m = min(sx, sy)
+    shape = piece["shape"]
+    if shape == "circle":
+        return _length(lx, ly) - sx
+    if shape == "ellipse":
+        return (_length(lx / sx, ly / sy) - 1.0) * m
+    if shape == "box":
+        qx, qy = np.abs(lx) - sx + r * m, np.abs(ly) - sy + r * m
+        return _length(np.maximum(qx, 0.0), np.maximum(qy, 0.0)) + np.minimum(np.maximum(qx, qy), 0.0) - r * m
+    if shape == "triangle":
+        return _sd_triangle(lx / sx, ly / sy, r) * m
+    if shape == "pentagon":
+        return _sd_pentagon(lx / sx, ly / sy, r) * m
+    return _sd_hexagon(lx / sx, ly / sy, r) * m
+
+
+def _piece_mirrored(piece: dict, px, py, r, mirror: bool):
+    d = _piece_distance(piece, px, py, r)
+    return np.minimum(d, _piece_distance(piece, -px, py, r)) if mirror else d
+
+
+def outline_distance(outline: dict, px, py, roundness: float):
+    """art_sd_outline: added pieces smooth-joined, cut pieces smooth-subtracted."""
     r = min(max(roundness, 0.0), 0.33)
+    k = max(outline.get("blend", OUTLINE_DEFAULT_BLEND), 0.0001)
+    mirror = outline.get("mirror", True)
+    shape = None
+    for piece in outline.get("pieces", []):
+        if piece["cut"]:
+            continue
+        d = _piece_mirrored(piece, px, py, r, mirror)
+        if shape is None:
+            shape = d
+        else:
+            h = np.clip(0.5 + 0.5 * (d - shape) / k, 0.0, 1.0)
+            shape = d + (shape - d) * h - k * h * (1.0 - h)
+    if shape is None:
+        return np.ones_like(np.asarray(px, dtype=np.float64))
+    for piece in outline.get("pieces", []):
+        if not piece["cut"]:
+            continue
+        d = _piece_mirrored(piece, px, py, r, mirror)
+        h = np.clip(0.5 - 0.5 * (shape + d) / k, 0.0, 1.0)
+        shape = shape + (-d - shape) * h + k * h * (1.0 - h)
+    return shape
+
+
+# art_outline_softness's constants (procedural_art.gdshaderinc).
+FADE_REFERENCE = 0.5
+FADE_BLEND = 0.06
+
+
+def outline_softness(outline: dict, px, py, roundness: float, softness: float):
+    """art_outline_softness: Soft edge shortened where the pieces are thinner
+    than FADE_REFERENCE, weighted towards the piece the point is deepest in and
+    blended over FADE_BLEND between pieces. Cut pieces are not counted."""
+    r = min(max(roundness, 0.0), 0.33)
+    added = [p for p in outline.get("pieces", []) if not p["cut"]]
+    if not added:
+        return np.full(np.shape(px), softness)
+    ds = [_piece_mirrored(p, px, py, r, outline.get("mirror", True)) for p in added]
+    deepest = np.min(np.stack(ds), axis=0)
+    weights = np.zeros(np.shape(px))
+    thickness = np.zeros(np.shape(px))
+    for piece, d in zip(added, ds):
+        sx, sy = max(piece["size"][0], 0.01), max(piece["size"][1], 0.01)
+        m = sx if piece["shape"] == "circle" else min(sx, sy)
+        w = np.exp((deepest - d) / FADE_BLEND)
+        weights = weights + w
+        thickness = thickness + w * m
+    return softness * np.clip(thickness / weights / FADE_REFERENCE, 0.0, 1.0)
+
+
+def outline_zone(outline: dict, px, py, roundness: float):
+    """art_piece_zone: True where the deepest (or nearest) added piece is zone 1."""
+    r = min(max(roundness, 0.0), 0.33)
+    best = np.full(np.shape(px), 1000.0)
+    zone = np.zeros(np.shape(px), dtype=bool)
+    for piece in outline.get("pieces", []):
+        if piece["cut"]:
+            continue
+        d = _piece_mirrored(piece, px, py, r, outline.get("mirror", True))
+        closer = d < best
+        best = np.where(closer, d, best)
+        zone = np.where(closer, piece["zone"] == 1, zone)
+    return zone
+
+
+def _row_span(outline: dict, y: float, roundness: float):
+    """ArtOutline._row_span: the span inside the outline on row `y`."""
+    xs = -1.0 + 2.0 * np.arange(FIT_SAMPLES) / (FIT_SAMPLES - 1)
+    d = outline_distance(outline, xs, np.full(FIT_SAMPLES, y), roundness)
+    left = -1.0 if d[0] < 0.0 else 2.0
+    right = -2.0
+    for i in range(1, FIT_SAMPLES):
+        if (d[i - 1] < 0.0) != (d[i] < 0.0):
+            crossing = xs[i - 1] + (xs[i] - xs[i - 1]) * (d[i - 1] / (d[i - 1] - d[i]))
+            if d[i] < 0.0:
+                left = min(left, crossing)
+            else:
+                right = max(right, crossing)
+    if d[-1] < 0.0:
+        right = 1.0
+    return (2.0, -2.0) if left > right else (left, right)
+
+
+def outline_fit(outline: dict, roundness: float):
+    """ArtOutline.fit: the outline's (bottom, top) and FIT_ROWS row spans."""
+    bottom, top = 1.0, -1.0
+    for row in range(FIT_EXTENT_ROWS):
+        y = -1.0 + 2.0 * row / (FIT_EXTENT_ROWS - 1)
+        if _row_span(outline, y, roundness)[0] <= 1.0:
+            bottom, top = min(bottom, y), max(top, y)
+    if top < bottom:
+        bottom, top = -1.0, 1.0
+    else:
+        step = 1.0 / (FIT_EXTENT_ROWS - 1)
+        bottom, top = max(bottom - step, -1.0), min(top + step, 1.0)
+    spans, found = [], []
+    for row in range(FIT_ROWS):
+        span = _row_span(outline, bottom + (top - bottom) * row / (FIT_ROWS - 1), roundness)
+        spans.append(span)
+        found.append(span[0] <= 1.0)
+    for row in range(FIT_ROWS):
+        if found[row]:
+            continue
+        nearest = -1
+        for reach in range(1, FIT_ROWS):
+            for candidate in (row - reach, row + reach):
+                if 0 <= candidate < FIT_ROWS and found[candidate]:
+                    nearest = candidate
+                    break
+            if nearest >= 0:
+                break
+        spans[row] = spans[nearest] if nearest >= 0 else (-1.0, 1.0)
+    return (bottom, top), np.array(spans, dtype=np.float64)
+
+
+def fit_point(ex, ey, extent, spans):
+    """art_fit_point: `e` stretched to the outline's span on its row and its height."""
+    ty = np.clip((ey - extent[0]) / max(extent[1] - extent[0], 0.001), 0.0, 1.0)
+    f = ty * (FIT_ROWS - 1)
+    i = np.minimum(np.floor(f).astype(int), FIT_ROWS - 2)
+    t = f - i
+    left = spans[i, 0] + (spans[i + 1, 0] - spans[i, 0]) * t
+    right = spans[i, 1] + (spans[i + 1, 1] - spans[i, 1]) * t
+    width = np.maximum(right - left, 0.05)
+    return (ex - left) / width * 2.0 - 1.0, ty * 2.0 - 1.0
+
+
+def envelope_distance(silhouette: str, ex, ey, roundness: float, outline=None):
+    r = min(max(roundness, 0.0), 0.33)
+    if silhouette == CUSTOM:
+        return outline_distance(outline or {}, ex, ey, roundness)
     if silhouette == "triangle":
         return _sd_triangle(ex, ey, r)
     if silhouette == "circle":
@@ -479,17 +698,25 @@ class Field:
             dy = np.sin(ex * 1.9 + w * 0.7) + 0.5 * np.sin(ey * 2.1 - ex * 1.1 + w * 3.3)
             ex, ey = ex + lk.warp * dx, ey + lk.warp * dy
         soft = max(lk.softness, 0.02)
-        envelope = _smoothstep(0.0, soft, -envelope_distance(lk.silhouette, ex, ey, lk.roundness))
-        if lk.warp > 0.0 or grow > 1.0:
-            # Where the bend or the triangle's growth pushes the outline past
-            # the quad, the quad's own square fades it first.
+        # A custom outline's fade shortens in its thin pieces (art_outline_softness).
+        fade = np.maximum(outline_softness(lk.outline, ex, ey, lk.roundness, lk.softness), 0.02) \
+            if lk.silhouette == CUSTOM else soft
+        envelope = _smoothstep(0.0, fade, -envelope_distance(lk.silhouette, ex, ey, lk.roundness, lk.outline))
+        if lk.warp > 0.0 or grow > 1.0 or lk.silhouette == CUSTOM:
+            # Where the bend, the triangle's growth or a custom outline's pieces
+            # push the outline past the quad, the quad's own square fades it first.
             envelope = envelope * _smoothstep(0.0, soft, 1.0 - np.maximum(np.abs(qx), np.abs(qy)))
         self.envelope = envelope
+        self.ex, self.ey = ex, ey
 
+        wx, wy = ex, ey
+        if lk.silhouette == CUSTOM and lk.fit and lk.outline.get("pieces"):
+            extent, spans = outline_fit(lk.outline, lk.roundness)
+            wx, wy = fit_point(ex, ey, extent, spans)
         c, s = np.cos(lk.rotation), np.sin(lk.rotation)
         zoom = 1.0 / max(lk.scale, 0.001)
-        px = (c * ex - s * ey) * zoom + lk.center[0]
-        py = (s * ex + c * ey) * zoom + lk.center[1]
+        px = (c * wx - s * wy) * zoom + lk.center[0]
+        py = (s * wx + c * wy) * zoom + lk.center[1]
 
         # Each term's value over the quad, before its (time-varying) amplitude.
         self.values = []
@@ -538,6 +765,9 @@ class Field:
             secondary = np.zeros(field.shape, dtype=bool)
         elif lk.fill == 1:
             secondary = np.ones(field.shape, dtype=bool)
+        elif lk.fill >= 6:
+            # By the custom outline's pieces, placed as the envelope is.
+            secondary = outline_zone(lk.outline, self.ex, self.ey, lk.roundness) == (lk.fill == 6)
         elif lk.fill >= 4:
             inside = np.hypot((self.u - 0.5) * 2.0, (self.v - 0.5) * 2.0) < lk.zone_radius
             secondary = inside == (lk.fill == 4)
