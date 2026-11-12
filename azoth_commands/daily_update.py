@@ -14,8 +14,9 @@ from azoth_logic import rite_schema
 from azoth_logic import stats_cards
 from constants import DEV_GUILD_ID
 from supabase_client import supabase, SUPABASE_ROLE
-from supabase_helpers import SupabaseError
-from azoth_commands.stats import new_player_paths
+from supabase_helpers import SupabaseError, fetch_all
+from azoth_logic.run_paths import parse_time
+from azoth_commands.stats import new_player_paths, new_player_tutorial_steps
 
 # State file stores per-channel config:
 # {
@@ -838,6 +839,8 @@ def _fetch_daily_stats(day: date):
         "boss_losses": boss_losses,
         "draft": draft_stats,
         "paths": _fetch_paths(day),
+        "tutorial_steps": _fetch_tutorial_steps(day),
+        "surveys": _fetch_day_surveys(day),
     }
 
 
@@ -845,7 +848,7 @@ def _fetch_daily_stats(day: date):
 # Caleb. The players who arrived in the 14 days up to the end of the reported
 # day, so a backfilled report shows the paths as they stood that day.
 PATHS_DAYS = 14
-PATHS_RUNS = 5
+PATHS_RUNS = 8
 
 
 def _fetch_paths(day: date):
@@ -867,9 +870,71 @@ def _paths_messages(stats: dict) -> list[dict]:
         return []
     paths, since, until = found
     data = stats_cards.paths_card(paths, since, until, PATHS_RUNS).png()
-    embed = nextcord.Embed(color=0x9085E9)
-    embed.set_image(url="attachment://paths.png")
-    return [{"embed": embed, "file": nextcord.File(io.BytesIO(data), filename="paths.png")}]
+    return [_image_message(data, "paths.png", 0x9085E9)]
+
+
+# The tutorial steps card follows the paths (2026-11-03, Turner): the same new
+# players, those whose first run was the tutorial, prompt by prompt. Same
+# window as the paths, and the same failure rule.
+def _fetch_tutorial_steps(day: date):
+    """`(funnel, since, until)` for the daily report, or None when it could not
+    be read."""
+    until = datetime.fromisoformat(_day_range_utc(day)[1])
+    try:
+        funnel, since = new_player_tutorial_steps(until, PATHS_DAYS)
+    except SupabaseError as e:
+        print(f"Daily update: tutorial steps skipped for {day}: {e}")
+        return None
+    return funnel, since, until
+
+
+def _tutorial_steps_messages(stats: dict) -> list[dict]:
+    found = stats.get("tutorial_steps")
+    if not found or not found[0].players:
+        return []
+    funnel, since, until = found
+    return [_image_message(stats_cards.tutorial_steps_card(funnel, since, until).png(),
+                           "tutorial_steps.png", 0x9085E9)]
+
+
+# The survey answers card ends the report (2026-11-03, Turner): every survey
+# the day's rows hold, by `created_at`, the database's own clock, so a survey a
+# player's spool sends a day late is counted on the day it arrived, never
+# twice and never lost. /daily_reports still posts the same card on its own
+# schedule ("since the last post") until it is switched off in Discord.
+SURVEY_COLUMNS = ["id", "question_id", "moment", "outcome", "answer", "run_number",
+                  "has_comment", "created_at"]
+
+
+def _fetch_day_surveys(day: date):
+    """The day's survey_responses rows, or None when they could not be read."""
+    start, end = _day_range_utc(day)
+    try:
+        rows = fetch_all("survey_responses", SURVEY_COLUMNS, {"created_at": ("gte", start)})
+    except SupabaseError as e:
+        print(f"Daily update: survey answers skipped for {day}: {e}")
+        return None
+    end_at = datetime.fromisoformat(end)
+    return [r for r in rows if r.get("created_at") and parse_time(r["created_at"]) < end_at]
+
+
+def _survey_messages(stats: dict, day: date) -> list[dict]:
+    card = stats_cards.survey_answers_card(stats_cards.survey_tally(stats.get("surveys") or []),
+                                           period=f"{day.isoformat()} · Central time")
+    if card is None:
+        return []
+    return [_image_message(card.png(), "survey_answers.png", 0x9B59B6)]
+
+
+def _image_message(data: bytes, filename: str, color: int) -> dict:
+    embed = nextcord.Embed(color=color)
+    embed.set_image(url=f"attachment://{filename}")
+    return {"embed": embed, "file": nextcord.File(io.BytesIO(data), filename=filename)}
+
+
+def _extra_messages(stats: dict, day: date) -> list[dict]:
+    """The images after the day's own: paths, tutorial steps, survey answers."""
+    return _paths_messages(stats) + _tutorial_steps_messages(stats) + _survey_messages(stats, day)
 
 
 # ---------------------------------------------------------------------------
@@ -914,13 +979,13 @@ def _build_update_messages(stats: dict, day: date) -> list[dict]:
             )
         return [{"embed": nextcord.Embed(title=f"Daily Report — {yesterday}",
                                          description="\n".join(lines), color=color)}
-                ] + _paths_messages(stats)
+                ] + _extra_messages(stats, day)
 
     data = stats_cards.daily_card(stats, yesterday).png()
     embed = nextcord.Embed(color=color)
     embed.set_image(url="attachment://daily.png")
     return [{"embed": embed, "file": nextcord.File(io.BytesIO(data), filename="daily.png")}
-            ] + _paths_messages(stats)
+            ] + _extra_messages(stats, day)
 
 
 # ---------------------------------------------------------------------------

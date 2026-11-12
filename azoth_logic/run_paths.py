@@ -8,8 +8,12 @@ history:
     the last act beaten ("Act 2"), "Died" for none, "Won". A player whose first
     run was a regular one starts at "No tutorial".
   * Every row after it is one run: IMPROVED when it beat more acts than any
-    earlier run on the same hero and ritual, LOST otherwise (a death, a
-    restart, a run left unfinished).
+    earlier run on the same hero and ritual, SAME when it ended in the same
+    act as that best, SHORT when it ended earlier (a death, a restart, a run
+    left unfinished). A hero and ritual not played yet has beaten no acts, so
+    a first run on one that dies in act 1 is SAME (split 2026-11-03, Turner:
+    "improved or died at the same spot"; until then SAME and SHORT were one
+    LOST).
   * A path ends in STOPPED once the player has gone 3 days without a run, or
     PLAYED ON past the last run shown. A player who ran in the last 3 days has
     no end node: their path stops at their latest run until their next run, or
@@ -31,9 +35,9 @@ WINS = {"victory", "no_boss_key"}
 WON = 99                         # acts beaten by a win: more than any act
 
 # Node kinds, in the order a row lists them.
-TUTORIAL, NO_TUTORIAL, IMPROVED, LOST, STOPPED, PLAYED_ON = (
-    "tutorial", "no_tutorial", "improved", "lost", "stopped", "played_on")
-_KIND_ORDER = {TUTORIAL: 0, NO_TUTORIAL: 1, IMPROVED: 0, LOST: 1, STOPPED: 2, PLAYED_ON: 3}
+TUTORIAL, NO_TUTORIAL, IMPROVED, SAME, SHORT, STOPPED, PLAYED_ON = (
+    "tutorial", "no_tutorial", "improved", "same", "short", "stopped", "played_on")
+_KIND_ORDER = {TUTORIAL: 0, NO_TUTORIAL: 1, IMPROVED: 0, SAME: 1, SHORT: 2, STOPPED: 3, PLAYED_ON: 4}
 
 
 @dataclass(eq=False)
@@ -115,12 +119,12 @@ def steps(runs: list, until: datetime) -> list:
     # a tutorial replayed later is compared with the best tutorial so far.
     for g in runs[i:]:
         key = "tutorial" if g.get("format") == "tutorial" else (g.get("starting_hero"), g.get("ritual"))
-        b = acts_beaten(g)
-        if b > best.get(key, 0):
+        b, before = acts_beaten(g), best.get(key, 0)
+        if b > before:
             best[key] = b
             out.append((IMPROVED, "", 0))
         else:
-            out.append((LOST, "", 1))
+            out.append((SAME if b == before else SHORT, "", 1))
     return out
 
 

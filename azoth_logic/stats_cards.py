@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 from azoth_logic import stats_charts as sc
 from azoth_logic.run_paths import parse_time
 from azoth_logic import survey_labels as sl
+from azoth_logic import tutorial_steps as ts
 from azoth_logic.stats_format import CUTOFF_VERSION
 from azoth_logic.stats_format import value as sf_value
 
@@ -1780,15 +1781,16 @@ def _answer_summary(question_id: str, counts: dict) -> str:
     return " · ".join(f"{sl.ANSWERS.get(k, k)} {counts[k]}" for k in keys)
 
 
-def survey_answers_card(tally: list):
-    """/daily_reports' survey answers: how many were shown and answered since
-    the last post, then a line per question asked. None when none were shown.
-    Everyone, developers included, like the rest of that post."""
+def survey_answers_card(tally: list, period: str = "Since the last post"):
+    """The survey answers of /daily_reports (since its last post) and of the
+    daily report (`period` names its day): how many were shown and answered,
+    then a line per question asked. None when none were shown. Everyone,
+    developers included."""
     outcomes = _outcomes(tally)
     shown = sum(outcomes.values())
     if not shown:
         return None
-    card = sc.Card("Survey answers", f"Since the last post · {COHORT_LABELS['all']}")
+    card = sc.Card("Survey answers", f"{period} · {COHORT_LABELS['all']}")
     card.add(sc.SectionHeader("Answered", f"{outcomes['answered']} of {shown} shown"))
     return card.add(*_question_lines(tally))
 
@@ -1879,23 +1881,104 @@ def player_survey_blocks(raw: list) -> list:
 # whether each run after it beat their best, run by run, until they stop. The
 # graph is run_paths.build; this decides how it looks. Colour carries the
 # result, so the run rows carry counts only: no "Improved" / "Lost" labels.
+# Blue, amber and red-orange pass the dataviz validator's checks together on
+# the card's surface, every pair (2026-11-03).
 
 PATH_COLOURS = {
     "tutorial": "#9085e9",     # the tutorial row, whatever it reached
     "no_tutorial": "#9085e9",  # still the tutorial row: it says they skipped it
     "improved": sc.ABOVE,      # beat their best on that hero and ritual
-    "lost": "#d95926",         # did not
+    "same": "#a8891f",         # ended in the same act as that best
+    "short": "#c43a18",        # ended earlier
     "stopped": sc.NEUTRAL,
     "played_on": sc.FADED,
 }
-PATH_LEGEND = (("improved", "Beat their best on that hero"), ("lost", "Didn't"),
-               ("stopped", "Stopped (3 days idle)"))
+PATH_LEGEND = (("improved", "Beat their best on that hero"), ("same", "Same act"),
+               ("short", "Fell short"), ("stopped", "Stopped"))
 # The tutorial row's names that need two lines to stay over a narrow bar.
 _PATH_NAMES = {"No tutorial": "No\ntutorial"}
 
 
 def _day(when) -> str:
     return f"{when:%b} {when.day}"
+
+
+# ---------------------------------------------------------------------------
+# The daily report's tutorial steps
+# ---------------------------------------------------------------------------
+# 2026-11-03, Turner: where in the tutorial new players leave, prompt by
+# prompt, and whether they came back. The graph is tutorial_steps.build. A
+# funnel, not a Flow: the tutorial shows about forty prompts, and a Flow row
+# per prompt would be an image several screens tall. The green is the one the
+# turn-by-turn drop-off render used (2026-11-02); the pink, for a player who
+# came back to the tutorial (2026-11-03), passes the dataviz validator against
+# the blue and the green on the card's surface, every pair. A replay is split
+# by whether it beat the boss (2026-11-03): the orange, for one that did not,
+# passes it beside the pink in the bar's order (adjacent pairs; it is too
+# close to the green for red-green colourblind readers to tell apart without
+# the legend, which they are never drawn next to).
+
+STEP_ENDS = (("stopped", sc.NEUTRAL, "Never came back"),
+             ("replayed", "#c8742a", "Replayed, didn't beat the boss"),
+             ("replayed_won", "#c94f9a", "Replayed, beat the boss"),
+             ("played_again", "#3fa45b", "Came back, other runs"),
+             ("recent", sc.FADED, "Under 3 days ago"))
+
+
+def _legend_lines(items: list) -> list:
+    """`items` as Legend rows, as many to a row as fit the card's width."""
+    f = sc.font(11)
+    width = lambda label: (f.getlength(label) / sc.SCALE) + 14 + 12   # swatch, text, gap
+    rows, row, used = [], [], 0
+    for item in items:
+        w = width(item[0])
+        if row and used + w > sc.WIDTH - 2 * sc.PAD:
+            rows.append(row)
+            row, used = [], 0
+        row.append(item)
+        used += w
+    if row:
+        rows.append(row)
+    return [sc.Legend(r, indent=0) for r in rows]
+
+
+def _step_group_label(group: str) -> str:
+    return "Act 1 boss" if group == "boss" else group.capitalize()
+
+
+def tutorial_steps_card(funnel, since, until) -> sc.Card:
+    """The funnel of `funnel` (a tutorial_steps.Funnel) for the new players who
+    arrived from `since` up to `until` (exclusive, as paths_card)."""
+    n = funnel.players
+    card = sc.Card("Tutorial steps",
+                   f"{n} new player{'' if n == 1 else 's'} whose first run was the tutorial, "
+                   f"{_day(since)} – {_day(until - timedelta(seconds=1))}\n"
+                   f"Their first tutorial, one line per prompt ({ts.STEPS_FROM}+).")
+    present = {e for s in funnel.steps for e, c in s.left.items() if c}
+    present |= {e for ends in funnel.boss.values() for e, c in ends.items() if c}
+    legend = [("Went on", sc.ACCENT)] + [(text, colour) for e, colour, text in STEP_ENDS if e in present]
+    card.add(*_legend_lines(legend), sc.Spacer(2))
+    right = sc.WIDTH - sc.PAD
+    card.add(sc.ColumnHeads([("Left", right - sc.FunnelRow.COUNT_W, "rm"), ("Saw it", right, "rm")]))
+
+    group = None
+    for step in funnel.steps:
+        if step.group != group:
+            group = step.group
+            card.add(sc.SectionHeader(_step_group_label(group), height=24))
+        card.add(sc.FunnelRow(step.key.replace("_", " ").capitalize(), step.reached, n,
+                              [(step.left[e], colour) for e, colour, _ in STEP_ENDS]))
+
+    outcomes = [(ts.WON, "Beat the boss"), (ts.LOST, "Lost to the boss")]
+    if any(k in funnel.boss for k, _ in outcomes):
+        card.add(sc.SectionHeader("Tutorial over", height=24))
+        for key, label in outcomes:
+            ends = funnel.boss.get(key)
+            if ends:
+                card.add(sc.FunnelRow(label, sum(ends.values()), n,
+                                      [(ends[e], colour) for e, colour, _ in STEP_ENDS],
+                                      show_left=False))
+    return card.add(sc.Spacer(6))
 
 
 def paths_card(paths, since, until, runs_shown: int) -> sc.Card:

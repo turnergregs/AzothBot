@@ -252,6 +252,54 @@ class BarRow(Block):
 
 
 @dataclass
+class FunnelRow(Block):
+    """One step of a funnel: a bar as long as the players who reached it, out
+    of `total`, split into the players who went on (`fill`) and, at its end,
+    the ones who stopped here, a segment per `[(players, colour)]` in `ends`.
+    Then how many left here, and how many reached it, in their own columns.
+
+    Segments touch with a thin surface gap, as on ActStripRow. Small type and
+    a short height, so a funnel of forty steps stays one readable image.
+    """
+    label: str
+    reached: int
+    total: int
+    ends: list
+    fill: str = ACCENT
+    show_left: bool = True     # False where every player ends here (an outcome, not a quit)
+    label_w: float = 150
+    height: float = 19
+
+    LEFT_W = 50
+    COUNT_W = 46
+
+    def draw(self, d, top):
+        cy = top + px(self.height) // 2
+        x0 = px(PAD + self.label_w)
+        x1 = px(WIDTH - PAD - self.LEFT_W - self.COUNT_W - 8)
+        h = px(10)
+        d.text((px(PAD), cy), self.label, font=font(12), fill=INK_2, anchor="lm")
+        right = px(WIDTH - PAD)
+        d.text((right, cy), str(self.reached), font=font(12), fill=MUTED, anchor="rm")
+        left = sum(n for n, _ in self.ends)
+        if left and self.show_left:
+            d.text((right - px(self.COUNT_W), cy), f"{left} left", font=font(12, True),
+                   fill=INK, anchor="rm")
+        if not self.total:
+            return
+        per = (x1 - x0) / self.total
+        parts = [(self.reached - left, self.fill)] + [(n, c) for n, c in self.ends if n]
+        parts = [(n, c) for n, c in parts if n > 0]
+        gap = px(1.5)
+        x = x0
+        for i, (n, colour) in enumerate(parts):
+            right_edge = round(x + n * per - (gap if i < len(parts) - 1 else 0))
+            d.rounded_rectangle([round(x), cy - h // 2, max(right_edge, round(x) + px(2)), cy + h // 2],
+                                radius=px(2), fill=colour)
+            x += n * per
+
+
+@dataclass
 class Note(Block):
     """A line of small muted text: a definition, a caveat, a legend."""
     text: str

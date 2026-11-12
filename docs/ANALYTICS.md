@@ -574,6 +574,48 @@ overlapping, for the pairs; loss blame drawn beside difficulty in one chart;
 bars for the single questions; `understood` as one average per run (Yes +5,
 Mostly 0, No −5) against a zero baseline. Curves replaced all of them.
 
+### Tutorial steps (2026-11-03)
+
+Turner's question: where in the tutorial do new players leave, and do they
+come back? The daily report's third image, built from `tutorial_steps` (the
+game repo's `docs/DB_SCHEMA.md` § tutorial_steps: one row per prompt a
+tutorial run showed, from 0.12.0). Graph `azoth_logic/tutorial_steps.py`
+(pure), read `stats.new_player_tutorial_steps` (sharing `_new_arrivals` with
+paths), card `stats_cards.tutorial_steps_card`, drawn with
+`stats_charts.FunnelRow`.
+
+- **Who:** the players the paths card counts whose first run was a tutorial on
+  0.12.0 or later (`STEPS_FROM`). A resultless one under 2 hours old is left
+  out, as in paths, and so is a run with no step rows at all (it sent no
+  prompt: a crash, or a quit flush that ran out of time), rather than counted
+  as a quit at the first prompt.
+- **One line per prompt**, in the order shown (mean `step_index`, since steps
+  are added and renamed), under the turn most of its rows were shown in. The
+  opening prompts show at turn 0, before turn 1 starts, and are filed under
+  Turn 1; prompts shown on an act 1 boss turn are under Act 1 boss. The bar is
+  the players who saw it: blue went on, and its end is split by the players
+  who left there.
+- **Where a run was left:** its prompt still on screen (`closed = false`), or,
+  left between prompts, the last one shown. A run whose act 1 boss turn was won
+  or lost ends there instead, in the last section, even with a prompt up.
+- **What they did next** splits every ending, as paths ends a path: grey never
+  came back (3 days without a run); replayed the tutorial (any later run was a
+  tutorial, added 2026-11-03 at Turner's request), pink if one of those
+  replays beat the act 1 boss and orange if none did (left again, or lost to
+  the boss; also 2026-11-03, so the `turns` read covers the players' later
+  tutorials too); green came back to other runs only; dark under 3 days ago
+  (none of those yet). The green is the one the 2026-11-02 turn-by-turn
+  drop-off render used, checked there against this blue and grey; the pink
+  passes the dataviz validator against the blue and green, every pair, and the
+  orange beside the pink in the bar's order (adjacent pairs: it is too close
+  to the green for red-green colourblind readers, which the legend's labels
+  cover). The legend wraps onto a second row when it needs to,
+  and lists only the endings drawn.
+- **Why a funnel, not a Flow:** the tutorial shows about forty prompts, and a
+  Flow row per prompt would be an image several screens tall. That drop-off
+  render (one Flow row per turn, from `turns`, 2026-11-02) was a scratch
+  script, never in the bot; this replaces it.
+
 ### New player paths (2026-10-08)
 
 Caleb's design, from the game repo's player-paths prototype
@@ -589,8 +631,13 @@ the next.
   runs beat: `Act 2`, `Died` (none, restarts included), `Won`. `No tutorial` for
   a player whose first run was a regular one.
 - **Each row after it is one run:** blue when it beat more acts than any earlier
-  run on the same hero and ritual, orange otherwise (deaths, restarts, runs left
-  unfinished). Acts beaten is `act_reached - 1`, or the highest act whose boss
+  run on the same hero and ritual; amber (**Same act**) when it ended in the
+  same act as that best; red-orange (**Fell short**) when it ended earlier
+  (deaths, restarts, runs left unfinished). The two were one orange "Didn't"
+  until 2026-11-03 (Turner: whether they "improved or died at the same
+  spot"); the three pass the dataviz validator's checks together, every pair.
+  A hero and ritual not played yet has beaten no acts, so a first run on one
+  that dies in act 1 is Same act. Acts beaten is `act_reached - 1`, or the highest act whose boss
   turn the run won (`turns.boss_result = 'win'`) if that is further; a win
   beats them all. The boss turn is needed because `act_reached` is only written
   with the run's outcome: a run left and never resumed has it NULL, and one
@@ -598,10 +645,13 @@ the next.
   2026-10-23 the card read `act_reached` alone, which put every tutorial left
   right after its act 1 boss (where the prompts end, and where many new players
   close the game) under `Died`: 12 of the 25 there on the 2026-10-23 report. A first
-  run on a hero must beat act 1 to count, or every first try on a new hero would
-  read as one. The tutorial sets no best for the hero it plays. Colour carries
+  run on a hero must beat act 1 to improve, or every first try on a new hero
+  would read as one. The tutorial sets no best for the hero it plays. Colour carries
   the result: the run rows have counts and no labels.
-- **Ends:** Stopped after 3 days without a run; Played on past the last row. A
+- **Rows:** the daily report shows 8 runs (`PATHS_RUNS`, 5 until 2026-11-03);
+  `/stats paths` keeps its `runs:` option, default 5.
+- **Ends:** Stopped after 3 days without a run (the legend says only
+  "Stopped" since 2026-11-03, to fit four keys); Played on past the last row. A
   player who ran in the last 3 days has **no end node**: their band stops at
   their latest run until a later report shows their next run, or Stopped.
 - **A resultless last run under 2 hours old is left out** (it may still be
@@ -1188,12 +1238,26 @@ over offered, from the `shopreward` rows' `reward_name`
 ranking, beside the booster packs; it is left out of that ranking now, which
 keeps the packs (Cards, Catalysts, Aspects, Rites, Attacks) apart from the
 shop's upgrades.
-**A second image follows it** (2026-10-08): the new player paths card
-(`/stats paths`, [New player paths](#new-player-paths-2026-10-08)) for the 14
-days up to the end of the reported day, so a backfilled report shows the paths
-as they stood that day. It is posted on a quiet day too, and skipped when
-nobody arrived. Its read is an extra: a failure is a console line and costs
-that image only, never holds the day.
+**Three images follow it** (2026-11-03, Turner; the paths since 2026-10-08),
+in this order, each built by `_extra_messages`:
+
+1. **New player paths** (`/stats paths`,
+   [New player paths](#new-player-paths-2026-10-08)), 8 runs.
+2. **Tutorial steps** ([Tutorial steps](#tutorial-steps-2026-11-03)).
+3. **Survey answers** (`stats_cards.survey_answers_card`, as `/daily_reports`
+   draws it): every `survey_responses` row whose `created_at` falls in the
+   reported day. The database's clock, not `shown_at`: a survey a player's
+   spool sends a day late counts on the day it arrived, so none is counted
+   twice or lost, with no watermark to keep. `/daily_reports` still posts the
+   same card on its own schedule, "since the last post"; switch it off with
+   `/daily_reports enabled:false` in its channel. Its state file stays, since
+   `/live_reports` starts a new channel from it.
+
+The paths and the tutorial steps cover the new players who arrived in the 14
+days up to the end of the reported day, so a backfilled report shows them as
+they stood that day. Each extra is posted on a quiet day too, and skipped when
+it has nobody (or no survey) to show. Each read is an extra: a failure is a
+console line and costs that image only, never holds the day.
 `daily_update._build_update_messages` returns the
 `channel.send` keyword sets, rendered before the day is claimed so a drawing
 failure never uses the day up. A quiet day is still one line of text.

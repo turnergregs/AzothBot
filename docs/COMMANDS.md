@@ -549,7 +549,7 @@ NULL) and post a new one. Pulling and listing are still done in the dashboard.
 | `/stats links` | — | `players?` (default New playtesters). Links per regular and boss turn, link types (one-card links their own row) and average length by type. Image |
 | `/stats surveys` | — | `players?` (default Everyone but us). In-game survey answers: response rate by screen, then a donut per question. A wide image (two card-widths) |
 | `/stats surveys_histograms` | — | `players?` (default Everyone but us). The same answers for trends, every question a smoothed distribution: "I understood how to play" a curve per run, run / fight fun and visuals / UI overlapping, run and fight difficulty summed. A square image, three charts across |
-| `/stats paths` | — | `days?` (default 14), `runs?` (default 5). New players who started in the last `days`: how far their tutorial got, then each run, blue if it beat their best on that hero and ritual, orange if not, until they stop. Image. Also the daily report's second image |
+| `/stats paths` | — | `days?` (default 14), `runs?` (default 5). New players who started in the last `days`: how far their tutorial got, then each run, blue if it beat their best on that hero and ritual, amber if it ended in the same act, red-orange if earlier, until they stop. Image. Also the daily report's second image (8 runs) |
 | `/stats sessions` | — | none. New players by the patch version of their first launch: the share who launched the game 2+ times, one column per version (newest 10), outlined while a player on it started under a day ago. From 0.10.5, when launches began recording. Image. Service-role key only |
 | `/stats card_conversions` | — | none. Cards and aspects new players drafted in their first session, ranked together by the share of those players who played a game in a later session: seven most, seven least, flagged against the players who did not draft each one. Needs `2026-10-09_card_conversion_view.sql`. Image. Service-role key only |
 | `/stats item` | — | `item`* (a live boss, card, aspect, rite or hero), `by?` (version / ritual / hero, default version; not hero for a hero), `players?` (default New playtesters). One item's rate per group against the rest of its kind there, in its own colour beside its face or art. Image |
@@ -560,7 +560,7 @@ NULL) and post a new one. Pulling and listing are still done in the dashboard.
 | `/stats draft pool` | — | — (content, no cohort). What the shipped draft decks hold, in the element colours. Image |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
 | `/daily_update_repost` | 🔒 | `date` (YYYY-MM-DD, CST, before today). Posts that day's daily report here. Touches no schedule state |
-| `/daily_reports` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6). The daily survey-answers image |
+| `/daily_reports` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6). The daily survey-answers image, since its last post. The daily report carries the same card for its day since 2026-11-03 |
 | `/live_reports` | 🔒 | `enabled`. New player reports, survey comments and crashes (not developers'), every 10 minutes |
 
 All `/stats` subcommands reply with an **embed** — an aligned table for the

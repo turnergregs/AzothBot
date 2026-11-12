@@ -102,6 +102,12 @@ All docs live in `docs/`. Read before changing a system.
   `stats_charts.Flow`, an `ImageBlock`: it composites onto the image, since
   ImageDraw cannot blend or anti-alias. See `docs/ANALYTICS.md` § New player
   paths.
+- **The daily report is four images** (2026-11-03): the day, the paths (8
+  runs), the tutorial steps funnel (`azoth_logic/tutorial_steps.py`, from
+  `tutorial_steps`) and the day's survey answers (by `created_at`). Each extra's
+  read fails on its own. `/daily_reports` still posts survey answers on its own
+  schedule until switched off in Discord; don't delete it, `/live_reports`
+  starts from its state file. See `docs/ANALYTICS.md` § Drawn as one image.
 - **Two commands cover all content lookup.** `/show` and `/render` dispatch on an
   encoded ref (`card:447`) from one autocomplete; the six typed `/get_*` and
   `/render_*` commands were retired 2026-08-26.

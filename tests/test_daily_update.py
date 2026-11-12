@@ -23,9 +23,13 @@ def _no_paths_read(monkeypatch):
     """The paths card's read goes through fetch_all, not the `supabase` the
     end-to-end tests here replace: without this they would send it to the
     network. Tests of the paths themselves install their own."""
-    from azoth_logic import run_paths
+    from azoth_logic import run_paths, tutorial_steps
     monkeypatch.setattr(du, "new_player_paths",
                         lambda until, days, runs: (run_paths.Paths(0), until - timedelta(days=days)))
+    # The tutorial steps and the day's surveys (2026-11-03) read the same way.
+    monkeypatch.setattr(du, "new_player_tutorial_steps",
+                        lambda until, days: (tutorial_steps.Funnel(0), until - timedelta(days=days)))
+    monkeypatch.setattr(du, "fetch_all", lambda *a, **k: [])
 
 
 # ---------------------------------------------------------------------------
@@ -1209,3 +1213,50 @@ def test_co_op_and_legacy_tiles_show_even_at_zero():
     card = _daily(solo_runs=11, coop_sessions=0, legacy_runs=0)
     tiles = dict(t for b in card.blocks if isinstance(b, sc.StatTiles) for t in b.tiles)
     assert (tiles["Solo runs"], tiles["Co-op runs"], tiles["Legacy runs"]) == ("11", "0", "0")
+
+
+# ---------------------------------------------------------------------------
+# The four images (2026-11-03)
+# ---------------------------------------------------------------------------
+
+def test_the_report_is_the_day_then_paths_then_tutorial_steps_then_surveys():
+    from azoth_logic import tutorial_steps as ts
+    funnel = ts.Funnel(1, [ts.Step("intro", "turn 1", reached=1)])
+    paths, since, until = _paths_stats()
+    messages = du._build_update_messages({
+        "total_games": 1, "unique_players": 1, "new_players": 0, "total_playtime_sec": 60,
+        "act_distribution": {1: 1}, "turn_grain": {}, "draft": {},
+        "paths": (paths, since, until), "tutorial_steps": (funnel, since, until),
+        "surveys": [{"id": 1, "question_id": "fun", "moment": "loss", "outcome": "answered",
+                     "answer": "4", "run_number": 1, "has_comment": False}],
+    }, DAY)
+    assert [m["file"].filename for m in messages] == [
+        "daily.png", "paths.png", "tutorial_steps.png", "survey_answers.png"]
+
+
+def test_a_day_with_no_surveys_and_no_tutorials_sends_neither_image():
+    messages = du._build_update_messages({"total_games": 0, "surveys": [],
+                                          "tutorial_steps": None}, DAY)
+    assert len(messages) == 1
+
+
+def test_the_days_surveys_are_the_rows_that_arrived_that_day(monkeypatch):
+    """By created_at, the database's clock: a survey sent a day late is counted
+    on the day it arrived, never twice."""
+    start, end = du._day_range_utc(DAY)
+    seen = {}
+
+    def fetch(table, columns, filters):
+        seen.update(table=table, filters=filters)
+        return [{"id": 1, "created_at": start}, {"id": 2, "created_at": end}]
+    monkeypatch.setattr(du, "fetch_all", fetch)
+    rows = du._fetch_day_surveys(DAY)
+    assert seen == {"table": "survey_responses", "filters": {"created_at": ("gte", start)}}
+    assert [r["id"] for r in rows] == [1]     # `end` is the next day's first moment
+
+
+def test_unreadable_surveys_cost_only_their_image(monkeypatch):
+    def boom(*a, **k):
+        raise du.SupabaseError("needs the service-role key")
+    monkeypatch.setattr(du, "fetch_all", boom)
+    assert du._fetch_day_surveys(DAY) is None

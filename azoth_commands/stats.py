@@ -16,6 +16,7 @@ from supabase_helpers import fetch_all, SupabaseError, SupabaseQueryError, Supab
 from azoth_logic import stats_format as sf
 from azoth_logic import stats_cards
 from azoth_logic import run_paths
+from azoth_logic import tutorial_steps
 
 
 # Every report /stats all runs, in order, with the options it runs them with.
@@ -249,6 +250,15 @@ def new_player_paths(until: datetime, days: int, runs: int):
     key, as the daily report's turn figures already do. Raises SupabaseError
     like fetch_all.
     """
+    by_player, since = _new_arrivals(until, days)
+    _mark_boss_wins(by_player)
+    return run_paths.build(by_player, until, runs), since
+
+
+def _new_arrivals(until: datetime, days: int):
+    """`(by_player, since)`: run_paths.new_arrivals for the `days` before
+    `until`. Three reads: the window's solo runs, which of their players had
+    ANY run before it (they arrived earlier), and those players' cohorts."""
     since = until - timedelta(days=days)
     games = [g for g in fetch_all("games", PATH_COLUMNS,
                                   {"game_type": "solo", "started_at": ("gte", since.isoformat())})
@@ -258,9 +268,26 @@ def new_player_paths(until: datetime, days: int, runs: int):
         "games", ["player_uuid"], uuids, {"started_at": ("lt", since.isoformat())})}
     cohorts = {r["player_uuid"]: r["cohort"] for r in _in_batches(
         "player_cohort_view", ["player_uuid", "cohort"], uuids, {})}
-    by_player = run_paths.new_arrivals(games, earlier, cohorts)
-    _mark_boss_wins(by_player)
-    return run_paths.build(by_player, until, runs), since
+    return run_paths.new_arrivals(games, earlier, cohorts), since
+
+
+STEP_COLUMNS = ["game_uuid", "step", "step_index", "turn_index", "closed"]
+STEP_TURN_COLUMNS = ["game_uuid", "turn_index", "act", "boss_id", "boss_result"]
+
+
+def new_player_tutorial_steps(until: datetime, days: int):
+    """`(funnel, since)`: the tutorial_steps funnel of the new players who
+    arrived in the `days` before `until` and whose first run was a tutorial.
+    The arrivals' reads, then those runs' `tutorial_steps`, and the `turns` of
+    those runs and of the players' later tutorials (was a replay won?), both
+    service-role only. Raises SupabaseError like fetch_all."""
+    by_player, since = _new_arrivals(until, days)
+    firsts = tutorial_steps.first_tutorials(by_player, until)
+    games = sorted(g["uuid"] for g in firsts.values())
+    replays = tutorial_steps.later_tutorials(by_player, firsts)
+    steps = _in_batches("tutorial_steps", STEP_COLUMNS, games, {}, key="game_uuid")
+    turns = _in_batches("turns", STEP_TURN_COLUMNS, sorted(set(games + replays)), {}, key="game_uuid")
+    return tutorial_steps.build(by_player, steps, turns, until), since
 
 
 LAUNCH_COLUMNS = ["player_uuid", "version", "new_install", "started_at"]

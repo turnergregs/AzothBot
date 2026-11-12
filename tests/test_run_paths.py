@@ -72,16 +72,23 @@ def test_a_player_who_started_with_a_regular_run_has_no_tutorial():
 def test_a_run_improves_only_on_its_own_hero_and_ritual():
     path = kinds([run(100, fmt="tutorial", act=3),
                   run(99, hero=1, act=3),             # first Lumis R0 run: beat 2 > 0
-                  run(98, hero=1, act=2),             # worse than Lumis's best
+                  run(98, hero=1, act=2),             # short of Lumis's best
                   run(97, hero=2, act=2),             # first run on hero 2: beat 1
                   run(96, hero=1, ritual=1, act=2),   # a new ritual is a new line
                   run(95, hero=1, act=4, result="victory")])
-    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.LOST, rp.IMPROVED, rp.IMPROVED, rp.IMPROVED]
+    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.SHORT, rp.IMPROVED, rp.IMPROVED, rp.IMPROVED]
 
 
 def test_a_first_run_on_a_hero_must_beat_act_1_to_improve():
-    """Otherwise every first try on a new hero would read as Improved."""
-    assert kinds([run(100, fmt="tutorial"), run(99, hero=5, act=1)]) == [rp.TUTORIAL, rp.LOST]
+    """Otherwise every first try on a new hero would read as Improved. An
+    unplayed hero's best is act 1, so dying there again is the same spot."""
+    assert kinds([run(100, fmt="tutorial"), run(99, hero=5, act=1)]) == [rp.TUTORIAL, rp.SAME]
+
+
+def test_ending_in_the_same_act_as_the_best_is_the_same_spot():
+    """2026-11-03: "Didn't" split into died at the same spot, and fell short."""
+    path = kinds([run(100, fmt="tutorial"), run(99, act=3), run(98, act=3), run(97, act=2)])
+    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.SAME, rp.SHORT]
 
 
 def test_the_tutorial_sets_no_best_for_the_hero_it_plays():
@@ -93,11 +100,11 @@ def test_the_tutorial_sets_no_best_for_the_hero_it_plays():
 def test_a_tutorial_replayed_later_is_compared_with_the_first():
     path = kinds([run(100, fmt="tutorial", act=2), run(99, act=2),
                   run(98, fmt="tutorial", act=2), run(97, fmt="tutorial", act=3)])
-    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.LOST, rp.IMPROVED]
+    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.SAME, rp.IMPROVED]
 
 
-def test_a_restart_that_got_no_further_is_lost():
-    assert kinds([run(100, fmt="tutorial"), run(99, act=2), run(98, act=2, result="restart")])[-1] == rp.LOST
+def test_a_restart_that_got_no_further_is_not_an_improvement():
+    assert kinds([run(100, fmt="tutorial"), run(99, act=2), run(98, act=2, result="restart")])[-1] == rp.SAME
 
 
 def test_a_resultless_run_from_the_last_two_hours_is_left_out():
@@ -109,7 +116,7 @@ def test_an_older_resultless_run_was_abandoned_and_counts():
     """REGRESSION (2026-10-08): the prototype hid every resultless last run by
     a player active in the last 3 days, which hid four post-tutorial runs 23
     to 44 hours old."""
-    assert kinds([run(100, fmt="tutorial"), run(24, act=None, result=None)]) == [rp.TUTORIAL, rp.LOST]
+    assert kinds([run(100, fmt="tutorial"), run(24, act=None, result=None)]) == [rp.TUTORIAL, rp.SAME]
 
 
 # --- Where a path ends ------------------------------------------------------
@@ -242,7 +249,7 @@ def test_the_legend_lists_only_what_is_drawn():
     card = stats_cards.paths_card(_graph([[run(100, fmt="tutorial"), run(99, act=2)]]),
                                   NOW - timedelta(days=14), NOW, 5)
     legend = next(b for b in card.blocks if isinstance(b, sc.Legend))
-    assert [label for label, _ in legend.items] == ["Beat their best on that hero", "Stopped (3 days idle)"]
+    assert [label for label, _ in legend.items] == ["Beat their best on that hero", "Stopped"]
 
 
 def test_an_image_block_is_drawn_through_draw_on():

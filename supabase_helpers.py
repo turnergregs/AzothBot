@@ -63,6 +63,8 @@ ANON_INSERT_ONLY = frozenset({
 	"survey_responses",
 	# 2026-10-07_sessions_and_registration.sql. /stats sessions reads it.
 	"launches",
+	# 2026-11-01_tutorial_steps.sql. The daily report's tutorial steps card.
+	"tutorial_steps",
 })
 
 # Retired content type. Kept in the database on purpose -- it still holds data
