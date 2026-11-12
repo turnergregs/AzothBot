@@ -193,13 +193,12 @@ A card whose `Weapon` property prints `damage` is a weapon (azoth
 `GameContentData.get_effective_attr` does: a key on the row first (an upgrade
 tier writes `{"damage": 150}` there), then the property.
 
-- **The escalate leads the text** (`CardTextComposer._lead_with_escalate`):
-  `[escalate3], Draw 1`, or the badge alone for a card that prints nothing
-  else, with the game's wording for when it escalates if not on its play and
-  what each step counts (`Held: [escalate1] per life lost`). The words are the
-  game's `WEAPON_ESCALATES_*` translations, vendored by `sync_assets` into
-  `assets/card_art/weapon_text.json`. A weapon that does not escalate adds no
-  text.
+- **The escalate is in the card's own text** (since the game's Escalate
+  rollout, 2026-10-27): an `[escalateN]` token the author writes (`[escalate2]
+  per card in hand`), drawn as a gold pointer like any token (`inline_icons`).
+  Until 2026-11-12 the bot generated a lead from the Weapon property's
+  `escalate` / `escalate_on` / `escalate_per` fields and the game's
+  `WEAPON_ESCALATES_*` wording; the game removed both, and so did the bot.
 - **The damage is a corner badge** (`BaseCard._push_badge_uniforms`): the
   damage pointer in the element's colour with a near-black number, 1.3 x the
   lone escalate pointer's height, its left edge and vertical centre from
@@ -916,12 +915,11 @@ python -m tools.sync_assets --azoth ../azoth --dry-run   # report only
 ```
 
 It copies the background, the font, the Bessel table and every symbol the
-tokens reference, and generates three files from the game's source:
-`assets/card_art/card_symbols.json` from `Utils.replace_dict`,
-`border_blobs.json` from `card_border_blobs.gdshaderinc` and
-`weapon_text.json` from the `WEAPON_ESCALATES_*` translations. A new symbol
-token, a refitted border or reworded weapon badge needs a sync, not a code
-change. A new numbered FAMILY (a recipe) or weapon token does need code:
+tokens reference, and generates two files from the game's source:
+`assets/card_art/card_symbols.json` from `Utils.replace_dict` and
+`border_blobs.json` from `card_border_blobs.gdshaderinc` (`weapon_text.json`
+until 2026-11-12, when the game had dropped the words it held). A new symbol
+token or a refitted border needs a sync, not a code change. A new numbered FAMILY (a recipe) or weapon token does need code:
 `inline_icons.RECIPES`. The sync never deletes, so a symbol the game retires
 stays vendored until removed by hand.
 

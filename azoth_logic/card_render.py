@@ -10,7 +10,8 @@ Discord. Deliberately NOT reproduced:
 
 Generated on the face, as the game generates them (content never writes them):
 a weapon's damage badge and a Magnify badge hanging off the card's left edge
-(`_with_badges`), and a weapon's escalate leading its text (`weapons.lead`).
+(`_with_badges`). A weapon's escalate is in its own text, as an `[escalateN]`
+token (game 2026-10-27).
 
 Three art paths, because the content has three, checked in the game's order
 (`ImageCache.has_animated_art`): procedural art under `image_data.art` (made in
@@ -253,9 +254,8 @@ def _base_face(card: dict) -> Image.Image:
             sub_font, (tx, y, tw, sub_h), colour)
 
     # --- Rules text ---------------------------------------------------------
-    # Centred in TextLabel's region on its ink (rich_text.typeset). A weapon's
-    # escalate leads it, generated from the card's numbers.
-    text = weapons.text_with_lead(card, str(card.get("text") or ""))
+    # Centred in TextLabel's region on its ink (rich_text.typeset).
+    text = str(card.get("text") or "")
     if text:
         rich_text.draw_typeset(canvas, rich_text.typeset(text, L.text_region()), L.TEXT_COLOR)
     return canvas

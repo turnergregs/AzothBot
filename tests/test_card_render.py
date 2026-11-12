@@ -774,10 +774,12 @@ def test_magnify_moves_below_the_damage():
     assert lowest(under) > lowest(alone)
 
 
-def test_the_escalate_leads_the_rules_text():
-    """The escalate pointer is generated text: a weapon that escalates prints
-    more than the same card that does not."""
+def test_a_weapons_old_escalate_fields_add_no_text():
+    """REGRESSION (2026-11-12): the game stopped generating an escalate lead
+    from the Weapon property's `escalate` fields on 2026-10-27; a weapon's
+    escalate is an `[escalateN]` token in its own text. A row still carrying
+    the old fields is drawn as the game draws it: its text alone."""
     still = lambda card: np.asarray(card_render._base_face(card), dtype=int)
     plain = still(WEAPON)
-    escalating = still(dict(WEAPON, properties=[{"name": "Weapon", "damage": 100, "escalate": 3}]))
-    assert np.abs(plain - escalating).sum() > 0
+    old = still(dict(WEAPON, properties=[{"name": "Weapon", "damage": 100, "escalate": 3}]))
+    assert np.abs(plain - old).sum() == 0

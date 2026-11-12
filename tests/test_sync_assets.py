@@ -85,9 +85,6 @@ def test_a_complete_set_reports_clean(tmp_path, monkeypatch, capsys):
     blobs = azoth / sync_assets.BORDER_BLOBS
     blobs.parent.mkdir(parents=True, exist_ok=True)
     blobs.write_text(FAKE_BLOBS)
-    translations = azoth / sync_assets.TRANSLATIONS
-    translations.parent.mkdir(parents=True, exist_ok=True)
-    translations.write_text("keys,en\nWEAPON_ESCALATES_PER_HELD,per card held\n")
 
     assert sync_assets.sync(azoth, dry_run=True) == 0
     assert "not managed by this script" in capsys.readouterr().out
@@ -123,16 +120,6 @@ def test_border_blobs_parse_from_the_real_game():
         pytest.skip("no azoth checkout beside this repo")
     parsed = sync_assets.parse_border_blobs(inc)
     assert len(parsed["blobs"]) == 4, "card_render and the typesetter read blobs 1, 2 and 3"
-
-
-def test_weapon_text_parses_from_the_real_game():
-    azoth = Path(__file__).resolve().parent.parent.parent / "azoth"
-    csv = azoth / sync_assets.TRANSLATIONS
-    if not csv.is_file():
-        pytest.skip("no azoth checkout beside this repo")
-    strings = sync_assets.parse_weapon_text(csv)
-    assert all(k.startswith("WEAPON_ESCALATES_") for k in strings)
-    assert any("{ESCALATE}" in v for v in strings.values())
 
 
 def test_a_non_azoth_path_is_refused(tmp_path):
