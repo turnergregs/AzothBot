@@ -627,10 +627,30 @@ A Sankey drawn top to bottom (`stats_charts.Flow`): one row per step, each bar
 as wide as its players, bands as wide as the players who went from one bar to
 the next.
 
-- **Row 0, the tutorial:** the most acts any of the player's opening tutorial
-  runs beat: `Act 2`, `Died` (none, restarts included), `Won`. `No tutorial` for
-  a player whose first run was a regular one.
-- **Each row after it is one run:** blue when it beat more acts than any earlier
+- **The onboarding rows (2026-11-12, Turner: "we care about the first 5 rows
+  quite a bit").** Mock-up reviewed in chat (real players plus made-up lesson
+  players), then built.
+  - **Row 0, the tutorial**, by the furthest any of the player's tutorial runs
+    got (replays included): **Beat the boss** (an act 1 boss win), **Lost to
+    the boss** (an act 1 boss turn lost, Retry or not; `boss_lost_act`, read
+    beside the wins from `turns`), or **Left early**. `No tutorial` for a player
+    with no tutorial run. It said `Act 2` / `Died` / `Won` until then, from
+    when the tutorial ran past act 1.
+  - **Rows 1-4, lessons 2-5** (`games.format` `lesson_N`), one per lesson the
+    player played, by its furthest run: **Finished** (beat the act 1 boss and
+    moved on, `result = 'lesson_complete'`), **kept playing** (pink, named by
+    the act the run ended in, `Act 2` .. `Won`: Lesson Complete's other
+    button), or **Left early**. The grey Stopped bar in a lesson's row is the
+    players who stopped after the row above.
+  - **Skipping jumps.** A path visits only the lessons played, so Full Game
+    after the tutorial, or Skip Tutorial in Settings, goes from its last
+    onboarding row straight to Run 1. Practice runs are onboarding and on no
+    row; the tutorial, lessons and practice are never regular runs.
+  - Purples by how far it got, labels above the tutorial's bars and under the
+    kept-playing ones (the Flow stacks labels that would overlap onto a second
+    line, `Flow._place_labels`).
+- **Each row after them is one regular run** (4 shown, then Later, since
+  2026-11-12; 8 from 2026-11-03, 5 before): blue when it beat more acts than any earlier
   run on the same hero and ritual; amber (**Same act**) when it ended in the
   same act as that best; red-orange (**Fell short**) when it ended earlier
   (deaths, restarts, runs left unfinished). The two were one orange "Didn't"
@@ -646,10 +666,10 @@ the next.
   right after its act 1 boss (where the prompts end, and where many new players
   close the game) under `Died`: 12 of the 25 there on the 2026-10-23 report. A first
   run on a hero must beat act 1 to improve, or every first try on a new hero
-  would read as one. The tutorial sets no best for the hero it plays. Colour carries
+  would read as one. Onboarding runs set no best for the hero they play. Colour carries
   the result: the run rows have counts and no labels.
-- **Rows:** the daily report shows 8 runs (`PATHS_RUNS`, 5 until 2026-11-03);
-  `/stats paths` keeps its `runs:` option, default 5.
+- **Rows:** the daily report shows 4 regular runs (`PATHS_RUNS`; 8 from 2026-11-03, 5 before);
+  `/stats paths` keeps its `runs:` option, default 4, and has `version:` (2026-11-12).
 - **Ends:** Stopped after 3 days without a run (the legend says only
   "Stopped" since 2026-11-03, to fit four keys); Played on past the last row. A
   player who ran in the last 3 days has **no end node**: their band stops at
@@ -1280,7 +1300,7 @@ shop's upgrades.
 in this order, each built by `_extra_messages`:
 
 1. **New player paths** (`/stats paths`,
-   [New player paths](#new-player-paths-2026-10-08)), 8 runs.
+   [New player paths](#new-player-paths-2026-10-08)), the onboarding rows and 4 runs.
 2. **Tutorial steps** ([Tutorial steps](#tutorial-steps-2026-11-03)).
 3. **Survey answers** (`stats_cards.survey_answers_card`, as `/daily_reports`
    draws it): every `survey_responses` row whose `created_at` falls in the

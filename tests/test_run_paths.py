@@ -26,7 +26,7 @@ def run(hours_ago, *, fmt="standard", hero=1, ritual=0, act=1, result="death", v
 
 
 def kinds(runs):
-    return [k for k, _, _ in rp.steps(runs, NOW)]
+    return [k for _, k, _ in rp.steps(runs, NOW)]
 
 
 # --- What each step says ----------------------------------------------------
@@ -50,21 +50,6 @@ def test_a_boss_won_counts_when_act_reached_never_caught_up():
     assert rp.acts_beaten({"act_reached": 3, "result": "death", "boss_won_act": 1}) == 2
 
 
-def test_the_tutorial_row_is_the_best_opening_tutorial():
-    path = rp.steps([run(100, fmt="tutorial", act=1, result="restart"),
-                     run(99, fmt="tutorial", act=3), run(98)], NOW)
-    assert path[0][:2] == (rp.TUTORIAL, "Act 2")
-
-
-def test_a_tutorial_that_beat_nothing_is_died():
-    assert rp.steps([run(100, fmt="tutorial", act=1)], NOW)[0][1] == "Died"
-
-
-def test_a_tutorial_left_after_beating_its_first_boss_is_act_1():
-    left = dict(run(100, fmt="tutorial", act=None, result=None), boss_won_act=1)
-    assert rp.steps([left], NOW)[0][1] == "Act 1"
-
-
 def test_a_player_who_started_with_a_regular_run_has_no_tutorial():
     assert kinds([run(100, act=2)]) == [rp.NO_TUTORIAL, rp.IMPROVED]
 
@@ -76,19 +61,19 @@ def test_a_run_improves_only_on_its_own_hero_and_ritual():
                   run(97, hero=2, act=2),             # first run on hero 2: beat 1
                   run(96, hero=1, ritual=1, act=2),   # a new ritual is a new line
                   run(95, hero=1, act=4, result="victory")])
-    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.SHORT, rp.IMPROVED, rp.IMPROVED, rp.IMPROVED]
+    assert path == [rp.BEAT, rp.IMPROVED, rp.SHORT, rp.IMPROVED, rp.IMPROVED, rp.IMPROVED]
 
 
 def test_a_first_run_on_a_hero_must_beat_act_1_to_improve():
     """Otherwise every first try on a new hero would read as Improved. An
     unplayed hero's best is act 1, so dying there again is the same spot."""
-    assert kinds([run(100, fmt="tutorial"), run(99, hero=5, act=1)]) == [rp.TUTORIAL, rp.SAME]
+    assert kinds([run(100, fmt="tutorial"), run(99, hero=5, act=1)]) == [rp.LEFT, rp.SAME]
 
 
 def test_ending_in_the_same_act_as_the_best_is_the_same_spot():
     """2026-11-03: "Didn't" split into died at the same spot, and fell short."""
     path = kinds([run(100, fmt="tutorial"), run(99, act=3), run(98, act=3), run(97, act=2)])
-    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.SAME, rp.SHORT]
+    assert path == [rp.LEFT, rp.IMPROVED, rp.SAME, rp.SHORT]
 
 
 def test_the_tutorial_sets_no_best_for_the_hero_it_plays():
@@ -97,26 +82,20 @@ def test_the_tutorial_sets_no_best_for_the_hero_it_plays():
     assert kinds([run(100, fmt="tutorial", act=3), run(99, act=2)])[1] == rp.IMPROVED
 
 
-def test_a_tutorial_replayed_later_is_compared_with_the_first():
-    path = kinds([run(100, fmt="tutorial", act=2), run(99, act=2),
-                  run(98, fmt="tutorial", act=2), run(97, fmt="tutorial", act=3)])
-    assert path == [rp.TUTORIAL, rp.IMPROVED, rp.SAME, rp.IMPROVED]
-
-
 def test_a_restart_that_got_no_further_is_not_an_improvement():
     assert kinds([run(100, fmt="tutorial"), run(99, act=2), run(98, act=2, result="restart")])[-1] == rp.SAME
 
 
 def test_a_resultless_run_from_the_last_two_hours_is_left_out():
     """It may still be going, and would read as Lost before it ends."""
-    assert kinds([run(100, fmt="tutorial"), run(1, act=None, result=None)]) == [rp.TUTORIAL]
+    assert kinds([run(100, fmt="tutorial"), run(1, act=None, result=None)]) == [rp.LEFT]
 
 
 def test_an_older_resultless_run_was_abandoned_and_counts():
     """REGRESSION (2026-10-08): the prototype hid every resultless last run by
     a player active in the last 3 days, which hid four post-tutorial runs 23
     to 44 hours old."""
-    assert kinds([run(100, fmt="tutorial"), run(24, act=None, result=None)]) == [rp.TUTORIAL, rp.SAME]
+    assert kinds([run(100, fmt="tutorial"), run(24, act=None, result=None)]) == [rp.LEFT, rp.SAME]
 
 
 # --- Where a path ends ------------------------------------------------------
@@ -143,7 +122,7 @@ def test_a_player_who_ran_in_the_last_three_days_has_no_end_yet():
 def test_a_path_longer_than_the_rows_shown_played_on():
     long = [run(200, fmt="tutorial")] + [run(199 - i) for i in range(7)]
     graph = _graph([long], runs_shown=3)
-    assert len(graph.rows) == 5 and _ends(graph) == {rp.PLAYED_ON: 1}
+    assert len(graph.rows) == rp.FIRST_RUN_ROW + 4 and _ends(graph) == {rp.PLAYED_ON: 1}
 
 
 def test_every_bar_holds_what_flows_into_it():
@@ -155,14 +134,6 @@ def test_every_bar_holds_what_flows_into_it():
             assert n.players == sum(c for (a, b), c in graph.links.items() if b is n)
     assert graph.players == 3
 
-
-def test_the_tutorial_row_lists_the_furthest_first():
-    graph = _graph([[run(90, fmt="tutorial", act=1)], [run(90, fmt="tutorial", act=3)],
-                    [run(90, act=2)]])
-    assert [n.label for n in graph.rows[0]] == ["Act 2", "Died", "No tutorial"]
-
-
-# --- Who arrived ------------------------------------------------------------
 
 def test_only_new_players_who_arrived_in_the_window_count():
     games = [dict(run(50), player_uuid=p) for p in ("new", "earlier", "dev", "vet", "unknown")]
@@ -217,14 +188,14 @@ def test_the_fetch_marks_the_boss_turns_a_run_won(monkeypatch, fake_supabase):
     fs = fake_supabase({
         "games": [left],
         "player_cohort_view": [{"player_uuid": "fresh", "cohort": "new"}],
-        "turns": [{"game_uuid": "g1", "act": 1}],
+        "turns": [{"uuid": "t1", "game_uuid": "g1", "act": 1, "boss_result": "win"}],
     })
     monkeypatch.setattr(h, "supabase", fs)
     monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
     paths, _ = stats.new_player_paths(NOW, 14, 5)
-    assert ("eq", "boss_result", "win") in fs.log["turns"]["filters"]
+    assert ("in", "boss_result", ["win", "loss"]) in fs.log["turns"]["filters"]
     assert ("in", "game_uuid", ["g1"]) in fs.log["turns"]["filters"]
-    assert [n.label for n in paths.rows[0]] == ["Act 1"]
+    assert [n.label for n in paths.rows[0]] == ["Beat the boss"]
 
 
 # --- The card ---------------------------------------------------------------
@@ -248,8 +219,8 @@ def test_the_legend_lists_only_what_is_drawn():
     """House rule (Turner, 2026-09-28): a legend is not a list of what might be."""
     card = stats_cards.paths_card(_graph([[run(100, fmt="tutorial"), run(99, act=2)]]),
                                   NOW - timedelta(days=14), NOW, 5)
-    legend = next(b for b in card.blocks if isinstance(b, sc.Legend))
-    assert [label for label, _ in legend.items] == ["Beat their best on that hero", "Stopped"]
+    labels = [label for b in card.blocks if isinstance(b, sc.Legend) for label, _ in b.items]
+    assert labels == ["Left early", "Beat their best on that hero", "Stopped"]
 
 
 def test_an_image_block_is_drawn_through_draw_on():

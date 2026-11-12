@@ -227,22 +227,28 @@ def _in_batches(table: str, columns: list, uuids: list, filters: dict,
 
 
 def _mark_boss_wins(by_player: dict) -> None:
-    """Set `boss_won_act` on each run: the highest act whose boss turn it won.
+    """Set `boss_won_act` on each run, the highest act whose boss turn it won,
+    and `boss_lost_act`, the highest it lost one in (2026-11-12: the paths'
+    tutorial row tells Lost to the boss from Left early).
 
     `games.act_reached` lags a boss win (run_paths.acts_beaten says when), so a
     tutorial left right after its act 1 boss read as Died. `boss_result` is
-    NULL on regular turns, so `win` alone picks the won boss turns."""
+    NULL on regular turns, so `win` and `loss` pick the finished boss turns."""
     games = {g["uuid"]: g for runs in by_player.values() for g in runs if g.get("uuid")}
-    for t in _in_batches("turns", ["game_uuid", "act"], sorted(games),
-                         {"boss_result": "win"}, key="game_uuid"):
+    for t in _in_batches("turns", ["uuid", "game_uuid", "act", "boss_result"], sorted(games),
+                         {"boss_result": ["win", "loss"]}, key="game_uuid"):
         g = games.get(t.get("game_uuid"))
-        if g is not None and t.get("act") is not None:
-            g["boss_won_act"] = max(g.get("boss_won_act") or 0, int(t["act"]))
+        if g is None or t.get("act") is None:
+            continue
+        key = "boss_won_act" if t.get("boss_result") == "win" else "boss_lost_act"
+        g[key] = max(g.get(key) or 0, int(t["act"]))
 
 
-def new_player_paths(until: datetime, days: int, runs: int):
+def new_player_paths(until: datetime, days: int, runs: int, version: str | None = None):
     """`(paths, since)`: the run_paths graph of the new players who arrived in
     the `days` before `until`. Shared by /stats paths and the daily report.
+    `version` keeps only the players whose first run was on that build
+    (2026-11-12), to see one build's onboarding on its own.
 
     Four reads: the window's solo runs, which of their players had ANY run
     before it (they arrived earlier), those players' cohorts, and the boss
@@ -251,6 +257,8 @@ def new_player_paths(until: datetime, days: int, runs: int):
     like fetch_all.
     """
     by_player, since = _new_arrivals(until, days)
+    if version:
+        by_player = {p: r for p, r in by_player.items() if r and r[0].get("version") == version}
     _mark_boss_wins(by_player)
     return run_paths.build(by_player, until, runs), since
 
@@ -651,7 +659,7 @@ def add_stats_commands(cls):
     # whether each run beat their best on that hero and ritual, until they
     # stop. New players only: a veteran's path starts partway through. See
     # azoth_logic/run_paths.py and docs/ANALYTICS.md § New player paths.
-    @stats_cmd.subcommand(name="paths", description="New players' tutorial, then each run: did it beat their best?")
+    @stats_cmd.subcommand(name="paths", description="New players' tutorial and lessons, then each run: did it beat their best?")
     @safe_interaction(timeout=30, error_message="❌ Failed to build player paths.")
     async def stats_paths(
         self,
@@ -661,18 +669,24 @@ def add_stats_commands(cls):
             required=False, default=14, min_value=1, max_value=90,
         ),
         runs: int = SlashOption(
-            description="Runs shown after the tutorial (default 5)",
-            required=False, default=5, min_value=1, max_value=12,
+            description="Regular runs shown after the tutorial and lessons (default 4)",
+            required=False, default=4, min_value=1, max_value=12,
+        ),
+        version: str = SlashOption(
+            description="Only players whose first run was on this build, e.g. 0.15.0",
+            required=False, default=None,
         ),
     ):
         until = datetime.now(timezone.utc)
+        version = (version or "").strip() or None
         try:
-            paths, since = await asyncio.to_thread(new_player_paths, until, days, runs)
+            paths, since = await asyncio.to_thread(new_player_paths, until, days, runs, version)
         except SupabaseError as e:
             return f"❌ {e}"
         if not paths.players:
-            return f"❌ No new players started in the last {days} days."
-        await _send_card(interaction, stats_cards.paths_card(paths, since, until, runs),
+            build = f" on {version}" if version else ""
+            return f"❌ No new players started{build} in the last {days} days."
+        await _send_card(interaction, stats_cards.paths_card(paths, since, until, runs, version),
                          "paths.png", colour=0x9085E9)
 
     # --- Sessions ---

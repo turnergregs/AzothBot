@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 
 from azoth_logic import stats_charts as sc
 from azoth_logic.run_paths import parse_time
+from azoth_logic import run_paths as rp
 from azoth_logic import survey_labels as sl
 from azoth_logic import tutorial_steps as ts
 from azoth_logic.stats_format import CUTOFF_VERSION
@@ -1930,9 +1931,15 @@ def player_survey_blocks(raw: list) -> list:
 # Blue, amber and red-orange pass the dataviz validator's checks together on
 # the card's surface, every pair (2026-11-03).
 
+# The onboarding rows (2026-11-12) are purples, how far it got by how light:
+# finished, lost to the tutorial's boss, left. Their bars are named too.
 PATH_COLOURS = {
-    "tutorial": "#9085e9",     # the tutorial row, whatever it reached
-    "no_tutorial": "#9085e9",  # still the tutorial row: it says they skipped it
+    "beat": "#9085e9",         # beat the tutorial's boss
+    "done": "#9085e9",         # completed the lesson and moved on
+    "played_on_into": "#c94f9a",  # completed it and kept playing: named by its act
+    "lost": "#c4b9f4",         # lost to the tutorial's boss
+    "left": "#584d9a",         # left the tutorial or lesson before its boss
+    "no_tutorial": sc.FADED,
     "improved": sc.ABOVE,      # beat their best on that hero and ritual
     "same": "#a8891f",         # ended in the same act as that best
     "short": "#c43a18",        # ended earlier
@@ -1941,8 +1948,11 @@ PATH_COLOURS = {
 }
 PATH_LEGEND = (("improved", "Beat their best on that hero"), ("same", "Same act"),
                ("short", "Fell short"), ("stopped", "Stopped"))
+ONBOARDING_LEGEND = (("done", "Finished"), ("lost", "Lost to the boss"),
+                     ("played_on_into", "Kept playing (act it ended in)"), ("left", "Left early"))
 # The tutorial row's names that need two lines to stay over a narrow bar.
-_PATH_NAMES = {"No tutorial": "No\ntutorial"}
+_PATH_NAMES = {"No tutorial": "No\ntutorial", "Beat the boss": "Beat the\nboss",
+               "Lost to the boss": "Lost to\nthe boss", "Left early": "Left\nearly"}
 
 
 def _day(when) -> str:
@@ -2027,7 +2037,7 @@ def tutorial_steps_card(funnel, since, until) -> sc.Card:
     return card.add(sc.Spacer(6))
 
 
-def paths_card(paths, since, until, runs_shown: int) -> sc.Card:
+def paths_card(paths, since, until, runs_shown: int, version: str | None = None) -> sc.Card:
     """The Flow of `paths` (a run_paths.Paths) for the players who arrived
     from `since` up to `until`. `until` is exclusive: the daily report's is the
     midnight its day ends at, so the header names the day before it."""
@@ -2036,21 +2046,31 @@ def paths_card(paths, since, until, runs_shown: int) -> sc.Card:
     for row in paths.rows:
         out = []
         for n in row:
-            name = _PATH_NAMES.get(n.label, n.label)
+            # The tutorial row's names go above it; under a lesson's bar the
+            # colour says done or left, and the legend says which.
+            name = _PATH_NAMES.get(n.label, n.label) \
+                if n.row == 0 or n.kind in ("played_on", "played_on_into") else ""
             flow_nodes[id(n)] = sc.FlowNode(n.players, PATH_COLOURS[n.kind], name)
             out.append(flow_nodes[id(n)])
         rows.append(out)
     links = {(flow_nodes[id(a)], flow_nodes[id(b)]): count for (a, b), count in paths.links.items()}
-    names = ["TUTORIAL"] + [f"RUN {i}" for i in range(1, runs_shown + 1)] + ["LATER"]
+    names = (["TUTORIAL"] + [f"LESSON {n}" for n in rp.LESSONS]
+             + [f"RUN {i}" for i in range(1, runs_shown + 1)] + ["LATER"])
 
     kinds = {n.kind for row in paths.rows for n in row}
+    onboarding = [(text, PATH_COLOURS[kind]) for kind, text in ONBOARDING_LEGEND
+                  if kind in kinds or (kind == "done" and "beat" in kinds)]
     legend = [(text, PATH_COLOURS[kind]) for kind, text in PATH_LEGEND if kind in kinds]
+    build = f" on {version}" if version else ""
     card = sc.Card("New player paths",
-                   f"{paths.players} new player{'' if paths.players == 1 else 's'} who started "
+                   f"{paths.players} new player{'' if paths.players == 1 else 's'} who started{build} "
                    f"{_day(since)} – {_day(until - timedelta(seconds=1))}\n"
-                   f"The tutorial, then their first {runs_shown} runs. Bar width is players.")
-    if legend:
-        card.add(sc.Legend(legend, indent=0), sc.Spacer(6))
+                   f"Tutorial, lessons, then {runs_shown} regular runs. Bar width is players.")
+    for items in (onboarding, legend):
+        if items:
+            card.add(sc.Legend(items, indent=0))
+    if onboarding or legend:
+        card.add(sc.Spacer(6))
     return card.add(sc.Flow(rows, links, names))
 
 

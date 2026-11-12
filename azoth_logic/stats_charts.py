@@ -1287,6 +1287,7 @@ class Flow(ImageBlock):
     LINE = 13          # a line of first-row names
     BAND_ALPHA = 0.8
     BAND_KEEP = 0.5    # how much of the target's colour a band keeps (`dim`)
+    LABEL_LINE = 15    # a second line of labels under a row's bars
 
     def __post_init__(self):
         avail = WIDTH - PAD - (PAD + self.LEFT)
@@ -1300,7 +1301,35 @@ class Flow(ImageBlock):
                 x = n.x1 + self.GAP
         self.names = self._place_names()
         self.top_room = (max((slot for *_, slot in self.names), default=-1) + 1) * (2 * self.LINE + 4) + 2
-        self.height = self.top_room + (len(self.rows) - 1) * self.PITCH + self.BAR_H + 22
+        self.labels = [self._place_labels(r, row) for r, row in enumerate(self.rows)]
+        last_lines = max((line for *_, line in self.labels[-1]), default=0) if self.labels else 0
+        self.height = (self.top_room + (len(self.rows) - 1) * self.PITCH + self.BAR_H + 22
+                       + last_lines * self.LABEL_LINE)
+
+    def _place_labels(self, r: int, row: list) -> list:
+        """The labels under row `r`'s bars: `(text, x, w, line)`. A later row's
+        name, and a count that did not fit inside its bar (the first row's
+        names are above it). Each goes on the first line where it clears the
+        one before it (2026-11-12: narrow bars side by side, each with a name,
+        ran their names together)."""
+        out, line_ends = [], []
+        for n in row:
+            inside = self._fits(n)
+            name = n.name if r else ""
+            if name:
+                text = name if inside else f"{name} · {n.count}"
+            else:
+                text = "" if inside else str(n.count)
+            if not text:
+                continue
+            w = font(11).getlength(text) / SCALE
+            x = (n.x0 + n.x1) / 2 - w / 2
+            line = next((i for i, end in enumerate(line_ends) if x - 3 >= end + 2), len(line_ends))
+            if line == len(line_ends):
+                line_ends.append(0.0)
+            line_ends[line] = x + w + 3
+            out.append((text, x, w, line))
+        return out
 
     def _fits(self, n: FlowNode) -> bool:
         return font(11, True).getlength(str(n.count)) / SCALE + 3 <= n.x1 - n.x0
@@ -1367,20 +1396,10 @@ class Flow(ImageBlock):
             if r < len(self.row_names):
                 d.text((px(PAD), cy), self.row_names[r], font=font(10, True), fill=MUTED, anchor="lm")
             for n in row:
-                inside = self._fits(n)
-                if inside:
+                if self._fits(n):
                     d.text((px((n.x0 + n.x1) / 2), cy), str(n.count), font=font(11, True),
                            fill=_ink_on(n.colour), anchor="mm")
-                # Under the bar: a later row's name, and a count that did not
-                # fit inside (the first row's names are above it).
-                name = n.name if r else ""
-                if name:
-                    text = name if inside else f"{name} · {n.count}"
-                else:
-                    text = "" if inside else str(n.count)
-                if not text:
-                    continue
-                w = font(11).getlength(text) / SCALE
-                x, ty = (n.x0 + n.x1) / 2 - w / 2, y(r) + self.BAR_H + 3
+            for text, x, w, line in self.labels[r]:
+                ty = y(r) + self.BAR_H + 3 + line * self.LABEL_LINE
                 d.rounded_rectangle([px(x - 3), px(ty), px(x + w + 3), px(ty + 14)], radius=px(3), fill=SURFACE)
                 d.text((px(x), px(ty + 7)), text, font=font(11), fill=INK_2, anchor="lm")

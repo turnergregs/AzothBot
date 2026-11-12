@@ -106,8 +106,8 @@ All docs live in `docs/`. Read before changing a system.
   rows are left out, lesson and practice runs are their own population, every
   read pages, and the day is a Central Time day with daylight saving. See
   `docs/ANALYTICS.md` § What it counts.
-- **The daily report is four images** (2026-11-03): the day, the paths (8
-  runs), the tutorial steps funnel (`azoth_logic/tutorial_steps.py`, from
+- **The daily report is four images** (2026-11-03): the day, the paths (the
+  tutorial and a row per lesson since 2026-11-12, then 4 runs), the tutorial steps funnel (`azoth_logic/tutorial_steps.py`, from
   `tutorial_steps`) and the day's survey answers (by `created_at`). Each extra's
   read fails on its own. `/daily_reports` still posts survey answers on its own
   schedule until switched off in Discord; don't delete it, `/live_reports`

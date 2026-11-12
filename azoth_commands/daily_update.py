@@ -875,7 +875,9 @@ def _fetch_daily_stats(day: date):
 # Caleb. The players who arrived in the 14 days up to the end of the reported
 # day, so a backfilled report shows the paths as they stood that day.
 PATHS_DAYS = 14
-PATHS_RUNS = 8
+# Four regular runs, then Later (Turner, 2026-11-12: 8 from 2026-11-03, when
+# the lesson rows had not yet made the card taller).
+PATHS_RUNS = 4
 
 
 def _fetch_paths(day: date):
