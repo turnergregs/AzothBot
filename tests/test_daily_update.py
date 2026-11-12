@@ -32,6 +32,31 @@ def _no_paths_read(monkeypatch):
     monkeypatch.setattr(du, "fetch_all", lambda *a, **k: [])
 
 
+def _fake_db(monkeypatch, data: dict, missing=None, calls=None):
+    """Replace fetch_all, which every daily-report read goes through, with
+    `data` ({table: rows}). A list filter is `in`, a plain value `eq`; a range
+    (`(op, value)`) keeps every row, so a test's rows are its day. A table not
+    in `data` reads empty, or raises `missing` when given one, as PostgREST
+    does for a table it does not have. `calls` collects (table, filters)."""
+    def fetch(table, columns=None, filters=None, sort=None, limit=None):
+        if calls is not None:
+            calls.append((table, dict(filters or {})))
+        if table not in data:
+            if missing is not None:
+                raise missing(f"Could not find the table 'public.{table}'")
+            return []
+        rows = data[table]
+        for key, value in (filters or {}).items():
+            if isinstance(value, list):
+                rows = [r for r in rows if r.get(key) in value]
+            elif value is None:
+                rows = [r for r in rows if r.get(key) is None]
+            elif not isinstance(value, tuple):
+                rows = [r for r in rows if r.get(key) == value]
+        return [dict(r) for r in rows]
+    monkeypatch.setattr(du, "fetch_all", fetch)
+
+
 # ---------------------------------------------------------------------------
 # _to_number  --  the June 30 crash
 # ---------------------------------------------------------------------------
@@ -67,19 +92,7 @@ def test_draft_stats_survives_a_text_combo_end_to_end(monkeypatch):
         ],
         "cards": [{"id": 10, "name": "Salvage"}, {"id": 11, "name": "Excess"}],
     }
-
-    class Q:
-        def __init__(self, t):
-            self.rows = data.get(t, [])
-        def select(self, *a, **k):
-            return self
-        def in_(self, col, vals):
-            self.rows = [r for r in self.rows if r[col] in vals]
-            return self
-        def execute(self):
-            return type("R", (), {"data": self.rows})()
-
-    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+    _fake_db(monkeypatch, data)
 
     games_by_uuid = {"g1": {"uuid": "g1", "level_reached": 10, "highest_combo": "5510"}}
     # Two picked appearances are needed for an item to reach `top_performers`.
@@ -117,23 +130,8 @@ def _install_turn_grain(monkeypatch, turns, nodes, levelups, role="service_role"
     # `bosses` for the per-boss record's names (2026-09-29).
     data = {"turns": turns, "turn_nodes": nodes, "levelups": levelups,
             "bosses": [{"id": 7, "name": "Veln"}]}
-
-    class Q:
-        def __init__(self, t):
-            self.rows = data[t]
-
-        def select(self, *a, **k):
-            return self
-
-        def in_(self, col, vals):
-            self.rows = [r for r in self.rows if r[col] in vals]
-            return self
-
-        def execute(self):
-            return type("R", (), {"data": self.rows})()
-
     monkeypatch.setattr(du, "SUPABASE_ROLE", role)
-    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+    _fake_db(monkeypatch, data)
 
 
 # One game: 3 regular turns with 2 / 0 / 5 links, and a boss turn with 11 links
@@ -229,11 +227,10 @@ def test_no_games_returns_empty_not_an_error(monkeypatch):
 
 
 def test_query_failure_is_reported_not_swallowed(monkeypatch):
-    class Boom:
-        def table(self, t):
-            raise RuntimeError("connection reset")
+    def boom(*a, **k):
+        raise RuntimeError("connection reset")
     monkeypatch.setattr(du, "SUPABASE_ROLE", "service_role")
-    monkeypatch.setattr(du, "supabase", Boom())
+    monkeypatch.setattr(du, "fetch_all", boom)
     r = du._fetch_turn_grain_stats(["g1"])
     assert "connection reset" in r["error"]
 
@@ -772,7 +769,7 @@ def test_turn_one_is_abandoned_during_the_first_turn_not_after_it():
         _g(uuid="dropped", result="restart", turns_played=1),
         _g(uuid="kept", result="restart", turns_played=2),
     ]
-    regular, tutorial, dropped = du._partition_games(rows, set())
+    regular, tutorial, _, dropped = du._partition_games(rows, set())
 
     assert [g["uuid"] for g in dropped] == ["dropped"]
     assert [g["uuid"] for g in regular] == ["kept"]
@@ -786,7 +783,7 @@ def test_only_restarts_are_dropped_on_turn_one():
         _g(uuid="open", result=None, turns_played=1),
         _g(uuid="restart", result="restart", turns_played=1),
     ]
-    regular, _, dropped = du._partition_games(rows, set())
+    regular, _, _, dropped = du._partition_games(rows, set())
 
     assert [g["uuid"] for g in dropped] == ["restart"]
     assert {g["uuid"] for g in regular} == {"death", "open"}
@@ -794,7 +791,7 @@ def test_only_restarts_are_dropped_on_turn_one():
 
 def test_unknown_turn_count_is_not_assumed_to_be_turn_one():
     """NULL turns_played means "unknown", not "turn 1" -- keep the row."""
-    regular, _, dropped = du._partition_games(
+    regular, _, _, dropped = du._partition_games(
         [_g(uuid="x", result="restart", turns_played=None)], set())
 
     assert dropped == []
@@ -808,7 +805,7 @@ def test_tutorial_runs_are_split_out_but_not_dropped():
         _g(uuid="tut", starter_deck=TUTORIAL_DECK, turns_played=6),
         _g(uuid="real", starter_deck=29, turns_played=6),
     ]
-    regular, tutorial, dropped = du._partition_games(rows, {TUTORIAL_DECK})
+    regular, tutorial, _, dropped = du._partition_games(rows, {TUTORIAL_DECK})
 
     assert [g["uuid"] for g in tutorial] == ["tut"]
     assert [g["uuid"] for g in regular] == ["real"]
@@ -825,7 +822,7 @@ def test_a_tutorial_format_run_is_a_tutorial_whatever_its_deck():
         _g(uuid="no_deck", format="tutorial", starter_deck=None),
         _g(uuid="real", format="standard", starter_deck=29),
     ]
-    regular, tutorial, _ = du._partition_games(rows, {TUTORIAL_DECK})
+    regular, tutorial, _, _ = du._partition_games(rows, {TUTORIAL_DECK})
 
     assert {g["uuid"] for g in tutorial} == {"starting_deck", "no_deck"}
     assert [g["uuid"] for g in regular] == ["real"]
@@ -834,7 +831,7 @@ def test_a_tutorial_format_run_is_a_tutorial_whatever_its_deck():
 def test_a_tutorial_deck_run_from_before_format_is_still_a_tutorial():
     """Rows before 2026-09-11 all read format 'standard'; for those days the
     deck is the only signal, and a repost of one must still split them out."""
-    regular, tutorial, _ = du._partition_games(
+    regular, tutorial, _, _ = du._partition_games(
         [_g(uuid="old", format="standard", starter_deck=TUTORIAL_DECK)], {TUTORIAL_DECK})
 
     assert [g["uuid"] for g in tutorial] == ["old"]
@@ -844,7 +841,7 @@ def test_a_tutorial_deck_run_from_before_format_is_still_a_tutorial():
 def test_the_opening_turn_drop_is_applied_before_the_tutorial_split():
     """Order matters: a tutorial run abandoned on turn 1 is excluded outright,
     not counted on the tutorial line."""
-    regular, tutorial, dropped = du._partition_games(
+    regular, tutorial, _, dropped = du._partition_games(
         [_g(uuid="x", starter_deck=TUTORIAL_DECK, result="restart", turns_played=1)],
         {TUTORIAL_DECK},
     )
@@ -856,7 +853,7 @@ def test_the_opening_turn_drop_is_applied_before_the_tutorial_split():
 def test_unknown_deck_stays_in_the_regular_population():
     """186 historical rows have a NULL starter_deck. Unclassifiable is counted,
     not hidden -- over-reporting activity beats silently deleting it."""
-    regular, tutorial, _ = du._partition_games([_g(uuid="x", starter_deck=None)], {TUTORIAL_DECK})
+    regular, tutorial, _, _ = du._partition_games([_g(uuid="x", starter_deck=None)], {TUTORIAL_DECK})
 
     assert [g["uuid"] for g in regular] == ["x"]
     assert tutorial == []
@@ -866,15 +863,9 @@ def test_an_unreadable_decks_table_classifies_nothing_as_tutorial(monkeypatch):
     """Same failure direction as the live-content filter in content_index: an
     empty set filters nothing rather than hiding everything. Reporting a real
     run as a tutorial because a read failed is the worse error."""
-    class Boom:
-        def select(self, *a, **k):
-            return self
-        def eq(self, *a, **k):
-            return self
-        def execute(self):
-            raise RuntimeError("PostgREST is down")
-
-    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(lambda t: Boom())})())
+    def boom(*a, **k):
+        raise RuntimeError("PostgREST is down")
+    monkeypatch.setattr(du, "fetch_all", boom)
 
     assert du._fetch_tutorial_deck_ids() == set()
 
@@ -914,26 +905,8 @@ def test_daily_stats_derives_every_number_from_the_regular_population(monkeypatc
            level_reached=0, act_reached=1, highest_combo="1"),
     ]
 
-    class Q:
-        def __init__(self, t):
-            self.t = t
-            self.rows = {"games": games,
-                         "players": [],
-                         "decks": [{"id": TUTORIAL_DECK, "usage_type": "tutorial"}]}.get(t, [])
-        def select(self, *a, **k):
-            return self
-        def gte(self, *a, **k):
-            return self
-        def lt(self, *a, **k):
-            return self
-        def eq(self, *a, **k):
-            return self
-        def in_(self, *a, **k):
-            return self
-        def execute(self):
-            return type("R", (), {"data": self.rows})()
-
-    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+    _fake_db(monkeypatch, {"games": games, "players": [],
+                           "decks": [{"id": TUTORIAL_DECK, "usage_type": "tutorial"}]})
 
     seen = {}
     grain_calls = []
@@ -976,33 +949,12 @@ def test_the_day_is_bucketed_on_started_at_not_finished_at(monkeypatch):
     default, an abandoned run has `finished_at` NULL and a finished_at window
     silently drops the abandoned-run population `open_run` exists to expose.
     """
-    filtered_on = []
-
-    class Q:
-        def __init__(self, t):
-            self.t = t
-        def select(self, *a, **k):
-            return self
-        def gte(self, col, _v):
-            if self.t == "games":
-                filtered_on.append(col)
-            return self
-        def lt(self, col, _v):
-            if self.t == "games":
-                filtered_on.append(col)
-            return self
-        def eq(self, *a, **k):
-            return self
-        def in_(self, *a, **k):
-            return self
-        def execute(self):
-            return type("R", (), {"data": []})()
-
-    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+    calls = []
+    _fake_db(monkeypatch, {}, calls=calls)
     du._fetch_daily_stats(DAY)
 
-    assert filtered_on == ["started_at", "started_at"]
-    assert "finished_at" not in filtered_on
+    games_filters = [f for t, f in calls if t == "games"]
+    assert games_filters == [{"started_at": ("between", du._day_range_utc(DAY))}]
 
 
 # ---------------------------------------------------------------------------
@@ -1013,19 +965,7 @@ def _draft_rows(monkeypatch, items, names):
     """Install one draft holding `items`, with `names` resolving every id."""
     data = {"drafts": [{"uuid": "d1", "game_uuid": "g1"}], "draft_items": items}
     data.update(names)
-
-    class Q:
-        def __init__(self, t):
-            self.rows = data.get(t, [])
-        def select(self, *a, **k):
-            return self
-        def in_(self, col, vals):
-            self.rows = [r for r in self.rows if r[col] in vals]
-            return self
-        def execute(self):
-            return type("R", (), {"data": self.rows})()
-
-    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+    _fake_db(monkeypatch, data)
 
 
 @pytest.mark.parametrize("rite_type,table", [("rite", "rites"), ("event", "events")])
@@ -1098,21 +1038,7 @@ def test_a_pack_is_named_by_its_kind_and_never_looked_up(monkeypatch):
                 {"id": 5, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": True},
                 {"id": 6, "draft_uuid": "d1", "item_type": "card", "item_id": 10, "picked": False}],
             "cards": [{"id": 10, "name": "Salvage"}]}
-
-    class Q:
-        def __init__(self, t):
-            if t not in data:
-                raise RuntimeError(f"Could not find the table 'public.{t}'")
-            self.rows = data[t]
-        def select(self, *a, **k):
-            return self
-        def in_(self, col, vals):
-            self.rows = [r for r in self.rows if r[col] in vals]
-            return self
-        def execute(self):
-            return type("R", (), {"data": self.rows})()
-
-    monkeypatch.setattr(du, "supabase", type("S", (), {"table": staticmethod(Q)})())
+    _fake_db(monkeypatch, data, missing=RuntimeError)
 
     stats = du._fetch_draft_stats(["g1"], {"g1": {"uuid": "g1", "highest_combo": "1"}})
 
@@ -1242,17 +1168,25 @@ def test_a_day_with_no_surveys_and_no_tutorials_sends_neither_image():
 
 def test_the_days_surveys_are_the_rows_that_arrived_that_day(monkeypatch):
     """By created_at, the database's clock: a survey sent a day late is counted
-    on the day it arrived, never twice."""
-    start, end = du._day_range_utc(DAY)
-    seen = {}
+    on the day it arrived, never twice. The day is half-open: `end` is the next
+    day's first moment."""
+    calls = []
+    _fake_db(monkeypatch, {"survey_responses": [{"id": 1, "moment": "loss"}]}, calls=calls)
+    du._fetch_day_surveys(DAY)
+    assert ("survey_responses", {"created_at": ("between", du._day_range_utc(DAY))}) in calls
 
-    def fetch(table, columns, filters):
-        seen.update(table=table, filters=filters)
-        return [{"id": 1, "created_at": start}, {"id": 2, "created_at": end}]
-    monkeypatch.setattr(du, "fetch_all", fetch)
-    rows = du._fetch_day_surveys(DAY)
-    assert seen == {"table": "survey_responses", "filters": {"created_at": ("gte", start)}}
-    assert [r["id"] for r in rows] == [1]     # `end` is the next day's first moment
+
+def test_the_days_surveys_leave_out_developers_and_onboarding_choices(monkeypatch):
+    """Developers are out of the whole report (2026-11-12), and the game's
+    onboarding choices are rows in survey_responses but not surveys."""
+    _fake_db(monkeypatch, {
+        "players": [{"uuid": "dev", "developer": True}, {"uuid": "p1", "developer": False}],
+        "survey_responses": [
+            {"id": 1, "player_uuid": "p1", "moment": "loss"},
+            {"id": 2, "player_uuid": "dev", "moment": "loss"},
+            {"id": 3, "player_uuid": "p1", "moment": "onboarding"},
+        ]})
+    assert [r["id"] for r in du._fetch_day_surveys(DAY)] == [1]
 
 
 def test_unreadable_surveys_cost_only_their_image(monkeypatch):
@@ -1260,3 +1194,82 @@ def test_unreadable_surveys_cost_only_their_image(monkeypatch):
         raise du.SupabaseError("needs the service-role key")
     monkeypatch.setattr(du, "fetch_all", boom)
     assert du._fetch_day_surveys(DAY) is None
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-12: Central Time, developers, lessons, builds
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("day,hours", [
+    (date(2026, 11, 1), 25),    # clocks back: 1am happens twice
+    (date(2026, 3, 8), 23),     # clocks forward: 2am never happens
+    (date(2026, 6, 18), 24),
+    (date(2026, 12, 18), 24),
+])
+def test_a_day_is_central_midnight_to_midnight(day, hours):
+    """A fixed UTC-6 put every summer day an hour late (1am to 1am CDT)."""
+    from datetime import datetime
+    start, end = (datetime.fromisoformat(t) for t in du._day_range_utc(day))
+    assert (start.hour, start.minute) == (0, 0) and (end.hour, end.minute) == (0, 0)
+    assert (end - start).total_seconds() == hours * 3600
+
+
+def test_a_summer_day_starts_at_five_utc():
+    from datetime import datetime, timezone
+    start, _ = du._day_range_utc(date(2026, 6, 18))
+    assert datetime.fromisoformat(start).astimezone(timezone.utc).hour == 5
+
+
+def test_developers_are_left_out_of_the_day(monkeypatch):
+    """240 of 868 runs in the 30 days before 2026-11-12 were Turner's and
+    Caleb's, mostly testing, which moved every number the report shows."""
+    games = [_g(uuid="real", player_uuid="p1", result="death", turns_played=8, version="0.12.3"),
+             _g(uuid="dev", player_uuid="d1", result="death", turns_played=8, version="0.12.4")]
+    _fake_db(monkeypatch, {"games": games,
+                           "players": [{"uuid": "d1", "developer": True},
+                                       {"uuid": "p1", "developer": False}]})
+    monkeypatch.setattr(du, "_fetch_turn_grain_stats", lambda uuids: {"uuids": list(uuids)})
+    monkeypatch.setattr(du, "_fetch_draft_stats", lambda uuids, by: {})
+
+    stats = du._fetch_daily_stats(DAY)
+
+    assert stats["total_games"] == 1
+    assert stats["unique_players"] == 1
+    assert stats["turn_grain"] == {"uuids": ["real"]}
+    assert stats["versions"] == {"0.12.3": 1}
+
+
+def test_lesson_and_practice_runs_are_their_own_population():
+    rows = [_g(uuid="l2", format="lesson_2"), _g(uuid="pr", format="practice"),
+            _g(uuid="tut", format="tutorial"), _g(uuid="real")]
+    regular, tutorial, lessons, dropped = du._partition_games(rows, set())
+    assert [g["uuid"] for g in lessons] == ["l2", "pr"]
+    assert [g["uuid"] for g in regular] == ["real"]
+    assert [g["uuid"] for g in tutorial] == ["tut"] and dropped == []
+
+
+def test_a_lesson_played_on_past_its_boss_still_counts_as_completed():
+    """Lesson Complete offers to play on into act 2; that run then ends in a
+    death or later, not as lesson_complete."""
+    stats = du._lesson_stats([
+        _g(format="lesson_3", result="lesson_complete", act_reached=2),
+        _g(format="lesson_3", result="death", act_reached=3),
+        _g(format="lesson_3", result="death", act_reached=1),
+        _g(format="practice", result="practice_complete", act_reached=1),
+        _g(format="practice", result="death", act_reached=1),
+    ])
+    assert stats == {"lesson_3": {"runs": 3, "completed": 2},
+                     "practice": {"runs": 2, "completed": 1}}
+
+
+def test_a_lesson_only_day_is_not_a_quiet_day():
+    stats = {"total_games": 0, "tutorial_games": 0, "lesson_games": 2,
+             "lessons": {"lesson_2": {"runs": 2, "completed": 1}},
+             "unique_players": 1, "new_players": 0, "total_playtime_sec": 0,
+             "turn_grain": {}, "draft": {}}
+    assert "file" in du._build_update_messages(stats, DAY)[0]
+
+
+def test_the_header_names_the_builds_most_runs_first():
+    assert stats_cards.daily_versions({"0.12.2": 3, "0.12.3": 9}) == "0.12.3, 0.12.2"
+    assert stats_cards.daily_versions({"a": 4, "b": 3, "c": 2, "d": 1, "e": 1}) == "a, b, c +2 more"

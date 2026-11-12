@@ -1341,3 +1341,12 @@ def test_the_card_renders_with_nothing_ranked_yet():
     card = cards.conversions_card([_conversion("thin", 1, 1, players=20, players_returned=5)])
     assert not any(isinstance(b, (sc.BarRow, sc.Legend)) for b in card.blocks)
     card.png()
+
+
+def test_the_onboarding_choices_are_not_counted_as_surveys():
+    """Game 2026-11-12: Unlock everything, Lesson Complete, the tutorial boss's
+    Retry and Settings' tutorial buttons are rows in survey_responses with
+    moment 'onboarding'. Counted, they would show as four unlabelled questions."""
+    tally = cards.survey_tally([_survey("fun", answer="4"),
+                                _survey("lesson_done", answer="next", moment="onboarding")])
+    assert [r["question_id"] for r in tally] == ["fun"]

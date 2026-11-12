@@ -20,6 +20,12 @@ run:
     PLAYED_AGAIN (later runs, none a tutorial); STOPPED (3 days without a
     run); or RECENT (none of those yet).
 
+Only the tutorial's own steps count. Since game 2026-11-12 a run's
+`tutorial_steps` also hold each look at the Tutorial So Far window, and a
+lesson's prompts, both with the run's format as their `tutorial` (`tutorial`,
+`lesson_3`) where a step has the tutorial's name (`link_basics`); is_aside
+leaves those out.
+
 Steps are added and renamed as the tutorial changes, so their order is read
 from the rows (mean `step_index`), not fixed here, and each is filed under the
 turn most of its rows were shown in.
@@ -59,6 +65,12 @@ class Funnel:
     players: int
     steps: list = field(default_factory=list)
     boss: dict = field(default_factory=dict)
+
+
+def is_aside(row: dict, run_format: str) -> bool:
+    """A tutorial_steps row that is not one of the tutorial's steps: its
+    `tutorial` is the run's format, not a tutorial's name."""
+    return row.get("tutorial") == run_format
 
 
 def first_tutorials(by_player: dict, until: datetime) -> dict:
@@ -106,8 +118,8 @@ def after(runs: list, until: datetime, won: set = frozenset()) -> str:
 def build(by_player: dict, steps: list, turns: list, until: datetime) -> Funnel:
     """The funnel of each new player's first tutorial.
 
-    `steps` are the tutorial_steps rows of those runs (game_uuid, step,
-    step_index, turn_index, closed); `turns` the `turns` rows (game_uuid,
+    `steps` are the tutorial_steps rows of those runs (game_uuid, tutorial,
+    step, step_index, turn_index, closed); `turns` the `turns` rows (game_uuid,
     turn_index, act, boss_id, boss_result) of those runs and of the players'
     later tutorials (later_tutorials), which say whether a replay was won. A run with no step rows at all is
     left out: it showed no prompt the game could send (a crash, or a quit
@@ -118,7 +130,8 @@ def build(by_player: dict, steps: list, turns: list, until: datetime) -> Funnel:
     games = {g["uuid"]: p for p, g in firsts.items()}
     rows_by_game: dict = {}
     for r in steps:
-        if r.get("game_uuid") in games and r.get("step"):
+        if r.get("game_uuid") in games and r.get("step") \
+                and not is_aside(r, firsts[games[r["game_uuid"]]].get("format")):
             rows_by_game.setdefault(r["game_uuid"], []).append(r)
     boss_turns = {(t["game_uuid"], t.get("turn_index")) for t in turns
                   if t.get("game_uuid") in games and t.get("boss_id") is not None}

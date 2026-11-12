@@ -271,7 +271,7 @@ def _new_arrivals(until: datetime, days: int):
     return run_paths.new_arrivals(games, earlier, cohorts), since
 
 
-STEP_COLUMNS = ["game_uuid", "step", "step_index", "turn_index", "closed"]
+STEP_COLUMNS = ["game_uuid", "tutorial", "step", "step_index", "turn_index", "closed"]
 STEP_TURN_COLUMNS = ["game_uuid", "turn_index", "act", "boss_id", "boss_result"]
 
 
@@ -607,7 +607,7 @@ def add_stats_commands(cls):
         ),
     ):
         try:
-            rows = fetch_all("survey_answer_view")
+            rows = [r for r in fetch_all("survey_answer_view") if stats_cards.is_survey(r)]
         except SupabaseError as e:
             return _read_failed(e, "survey_answer_view", "2026-10-04_survey_answer_view.sql")
 
@@ -634,7 +634,7 @@ def add_stats_commands(cls):
         ),
     ):
         try:
-            rows = fetch_all("survey_answer_view")
+            rows = [r for r in fetch_all("survey_answer_view") if stats_cards.is_survey(r)]
         except SupabaseError as e:
             return _read_failed(e, "survey_answer_view", "2026-10-04_survey_answer_view.sql")
 

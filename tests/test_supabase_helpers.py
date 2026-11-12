@@ -353,3 +353,16 @@ def test_moving_deck_contents_is_one_update_guarded_by_the_source_deck(monkeypat
     assert ("eq", "deck_id", 21) in log["filters"]
     assert ("in", "id", [5, 6]) in log["filters"]
     assert len(log["requests"]) == 1
+
+
+def test_a_between_filter_is_a_half_open_range(monkeypatch, fake_supabase):
+    """2026-11-12: a filters dict has one entry per column, so a day's window
+    on one timestamp is one `between` filter: low <= value < high."""
+    monkeypatch.setattr(h, "SUPABASE_ROLE", "service_role")
+    fs = fake_supabase({"games": [{"started_at": "2026-10-31"}, {"started_at": "2026-11-01"},
+                                  {"started_at": "2026-11-02"}]})
+    monkeypatch.setattr(h, "supabase", fs)
+    rows = h.fetch_all("games", filters={"started_at": ("between", ("2026-11-01", "2026-11-02"))})
+    assert rows == [{"started_at": "2026-11-01"}]
+    assert ("gte", "started_at", "2026-11-01") in fs.log["games"]["filters"]
+    assert ("lt", "started_at", "2026-11-02") in fs.log["games"]["filters"]

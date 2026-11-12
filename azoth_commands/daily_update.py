@@ -13,9 +13,8 @@ from azoth_commands.helpers import safe_interaction, AUTHORIZED_USER_IDS
 from azoth_logic import rite_schema
 from azoth_logic import stats_cards
 from constants import DEV_GUILD_ID
-from supabase_client import supabase, SUPABASE_ROLE
+from supabase_client import SUPABASE_ROLE
 from supabase_helpers import SupabaseError, fetch_all
-from azoth_logic.run_paths import parse_time
 from azoth_commands.stats import new_player_paths, new_player_tutorial_steps
 
 # State file stores per-channel config:
@@ -71,7 +70,17 @@ def _atomic_write_json(path: str, data: dict):
         raise
 
 
-CST = timezone(timedelta(hours=-6))
+# The report's day is a Central Time day, daylight saving included (2026-11-12:
+# a fixed UTC-6 until then, so from March to November each "day" ran 1am to
+# 1am). A host without the time zone database falls back to the fixed offset
+# rather than failing to start; `tzdata` in requirements.txt supplies it.
+try:
+    from zoneinfo import ZoneInfo
+    CENTRAL = ZoneInfo("America/Chicago")
+except Exception as e:  # ZoneInfoNotFoundError, or no zoneinfo at all
+    print(f"Daily update: no America/Chicago time zone ({e}); using UTC-6 all year")
+    CENTRAL = timezone(timedelta(hours=-6))
+CST = CENTRAL
 
 # How far back a missed report is still sent. A report covers one CST day, and
 # every day the bot missed is sent on recovery, oldest first -- but not without
@@ -81,14 +90,16 @@ MAX_BACKFILL_DAYS = 7
 
 
 def _day_range_utc(day: date):
-    """Return (start, end) ISO strings for one CST day."""
-    start = datetime(day.year, day.month, day.day, tzinfo=CST)
-    end = start + timedelta(days=1)
+    """Return (start, end) ISO strings for one Central Time day: midnight to
+    midnight, so 23 or 25 hours on the days the clocks change."""
+    after = day + timedelta(days=1)
+    start = datetime(day.year, day.month, day.day, tzinfo=CENTRAL)
+    end = datetime(after.year, after.month, after.day, tzinfo=CENTRAL)
     return start.isoformat(), end.isoformat()
 
 
 def _today_cst() -> date:
-    return datetime.now(timezone.utc).astimezone(CST).date()
+    return datetime.now(timezone.utc).astimezone(CENTRAL).date()
 
 
 def _today_cst_str():
@@ -179,6 +190,31 @@ def _to_number(value, default=0):
             return default
 
 
+# Every read here goes through fetch_all, which pages (2026-11-12). Until then
+# each was one PostgREST request, which stops at 1,000 rows without saying so:
+# a busy day's `games`, or the turns of a chunk of 50 games, came back cut
+# short and the report counted what it got.
+IN_BATCH = 50
+
+
+def _read_in(table: str, columns: list, key: str, values, filters: dict | None = None) -> list:
+    """Every `table` row whose `key` is one of `values`, asked in batches of
+    IN_BATCH (a long `in` list would pass PostgREST's URL limit), each read
+    paged. Raises SupabaseError like fetch_all."""
+    values = list(values)
+    rows = []
+    for i in range(0, len(values), IN_BATCH):
+        rows += fetch_all(table, columns, {**(filters or {}), key: values[i:i + IN_BATCH]})
+    return rows
+
+
+def _fetch_developer_uuids() -> set[str]:
+    """Turner's and Caleb's player uuids (`players.developer`): left out of the
+    whole report since 2026-11-12. Every editor launch on record is one of
+    theirs, so this leaves out editor runs too. Raises SupabaseError."""
+    return {r["uuid"] for r in fetch_all("players", ["uuid"], {"developer": True})}
+
+
 def _content_item_types() -> set[str]:
     """The `draft_items.item_type` values that name a row in a `<type>s` table.
 
@@ -252,13 +288,7 @@ def _resolve_item_names(items: list[dict]) -> dict[tuple[str, int], str]:
     for item_type, ids in grouped.items():
         table = f"{item_type}s"
         name_col = "challenge_name" if item_type == "ritual" else "name"
-        records = (
-            supabase.table(table)
-            .select(f"id, {name_col}")
-            .in_("id", list(ids))
-            .execute()
-        ).data or []
-        for r in records:
+        for r in _read_in(table, ["id", name_col], "id", sorted(ids)):
             name_map[(item_type, r["id"])] = r.get(name_col, f"Unknown {item_type}")
 
     return name_map
@@ -295,17 +325,7 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     if not game_uuids:
         return {}
 
-    # Fetch all drafts for these games (batch in chunks to avoid URL length issues)
-    all_drafts = []
-    for i in range(0, len(game_uuids), 50):
-        chunk = game_uuids[i:i + 50]
-        rows = (
-            supabase.table("drafts")
-            .select("uuid, game_uuid")
-            .in_("game_uuid", chunk)
-            .execute()
-        ).data or []
-        all_drafts.extend(rows)
+    all_drafts = _read_in("drafts", ["uuid", "game_uuid"], "game_uuid", game_uuids)
 
     if not all_drafts:
         return {}
@@ -313,17 +333,8 @@ def _fetch_draft_stats(game_uuids: list[str], game_by_uuid: dict) -> dict:
     draft_uuids = [d["uuid"] for d in all_drafts]
     draft_to_game = {d["uuid"]: d["game_uuid"] for d in all_drafts}
 
-    # Fetch all draft items
-    all_items = []
-    for i in range(0, len(draft_uuids), 50):
-        chunk = draft_uuids[i:i + 50]
-        rows = (
-            supabase.table("draft_items")
-            .select("id, draft_uuid, item_type, item_id, picked, pack_type, reward_name")
-            .in_("draft_uuid", chunk)
-            .execute()
-        ).data or []
-        all_items.extend(rows)
+    all_items = _read_in("draft_items", ["id", "draft_uuid", "item_type", "item_id", "picked",
+                                         "pack_type", "reward_name"], "draft_uuid", draft_uuids)
 
     if not all_items:
         return {}
@@ -440,19 +451,27 @@ def _fetch_tutorial_deck_ids() -> set[int]:
     an empty live set filters nothing rather than hiding everything.
     """
     try:
-        rows = (
-            supabase.table("decks")
-            .select("id, usage_type")
-            .eq("usage_type", "tutorial")
-            .execute()
-        ).data or []
+        rows = fetch_all("decks", ["id", "usage_type"], {"usage_type": "tutorial"})
     except Exception:
         return set()
     return {r["id"] for r in rows if r.get("id") is not None}
 
 
-def _partition_games(games: list[dict], tutorial_deck_ids: set[int]) -> tuple[list, list, list]:
-    """Split a day's `games` rows into (regular, tutorial, opening_turn_restarts).
+def is_lesson(g: dict) -> bool:
+    """An onboarding lesson or practice run (game 2026-11-06): `format`
+    `lesson_2` .. `lesson_5` or `practice`."""
+    fmt = str(g.get("format") or "")
+    return fmt.startswith("lesson_") or fmt == "practice"
+
+
+def _partition_games(games: list[dict], tutorial_deck_ids: set[int]) -> tuple[list, list, list, list]:
+    """Split a day's `games` rows into (regular, tutorial, lessons,
+    opening_turn_restarts).
+
+    **Lesson games** (2026-11-12) -- a lesson or practice run (is_lesson). They
+    play with content held back and a hand-picked shop, so like the tutorial
+    they are their own population, on their own line, and never in a regular
+    run's numbers. Until 2026-11-12 they counted as regular runs.
 
     Two populations are pulled out of the activity counts, both because they
     describe something other than a person playing a run:
@@ -488,16 +507,47 @@ def _partition_games(games: list[dict], tutorial_deck_ids: set[int]) -> tuple[li
     abandoned on turn 1 is excluded outright rather than inflating the tutorial
     line.
     """
-    regular, tutorial, dropped = [], [], []
+    regular, tutorial, lessons, dropped = [], [], [], []
     for g in games:
         turns = g.get("turns_played")
         if g.get("result") == "restart" and turns is not None and _to_number(turns, 99) <= 1:
             dropped.append(g)
         elif g.get("format") == "tutorial" or g.get("starter_deck") in tutorial_deck_ids:
             tutorial.append(g)
+        elif is_lesson(g):
+            lessons.append(g)
         else:
             regular.append(g)
-    return regular, tutorial, dropped
+    return regular, tutorial, lessons, dropped
+
+
+# What completes each lesson format: its run's result (game docs/ONBOARDING_PLAN.md).
+LESSON_DONE = {"practice": "practice_complete"}
+LESSON_DONE_DEFAULT = "lesson_complete"
+
+
+def _lesson_stats(lessons: list[dict]) -> dict:
+    """Per lesson format, `{"runs": n, "completed": n}`. A lesson run goes on
+    into act 2 after its act 1 boss, so a later death still counts as
+    completed when it reached act 2."""
+    out: dict = {}
+    for g in lessons:
+        fmt = str(g.get("format"))
+        row = out.setdefault(fmt, {"runs": 0, "completed": 0})
+        row["runs"] += 1
+        done = g.get("result") == LESSON_DONE.get(fmt, LESSON_DONE_DEFAULT) \
+            or (fmt != "practice" and _to_number(g.get("act_reached")) >= 2)
+        row["completed"] += 1 if done else 0
+    return out
+
+
+def _versions(games: list[dict]) -> dict[str, int]:
+    """`{version: runs}` over `games`, the builds the report counted."""
+    out: dict = {}
+    for g in games:
+        v = str(g.get("version") or "unknown")
+        out[v] = out.get(v, 0) + 1
+    return out
 
 
 def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
@@ -532,46 +582,22 @@ def _fetch_turn_grain_stats(solo_game_uuids: list[str]) -> dict:
         return {}
 
     try:
-        turns = []
-        for i in range(0, len(solo_game_uuids), 50):
-            chunk = solo_game_uuids[i:i + 50]
-            turns.extend((
-                supabase.table("turns")
-                .select("uuid, game_uuid, boss_id, boss_result")
-                .in_("game_uuid", chunk)
-                .execute()
-            ).data or [])
-
+        turns = _read_in("turns", ["uuid", "game_uuid", "boss_id", "boss_result"],
+                         "game_uuid", solo_game_uuids)
         turn_uuids = [t["uuid"] for t in turns if t.get("uuid")]
-
-        nodes = []
-        for i in range(0, len(turn_uuids), 50):
-            chunk = turn_uuids[i:i + 50]
-            nodes.extend((
-                supabase.table("turn_nodes")
-                .select("turn_uuid, kind")
-                .in_("turn_uuid", chunk)
-                .execute()
-            ).data or [])
+        # `node_index` too: rows equal on every column read are one row to
+        # fetch_all's paging tiebreak, and two links of one turn would be.
+        nodes = _read_in("turn_nodes", ["turn_uuid", "node_index", "kind"], "turn_uuid", turn_uuids)
 
         # Boss names for the per-boss record. One small read; a failure here is
         # a failure of the whole turn-grain block, reported as "unavailable".
         boss_ids = sorted({t["boss_id"] for t in turns if t.get("boss_id") is not None})
         boss_names = {}
         if boss_ids:
-            boss_names = {b["id"]: b["name"] for b in (
-                supabase.table("bosses").select("id, name").in_("id", boss_ids).execute()
-            ).data or []}
+            boss_names = {b["id"]: b["name"] for b in _read_in("bosses", ["id", "name"], "id", boss_ids)}
 
-        levelups = []
-        for i in range(0, len(turn_uuids), 50):
-            chunk = turn_uuids[i:i + 50]
-            levelups.extend((
-                supabase.table("levelups")
-                .select("turn_uuid, options, chosen")
-                .in_("turn_uuid", chunk)
-                .execute()
-            ).data or [])
+        levelups = _read_in("levelups", ["turn_uuid", "node_index", "options", "chosen"],
+                            "turn_uuid", turn_uuids)
     except Exception as e:
         return {"error": str(e)}
 
@@ -686,22 +712,20 @@ def _fetch_daily_stats(day: date):
     # default, an abandoned run has `finished_at` NULL and a finished_at window
     # would silently drop the abandoned-run population that `open_run` exists to
     # make visible. It is NULL on no row since id 6000.
-    games = (
-        supabase.table("games")
-        .select("id, uuid, player_uuid, level_reached, highest_combo, turns_played, elapsed_sec, result, act_reached, game_type, version, starter_deck, shared_run_id, format")
-        .gte("started_at", start)
-        .lt("started_at", end)
-        .execute()
-    ).data or []
+    games = fetch_all("games", ["id", "uuid", "player_uuid", "level_reached", "highest_combo",
+                                "turns_played", "elapsed_sec", "result", "act_reached", "game_type",
+                                "version", "starter_deck", "shared_run_id", "format"],
+                      {"started_at": ("between", (start, end))})
 
-    # Players created yesterday (new players)
-    new_players = (
-        supabase.table("players")
-        .select("id")
-        .gte("created_at", start)
-        .lt("created_at", end)
-        .execute()
-    ).data or []
+    # Players created that day (new players).
+    new_players = fetch_all("players", ["uuid"], {"created_at": ("between", (start, end))})
+
+    # Turner's and Caleb's own play is left out of everything below
+    # (2026-11-12): over the 30 days before, 240 of 868 runs were theirs, most
+    # of it testing, which moved every average and win rate the report shows.
+    developers = _fetch_developer_uuids()
+    games = [g for g in games if g.get("player_uuid") not in developers]
+    new_players = [p for p in new_players if p.get("uuid") not in developers]
 
     # Split off the two populations that are not a person playing a run: runs
     # abandoned during turn 1, which are dropped outright, and tutorial-deck runs,
@@ -711,7 +735,7 @@ def _fetch_daily_stats(day: date):
     # here rather than at each call site -- the turn-grain and draft fetches used
     # to be handed the raw day, and a scripted tutorial turn is no more
     # comparable to a drafted one than a boss turn is to a regular one.
-    regular, tutorial_games, dropped_games = _partition_games(
+    regular, tutorial_games, lesson_games, dropped_games = _partition_games(
         games, _fetch_tutorial_deck_ids())
 
     # Turn-grain data: boss outcomes, links per turn, level-up rewards.
@@ -742,7 +766,7 @@ def _fetch_daily_stats(day: date):
     # Unique players spans regular AND tutorial rows: someone who only played the
     # tutorial yesterday still played. Only the dropped opening-turn restarts are
     # outside every count.
-    unique_players = len({g["player_uuid"] for g in regular + tutorial_games})
+    unique_players = len({g["player_uuid"] for g in regular + tutorial_games + lesson_games})
     new_player_count = len(new_players)
 
     # Within the regular population, COUNTS stay inclusive -- a restart that got
@@ -831,6 +855,9 @@ def _fetch_daily_stats(day: date):
         "tutorial_players": tutorial_players,
         "tutorial_acts": tutorial_acts,
         "tutorial_grain": tutorial_grain,
+        "lesson_games": len(lesson_games),
+        "lessons": _lesson_stats(lesson_games),
+        "versions": _versions(regular + tutorial_games + lesson_games),
         "dropped_opening_turn": len(dropped_games),
         "boss_error": boss_error,
         "turn_grain": turn_grain,
@@ -902,25 +929,29 @@ def _tutorial_steps_messages(stats: dict) -> list[dict]:
 # player's spool sends a day late is counted on the day it arrived, never
 # twice and never lost. /daily_reports still posts the same card on its own
 # schedule ("since the last post") until it is switched off in Discord.
-SURVEY_COLUMNS = ["id", "question_id", "moment", "outcome", "answer", "run_number",
-                  "has_comment", "created_at"]
+SURVEY_COLUMNS = ["id", "player_uuid", "question_id", "moment", "outcome", "answer",
+                  "run_number", "has_comment", "created_at"]
 
 
 def _fetch_day_surveys(day: date):
-    """The day's survey_responses rows, or None when they could not be read."""
+    """The day's survey_responses rows, or None when they could not be read.
+    Developers' are left out, as from the rest of the report, and so are the
+    onboarding's choices (stats_cards.is_survey: rows in the table, but not
+    surveys)."""
     start, end = _day_range_utc(day)
     try:
-        rows = fetch_all("survey_responses", SURVEY_COLUMNS, {"created_at": ("gte", start)})
+        rows = fetch_all("survey_responses", SURVEY_COLUMNS, {"created_at": ("between", (start, end))})
+        developers = _fetch_developer_uuids()
     except SupabaseError as e:
         print(f"Daily update: survey answers skipped for {day}: {e}")
         return None
-    end_at = datetime.fromisoformat(end)
-    return [r for r in rows if r.get("created_at") and parse_time(r["created_at"]) < end_at]
+    return [r for r in rows if stats_cards.is_survey(r) and r.get("player_uuid") not in developers]
 
 
 def _survey_messages(stats: dict, day: date) -> list[dict]:
     card = stats_cards.survey_answers_card(stats_cards.survey_tally(stats.get("surveys") or []),
-                                           period=f"{day.isoformat()} · Central time")
+                                           period=f"{day.isoformat()} · Central time",
+                                           cohort="players")
     if card is None:
         return []
     return [_image_message(card.png(), "survey_answers.png", 0x9B59B6)]
@@ -966,10 +997,10 @@ def _build_update_messages(stats: dict, day: date) -> list[dict]:
     color = 0x7B2D8E
 
     # "Nothing happened" has to consider the split-out populations too. A day of
-    # pure tutorial play, or of nothing but opening-turn restarts, has
+    # pure tutorial or lesson play, or of nothing but opening-turn restarts, has
     # total_games == 0 and is NOT a quiet day -- reporting one would hide the
     # very rows this split exists to make visible.
-    if stats["total_games"] == 0 and not stats.get("tutorial_games"):
+    if stats["total_games"] == 0 and not stats.get("tutorial_games") and not stats.get("lesson_games"):
         lines = ["No runs were played that day."]
         if stats.get("dropped_opening_turn"):
             lines.append(

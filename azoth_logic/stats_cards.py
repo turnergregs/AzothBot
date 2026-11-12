@@ -1110,11 +1110,29 @@ def _daily_boss_section(card: sc.Card, title: str, record: dict, against_average
     card.add(sc.Spacer(4))
 
 
+# The header names the builds counted, most runs first, at most this many.
+DAILY_VERSIONS = 3
+# Each lesson format's row label, in the order the course plays them.
+LESSON_LABELS = {"lesson_2": "Lesson 2", "lesson_3": "Lesson 3", "lesson_4": "Lesson 4",
+                 "lesson_5": "Lesson 5", "practice": "Practice"}
+
+
+def daily_versions(versions: dict) -> str:
+    """`{version: runs}` as the header's builds: `0.12.3, 0.12.2 +2 more`."""
+    ranked = sorted(versions, key=lambda v: (-versions[v], v))
+    text = ", ".join(ranked[:DAILY_VERSIONS])
+    more = len(ranked) - DAILY_VERSIONS
+    return f"{text} +{more} more" if more > 0 else text
+
+
 def daily_card(stats: dict, day: str) -> sc.Card:
-    # Who it counts goes in the header, as every report's does: everyone,
-    # developers included, and no version cutoff (yesterday's builds are
-    # current by definition).
-    card = sc.Card("Daily Report", f"{day} · Central time · {COHORT_LABELS['all']}")
+    # Who it counts goes in the header, as every report's does: everyone but
+    # Turner and Caleb (2026-11-12; everyone until then), and the builds the
+    # day's runs were on. No version cutoff: yesterday's builds are current.
+    header = f"{day} · Central time · {COHORT_LABELS['players']}"
+    if stats.get("versions"):
+        header += f"\nBuilds {daily_versions(stats['versions'])}"
+    card = sc.Card("Daily Report", header)
 
     tiles = [("Players", str(stats.get("unique_players") or 0)),
              ("New", str(stats.get("new_players") or 0)),
@@ -1130,6 +1148,8 @@ def daily_card(stats: dict, day: str) -> sc.Card:
             ("Legacy runs", str(stats.get("legacy_runs") or 0))]
     if stats.get("tutorial_games"):
         more.append(("Tutorial", str(stats["tutorial_games"])))
+    if stats.get("lesson_games"):
+        more.append(("Lessons", str(stats["lesson_games"])))
     card.add(*sc.tile_rows(more))
     card.add(sc.Spacer(4))
 
@@ -1166,6 +1186,20 @@ def daily_card(stats: dict, day: str) -> sc.Card:
         card.add(sc.Spacer(4))
     _daily_boss_section(card, "Tutorial boss fights", tutorial_tg.get("boss_record") or {},
                         against_average=False)
+
+    # Lesson and practice runs (2026-11-12): their own population, as the
+    # tutorial is, never in a regular run's numbers. How many of each were
+    # played, and the share that completed it.
+    lessons = stats.get("lessons") or {}
+    if lessons:
+        card.add(sc.SectionHeader("Lessons", "completed"))
+        order = list(LESSON_LABELS)
+        for fmt in sorted(lessons, key=lambda f: (order.index(f) if f in order else len(order), f)):
+            r = lessons[fmt]
+            card.add(sc.BarRow(LESSON_LABELS.get(fmt, fmt), r["completed"] / r["runs"],
+                               value_text=f"{round(100 * r['completed'] / r['runs'])}%",
+                               count_text=f"{r['completed']}/{r['runs']}", fill=sc.NEUTRAL))
+        card.add(sc.Spacer(4))
 
     rewards = tg.get("top_rewards") or []
     if rewards:
@@ -1450,9 +1484,9 @@ CHOICE_STEPS = {"yes": 4, "mostly": 3, "no": 0,
 def survey_tally(raw: list) -> list:
     """survey_answer_view-shaped rows from raw survey_responses rows: one per
     (question, moment, run slot, outcome, answer), with `responses` and
-    `comments` counted."""
+    `comments` counted. The onboarding's choices are left out (is_survey)."""
     merged: dict = {}
-    for r in raw:
+    for r in filter(is_survey, raw):
         slot = r.get("run_number") if r.get("run_number") in (1, 3) else None
         key = (r.get("question_id"), r.get("moment"), slot, r.get("outcome"), r.get("answer"))
         entry = merged.setdefault(key, dict(zip(SURVEY_MERGE, key), responses=0, comments=0))
@@ -1781,16 +1815,28 @@ def _answer_summary(question_id: str, counts: dict) -> str:
     return " · ".join(f"{sl.ANSWERS.get(k, k)} {counts[k]}" for k in keys)
 
 
-def survey_answers_card(tally: list, period: str = "Since the last post"):
+# The game records its onboarding choices in survey_responses too (game
+# 2026-11-12, `moment = 'onboarding'`: Unlock everything, Lesson Complete,
+# the tutorial boss's Retry, Settings' tutorial buttons). They are not surveys,
+# and every survey report leaves them out.
+NOT_SURVEY_MOMENTS = {"onboarding"}
+
+
+def is_survey(row: dict) -> bool:
+    """Whether a survey_responses row (or survey_answer_view row) is a survey."""
+    return row.get("moment") not in NOT_SURVEY_MOMENTS
+
+
+def survey_answers_card(tally: list, period: str = "Since the last post", cohort: str = "all"):
     """The survey answers of /daily_reports (since its last post) and of the
     daily report (`period` names its day): how many were shown and answered,
-    then a line per question asked. None when none were shown. Everyone,
-    developers included."""
+    then a line per question asked. None when none were shown. `cohort` is
+    who the rows were filtered to (COHORT_LABELS); the caller filters."""
     outcomes = _outcomes(tally)
     shown = sum(outcomes.values())
     if not shown:
         return None
-    card = sc.Card("Survey answers", f"{period} · {COHORT_LABELS['all']}")
+    card = sc.Card("Survey answers", f"{period} · {COHORT_LABELS[cohort]}")
     card.add(sc.SectionHeader("Answered", f"{outcomes['answered']} of {shown} shown"))
     return card.add(*_question_lines(tally))
 

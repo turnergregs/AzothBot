@@ -1150,8 +1150,42 @@ wrong question.
 ## The daily report
 
 `/daily_update enabled:True` registers the current channel for a scheduled report
-covering the previous day (CST). It is **per-channel** — each channel carries its
+covering the previous day (Central Time). It is **per-channel** — each channel carries its
 own send time and its own dedup date.
+
+### What it counts (2026-11-12)
+
+Made ready for hundreds of playtesters a day (Turner, 2026-11-12):
+
+- **Not Turner's or Caleb's play.** Every row from a `players.developer`
+  account is left out before anything else reads the day: runs, new players and
+  the survey card (`_fetch_developer_uuids`). Every editor launch on record is a
+  developer's, so this leaves out editor runs too. Over the 30 days before, 240
+  of 868 runs were theirs; on 2026-11-10, 31 of 37. The header says **Everyone
+  but us** (it said Everyone until then) and, on a second line, **the builds**
+  the day's runs were on, most runs first, three at most (`daily_versions`).
+- **Every read pages** (`fetch_all`, through `_read_in` for the batched `in`
+  reads). Each read was one PostgREST request until then, which stops at 1,000
+  rows without saying so: a busy day's `games`, or the turns of 50 games, would
+  have come back short. `turn_nodes` and `levelups` are read with `node_index`,
+  since fetch_all's paging tiebreak treats rows equal on every column read as one.
+- **The day is a Central Time day with daylight saving** (`CENTRAL`,
+  `America/Chicago`): midnight to midnight, 23 or 25 hours when the clocks
+  change. A fixed UTC-6 until then, so from March to November each day ran 1am to
+  1am. A host without a time zone database falls back to UTC-6 with a console
+  line; `tzdata` is in requirements.txt. The **send time** is still stored as UTC,
+  so the post comes an hour later in the day while daylight saving is on.
+- **Lesson and practice runs are their own population** (population 3 below).
+- **The onboarding's choices are not surveys** (`stats_cards.is_survey`): the
+  game writes them to `survey_responses` with `moment = 'onboarding'` (game
+  2026-11-12). `survey_tally` and `/stats surveys` leave them out.
+- **The tutorial steps card counts the tutorial's own steps only**
+  (`tutorial_steps.is_aside`): a run's rows also hold each look at Tutorial So
+  Far and a lesson's prompts, with the run's format as `tutorial`.
+
+Checked 2026-11-12 by building 2026-11-10's stats against the live database
+and counting the same rows with `psql`: 5 regular runs, 1 tutorial, 3 players,
+1 new player, all on 0.14.0, on both.
 
 ### Scheduling
 
@@ -1227,8 +1261,12 @@ being enough at two.) Enabling a channel goes through the same sweep.
 ### Drawn as one image (2026-09-29)
 
 The report is one image (`stats_cards.daily_card`), titled "Daily Report", with
-the day and "Everyone" (developers included) in its header and no text under it
-(2026-10-02; it had a footer, and was titled "Yesterday", until then).
+the day, "Everyone but us" and the builds counted in its header (developers
+included, as "Everyone", until 2026-11-12) and no text under it
+(2026-10-02; it had a footer, and was titled "Yesterday", until then). A
+**Lessons** tile and section (2026-11-12): each lesson's and practice's runs
+and the share completed (`_lesson_stats`: its completing result, or a lesson
+played on into act 2).
 
 **Shop upgrade picks** (2026-11-05, Turner) follow the level-up picks: how many
 Upgrade packs were bought that day, and each shop level-up's pick rate, taken
@@ -1341,7 +1379,7 @@ hand-applied and this bot runs on either side of the rename.
 
 #### The day is bucketed on `started_at` (2026-09-08)
 
-The report reads runs **started** in the previous CST day. It filtered on
+The report reads runs **started** in the previous Central Time day. It filtered on
 `finished_at` until 2026-09-08, when that column turned out never to have been
 written by the game: it carried `default now()`, so it held the moment
 `open_run()` inserted the stub row — equal to `created_at` to the microsecond on
@@ -1404,7 +1442,13 @@ that is true from *both* ends — developer iteration on the tutorial does **not
 trip `TestingConfig.is_testing()` (which only fires on content overrides), so it
 uploads exactly like a real player's first walkthrough and neither is a run.
 
-**3. Everything else is `regular`,** and within it counts stay inclusive as
+**3. Lesson and practice runs are split out too** (2026-11-12): `format`
+`lesson_2` .. `lesson_5` or `practice` (`is_lesson`). They play with content
+held back and a hand-picked shop, so like the tutorial they get their own rows
+(the Lessons tile and section) and are in no regular number. Until 2026-11-12
+they were counted as regular runs.
+
+**4. Everything else is `regular`,** and within it counts stay inclusive as
 before — a restart that got past the opening turn is still someone playing.
 
 Three failure directions are deliberate:
@@ -1413,9 +1457,9 @@ Three failure directions are deliberate:
   deck**, so only `format` splits runs out. Over-reporting real activity beats hiding it —
   the same reasoning as the live-content filter in `content_index`.
 - **A NULL `starter_deck` stays in `regular`** (186 historical rows have one).
-- **A day of nothing but tutorial play is not a quiet day.** `total_games` can
-  be 0 while the report still has something to say, so the "no runs were played"
-  early return checks the tutorial count too.
+- **A day of nothing but tutorial or lesson play is not a quiet day.**
+  `total_games` can be 0 while the report still has something to say, so the
+  "no runs were played" early return checks the tutorial and lesson counts too.
 
 Only the **unique-player** count spans `regular` + `tutorial`: someone who
 played only the tutorial yesterday still played.

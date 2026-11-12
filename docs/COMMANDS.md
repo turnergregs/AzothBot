@@ -559,7 +559,7 @@ NULL) and post a new one. Pulling and listing are still done in the dashboard.
 | `/stats draft items` | — | `players?`. The five most and five least picked cards, then aspects, then rites, each against its own type (5+ offers). Image |
 | `/stats draft pool` | — | — (content, no cohort). What the shipped draft decks hold, in the element colours. Image |
 | `/daily_update` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6) |
-| `/daily_update_repost` | 🔒 | `date` (YYYY-MM-DD, CST, before today). Posts that day's daily report here. Touches no schedule state |
+| `/daily_update_repost` | 🔒 | `date` (YYYY-MM-DD, Central Time, before today). Posts that day's daily report here. Touches no schedule state |
 | `/daily_reports` | 🔒 | `enabled`, `send_time?` (HH:MM, default 12:00), `utc_offset?` (default -6). The daily survey-answers image, since its last post. The daily report carries the same card for its day since 2026-11-03 |
 | `/live_reports` | 🔒 | `enabled`. New player reports, survey comments and crashes (not developers'), every 10 minutes |
 
@@ -690,7 +690,7 @@ than drawing a partial distribution as a whole one. Full account in
 > deep, so most of these will be thin or empty until there is play at `0.9.10`+.
 
 `/daily_update` posts one image since 2026-09-29 (see ANALYTICS.md § The daily report). It is per-channel: enabling it in a channel registers that channel
-with its own send time, and the report covers the previous day (CST). Every day
+with its own send time, and the report covers the previous day (Central Time, daylight saving included). Every day
 it missed (bot down, or a report that would not build) is sent late, oldest
 first, up to 7; a report that will not build is said in the channel once.
 Disabling preserves the dedup date so re-enabling the same day doesn't re-send,

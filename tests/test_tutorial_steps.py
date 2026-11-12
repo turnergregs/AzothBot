@@ -97,3 +97,16 @@ def test_steps_are_in_shown_order_and_filed_under_their_turn():
     f = ts.build({"p": [game("g", 100)]}, list(reversed(three_steps("g"))), [], NOW)
     assert [(s.key, s.group) for s in f.steps] == [
         ("intro", "turn 1"), ("links", "turn 1"), ("patterns", "turn 2")]
+
+
+def test_tutorial_so_far_and_lesson_rows_are_not_steps():
+    """Game 2026-11-12: a run's tutorial_steps also hold each look at Tutorial
+    So Far and a lesson's prompts, under the run's format rather than the
+    tutorial's name. They are not steps of the tutorial, and a help window left
+    open is not where the player left it."""
+    rows = [{**step("g", "intro", 1), "tutorial": "link_basics"},
+            {**step("g", "links", 2), "tutorial": "link_basics"},
+            {**step("g", "tutorial_so_far", 3, closed=False), "tutorial": "tutorial"}]
+    f = ts.build({"p": [game("g", 100)]}, rows, [], NOW)
+    assert [s.key for s in f.steps] == ["intro", "links"]
+    assert by_key(f)["links"].left[ts.STOPPED] == 1

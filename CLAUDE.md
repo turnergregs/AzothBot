@@ -102,6 +102,10 @@ All docs live in `docs/`. Read before changing a system.
   `stats_charts.Flow`, an `ImageBlock`: it composites onto the image, since
   ImageDraw cannot blend or anti-alias. See `docs/ANALYTICS.md` § New player
   paths.
+- **The daily report counts everyone but us** (2026-11-12): developers'
+  rows are left out, lesson and practice runs are their own population, every
+  read pages, and the day is a Central Time day with daylight saving. See
+  `docs/ANALYTICS.md` § What it counts.
 - **The daily report is four images** (2026-11-03): the day, the paths (8
   runs), the tutorial steps funnel (`azoth_logic/tutorial_steps.py`, from
   `tutorial_steps`) and the day's survey answers (by `created_at`). Each extra's

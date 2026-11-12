@@ -31,3 +31,4 @@ pytest>=8.0
 # tests/test_command_registration.py shells out to pyflakes to catch names that
 # do not exist at runtime -- the /create_card NameError class of bug.
 pyflakes>=3.0
+tzdata>=2024.1  # the daily report's Central Time day (zoneinfo), on hosts without a system tz database
