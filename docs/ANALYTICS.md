@@ -184,7 +184,7 @@ runs pile up and every rate is divided from totals in the bot.
 Every card leads with **how far runs got**: a bar per group split by the
 furthest act each run reached, in the game's act colours (`ACT_COLOURS`,
 checked colour-blind-safe as neighbours), with each segment's run count inside
-it and a legend below. Then the share that **beat act 3** and the run count.
+it and a legend below. Then the share that **beat act 4** (act 3 until 2026-11-12) and the run count.
 Groups under 5 runs are dimmed (colours pulled toward the surface, so the acts
 still read). A group is flagged red ▼ / blue ▲ when its whole 95% Wilson range
 sits below / above the rest of the runs, with 5+ runs on **both** sides
@@ -214,7 +214,7 @@ they make.
 
 - **Subtitle:** their cohort ("New playtester", "Veteran", "Developer") and
   when they last played, so a lapsed player stands out.
-- **Tiles:** runs, act 3 wins, best combo (`player_info_view`), time in runs
+- **Tiles:** runs, wins (the act 4 boss; act 3 until 2026-11-12), best combo (`player_info_view`), time in runs
   and in the Codex (`player_summary_view`), each only when it has a value.
 - **Heroes:** one act bar per hero from `player_run_view`, as on the
   breakdown, labelled with the highest ritual played on that hero ("Lumis R0").
@@ -295,7 +295,17 @@ this is where the silence would come from.
 
 ### What counts as a win
 
-**Beating the act 3 boss.** That is the milestone the game itself rewards:
+**Beating the act 4 boss, since 2026-11-12** (the game's
+`RunOutcome.MANIFEST_ACT`; Turner: clearer than act 3). The game repo's
+`2026-11-12_run_cleared_act_4.sql` moved `run_cleared()` with it, for every
+row, old ones included, so every `cleared` figure and every "Beat act 4" label
+(`stats_cards.BEAT_WIN_ACT`) reads the new rule; a run that beat act 3 and died
+in act 4 no longer counts. The daily card counts its own (`_beat_win_act`: a
+`victory` / `no_boss_key` result, or reaching act 5), since an act 4 clear with
+no boss key ends the run in act 4. The rest of this section is the act 3
+definition as it was built, and still describes the function's shape.
+
+**Beating the act 3 boss (until 2026-11-12).** That is the milestone the game itself rewarded:
 [main.gd:1464](../../azoth/scripts/main.gd:1464) grants the next ritual there and
 nowhere else. Acts 4 and 5 are bonus content — a run that cleared act 3 and then
 died to the act 4 boss **cleared**, and `games.result` still correctly says
@@ -465,7 +475,7 @@ the cutoff, still ranked it the hardest boss. A pooled rate cannot show a fix;
 the same item split by version can.
 
 - **Measures.** A boss: the player's win rate over finished fights. A card,
-  aspect or rite: pick rate. A hero: beat act 3 (`run_cleared`, as
+  aspect or rite: pick rate. A hero: beat act 4 (`run_cleared`, as
   `/stats breakdown`). `by:hero` is the run's starting hero, and is refused for
   a hero (a hero split by hero is itself).
 - **Each group against the rest of its kind in that SAME group.** Veln in
@@ -1321,8 +1331,9 @@ console line and costs that image only, never holds the day.
 failure never uses the day up. A quiet day is still one line of text.
 
 Top to bottom: tiles (players, new, solo runs, time played; then co-op runs,
-legacy runs, and tutorial runs when there were any); one act bar for the day with the beat-act-3 share (reaching
-act 4 means the act 3 boss fell), and a **Tutorial** bar under it for the
+legacy runs, and tutorial runs when there were any); one act bar for the day with the beat-act-4 share
+(`beat_win_act`, counted from results: an act 4 clear with no boss key ends in
+act 4; the beat-act-3 share from `act_reached >= 4` until 2026-11-12), and a **Tutorial** bar under it for the
 tutorial runs; **boss fights per boss** (`boss_record`,
 new: the text report gave only a total, and a day of Veln winning every fight
 hid in it), against the day's overall rate; **tutorial boss fights** (2026-11-03,

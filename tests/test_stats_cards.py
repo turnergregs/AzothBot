@@ -510,10 +510,10 @@ def test_the_player_card_shows_heroes_as_act_bars_labelled_with_ritual():
     assert strips[0].acts == {1: 3, 2: 4, 3: 4}
 
 
-def test_the_player_tiles_count_runs_and_act_3_wins():
+def test_the_player_tiles_count_runs_and_wins():
     card = cards.player_card("Max", MAX_RUNS, None, {"best_combo": "65500"})
     tiles = dict(t for row in _rows(card, sc.StatTiles) for t in row.tiles)
-    assert (tiles["Runs"], tiles["Beat act 3"], tiles["Best combo"]) == ("12", "1", "65.5K")
+    assert (tiles["Runs"], tiles[cards.BEAT_WIN_ACT], tiles["Best combo"]) == ("12", "1", "65.5K")
 
 
 def test_time_tiles_only_when_there_is_time():

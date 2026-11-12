@@ -37,6 +37,12 @@ COHORT_LABELS = {
     "all": "Everyone",
 }
 
+# The act whose boss is the win (game RunOutcome.MANIFEST_ACT): act 4 since
+# 2026-11-12, act 3 before. Every "Beat act N" figure is `cleared` from the
+# database's run_cleared(), which moved with it.
+WIN_ACT = 4
+BEAT_WIN_ACT = f"Beat act {WIN_ACT}"
+
 
 def select_cohort(rows: list, key: str, merge_on, counts: tuple):
     """`(merged_rows, filtered)`: one row per `merge_on` (a column, or a tuple
@@ -336,7 +342,7 @@ def breakdown_card(rows: list, by: str, population: str = "") -> sc.Card:
     right = sc.WIDTH - sc.PAD
     card.add(sc.SectionHeader("How far runs got"))
     card.add(sc.ColumnHeads([("Furthest act", sc.PAD + sc.LABEL_W, "lm"),
-                             ("Beat act 3", right - sc.ActStripRow.COUNT_W, "rm"),
+                             (BEAT_WIN_ACT, right - sc.ActStripRow.COUNT_W, "rm"),
                              ("Runs", right, "rm")]))
     for g in groups:
         flag = group_flag(g, groups)
@@ -570,7 +576,7 @@ def player_card(name: str, runs: list, summary: dict | None, info: dict | None,
         parts.append(f"last played {last}")
     card = sc.Card(name, " · ".join(p for p in parts if p))
 
-    tiles = [("Runs", str(len(runs))), ("Beat act 3", str(cleared))]
+    tiles = [("Runs", str(len(runs))), (BEAT_WIN_ACT, str(cleared))]
     best = info.get("best_combo")
     if best not in (None, "", "0"):
         tiles.append(("Best combo", sf_value("max_combo", best)))
@@ -588,7 +594,7 @@ def player_card(name: str, runs: list, summary: dict | None, info: dict | None,
         right = sc.WIDTH - sc.PAD
         card.add(sc.SectionHeader("Heroes"))
         card.add(sc.ColumnHeads([("Furthest act", sc.PAD + sc.LABEL_W, "lm"),
-                                 ("Beat act 3", right - sc.ActStripRow.COUNT_W, "rm"),
+                                 (BEAT_WIN_ACT, right - sc.ActStripRow.COUNT_W, "rm"),
                                  ("Runs", right, "rm")]))
         for hero, acts, won, ritual in heroes:
             # The label carries the highest ritual played on that hero:
@@ -922,7 +928,7 @@ ITEM_MEASURES = {
     "card": ("Pick rate", "offers", "other cards", MIN_OFFERS),
     "aspect": ("Pick rate", "offers", "other aspects", MIN_OFFERS),
     "rite": ("Pick rate", "offers", "other rites", MIN_OFFERS),
-    "hero": ("Beat act 3", "runs", "other heroes", MIN_RUNS),
+    "hero": (BEAT_WIN_ACT, "runs", "other heroes", MIN_RUNS),
 }
 ITEM_KIND_LABELS = {"boss": "Boss", "card": "Card", "aspect": "Aspect", "rite": "Rite",
                     "hero": "Hero"}
@@ -1161,12 +1167,15 @@ def daily_card(stats: dict, day: str) -> sc.Card:
         right = sc.WIDTH - sc.PAD
         card.add(sc.SectionHeader("How far runs got"))
         card.add(sc.ColumnHeads([("Furthest act", sc.PAD + sc.LABEL_W, "lm"),
-                                 ("Beat act 3", right - sc.ActStripRow.COUNT_W, "rm"),
+                                 (BEAT_WIN_ACT, right - sc.ActStripRow.COUNT_W, "rm"),
                                  ("Runs", right, "rm")]))
-        # Reaching act 4 means the act 3 boss fell.
-        for label, group in (("Solo runs", acts), ("Tutorial", tutorial_acts)):
+        # A win can end in act 4 (no boss key), so the act a run reached does
+        # not say it; the day's stats count them (`beat_win_act`). A tutorial
+        # ends at act 1 and never does.
+        for label, group, won in (("Solo runs", acts, int(stats.get("beat_win_act") or 0)),
+                                  ("Tutorial", tutorial_acts, 0)):
             if group:
-                card.add(sc.ActStripRow(label, group, sum(n for a, n in group.items() if a >= 4)))
+                card.add(sc.ActStripRow(label, group, won))
         card.add(sc.act_legend({*acts, *tutorial_acts}))
         card.add(sc.Spacer(4))
 

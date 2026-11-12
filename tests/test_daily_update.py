@@ -1096,8 +1096,10 @@ def test_a_section_with_nothing_in_it_is_not_drawn():
     assert _heads(_daily(turn_grain={}, draft={})) == ["How far runs got"]
 
 
-def test_reaching_act_4_counts_as_beating_act_3():
-    strip = next(b for b in _daily().blocks if isinstance(b, sc.ActStripRow))
+def test_the_strip_counts_the_days_act_4_wins():
+    """2026-11-12: the win is the act 4 boss, which can end a run in act 4 (no
+    boss key), so the strip reads the day's own count, not act_reached."""
+    strip = next(b for b in _daily(beat_win_act=1).blocks if isinstance(b, sc.ActStripRow))
     assert strip.cleared == 1 and sum(strip.acts.values()) == 11
 
 

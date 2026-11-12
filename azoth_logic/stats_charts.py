@@ -445,7 +445,7 @@ def act_legend(acts) -> Legend:
 class ActStripRow(Block):
     """A group's runs as one bar split by the furthest act each reached, in the
     act colours with each segment's run count inside it, then the share that
-    beat act 3 and the run count.
+    beat the win act (act 4 since 2026-11-12) and the run count.
 
     Segments touch with a thin surface gap, never a border. `faded` dims the
     colours rather than greying them, so a low-sample row still says which

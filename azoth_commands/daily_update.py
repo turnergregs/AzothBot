@@ -678,6 +678,19 @@ def _count_runs(games: list[dict]) -> tuple[int, int, int]:
     return solo, coop, legacy
 
 
+# A win (game 2026-11-12): the act 4 boss put down. An act 4 clear with no boss
+# key ends the run in act 4 as `no_boss_key`, and one with a key goes on to act
+# 5, so a run beat it when it ended in one of these or reached act 5.
+WIN_RESULTS = ("victory", "no_boss_key")
+WIN_ACT = stats_cards.WIN_ACT
+
+
+def _beat_win_act(games: list[dict]) -> int:
+    """How many of `games` put the act 4 boss down, however they then ended."""
+    return sum(1 for g in games if g.get("result") in WIN_RESULTS
+               or _to_number(g.get("act_reached")) > WIN_ACT)
+
+
 def _act_distribution(games: list[dict]) -> dict[int, int]:
     """{furthest act: runs} over `games`, from the acts actually present. A run
     with no `act_reached` is left out."""
@@ -826,6 +839,7 @@ def _fetch_daily_stats(day: date):
     # (2026-11-03), counted the same way.
     act_distribution = _act_distribution(regular)
     tutorial_acts = _act_distribution(tutorial_games)
+    beat_win_act = _beat_win_act(regular)
 
     boss_error = turn_grain.get("error")
     total_boss_fights = turn_grain.get("boss_turns", 0)
@@ -844,6 +858,7 @@ def _fetch_daily_stats(day: date):
         "avg_turns": avg_turns,
         "game_results": results,
         "act_distribution": act_distribution,
+        "beat_win_act": beat_win_act,
         "measured_games": len(measured),
         "restarts": restarts,
         "coop_rows": coop_rows,

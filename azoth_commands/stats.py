@@ -391,7 +391,7 @@ def add_stats_commands(cls):
                          "leaderboard.png", colour=0xF1C40F)
 
     # --- Player ---
-    # One player's profile, drawn as an image (2026-09-28): runs, act 3 wins,
+    # One player's profile, drawn as an image (2026-09-28): runs, wins (the act 4 boss),
     # best combo and time; a bar per hero split by furthest act; what they
     # drafted most and made in the Codex. See stats_cards § /stats player for
     # what the ten-section text card it replaced carried, and why it went.
