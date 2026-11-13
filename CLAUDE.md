@@ -43,7 +43,7 @@ All docs live in `docs/`. Read before changing a system.
 | `DB_SCHEMA.md` | **Full schema mirror.** Read the query caveats before writing ANY query |
 | `ANALYTICS.md` | `/stats` views, the daily report, and their defects |
 | `CONTENT_PIPELINE.md` | Idea → JSON → database row |
-| `CARD_RENDERING.md` | **How `/render` draws cards, aspects and rites.** Layout, symbols, animation, caching, the vendored assets, and **procedural art** (`image_data.art` from the game's Codex, ported from the shader and checked against GPU samples) |
+| `CARD_RENDERING.md` | **How `/render` draws cards, aspects and rites.** Layout, symbols, animation, caching, the vendored assets, and **procedural art** (`image_data.art` from the game's Codex, ported from the shader and checked against GPU samples), and **solved art** (version 2, 2026-11-12: `azoth_logic/solved_art.py` solves the outline as the game does, bit for bit, checked against the game's `tools/SolvedArtReference.tscn` fixture) |
 | `RENDERING.md` | ⚠️ Legacy renderers. Still current for art *generation* and the Storage buckets |
 | `TESTING.md` | The pytest suite, what it guards, and how it was mutation-tested |
 | `DEPLOYMENT.md` | Where it runs, config, security posture |

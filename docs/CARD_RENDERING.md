@@ -348,6 +348,7 @@ renders as a silent gap, so `Upgraded -> Aspect` came out as `Upgraded   Aspect`
 | `azoth_logic/placeholders.py` | `{...}` display placeholders — see [Display placeholders](#display-placeholders) |
 | `azoth_logic/eigenfunction_art.py` | `.exr` art — the port of `split_card_image.gdshader` — and `item_frames` / `item_still`, which pick an item's art source |
 | `azoth_logic/procedural_art.py` | Procedural art (`image_data.art`) — the port of `procedural_art.gdshaderinc` and `ArtVisuals`. See [Procedural art](#procedural-art) |
+| `azoth_logic/solved_art.py` | Solved art (`image_data.art` version 2): the game's outline solver (`OutlineModes`, `ModeSet`), the combination helpers it needs (`ModeMix`) and `art_field`'s solved branch. See [Solved art](#solved-art) |
 | `azoth_logic/rite_background.py` | A rite's procedural background (`image_data.background`) — `reactant_card.gdshader`'s procedural branch and `RiteVisuals`' frames. See [Procedural rite backgrounds](#procedural-rite-backgrounds) |
 | `azoth_logic/card_render.py` | Composites the face; PNG and GIF output |
 | `tools/sync_assets.py` | Refreshes vendored art from a local azoth checkout |
@@ -431,6 +432,46 @@ derivation from `ArtVisuals.apply_params`, in numpy.
   to either side's maths**; the tool's header has the command.
 - **Cost.** The art itself is ~0.85s for a 4s GIF; the holographic sheen, as on
   every animated card, is most of the ~7s.
+
+### Solved art
+
+**Built 2026-11-12.** Art made from an outline's own vibration modes, the
+game's `image_data.art` **version 2** (azoth repo, `docs/SOLVED_ART_PLAN.md`):
+an outline, the modes mixed into its base, its wobble partners, gap and zones.
+Nothing big is stored; every machine solves the outline, so the bot does too.
+
+- **The same solve as the game's.** `solved_art.mask_of_outline` is
+  `OutlineModes.mask_of_outline` (the outline's distance, already ported; a
+  mirrored outline's right half copied from its left), then the five-point
+  Laplacian on the inside pixels with the edge clamped. The game finds the
+  lowest modes with Lanczos; the bot solves the same matrix densely
+  (`numpy.linalg.eigh`), so the modes agree to rounding. A mirrored mask is two
+  half solves (the axis free for the mirrored modes, clamped for the flipped),
+  merged by eigenvalue with a tied mirrored and flipped pair numbered mirrored
+  first (both sides do it, so the numbers never hang on the solvers' last
+  digits); a tied cluster of one kind is turned to the game's fixed form; each
+  mode is scaled to peak 1 and signed by its first peak pixel.
+- **Half precision made as Godot makes it** (`godot_half`): the game stores
+  modes at half precision through `Image.convert(FORMAT_RH)`, which truncates the
+  mantissa and flushes values under 2^-14 to zero. numpy's float16 rounds to
+  nearest, which differed in about one value in six; with `godot_half` the bot's
+  modes are bit for bit the game's.
+- **`SolvedField` has `Field`'s interface** (`at(t)`, `zone(z)`), and
+  `procedural_art.field_for` picks it by version, so `eigenfunction_art`
+  draws both. It is the shader's `art_solved_waves`: framed on its ink
+  (`solved_frame`, as the game crops), the base divided by its peak, two
+  partners (the look's, or `ModeMix`'s rule) wobbling it by `departure`, the
+  outline's own edge faded over 0.015.
+- **Verified against the game**: `tests/test_solved_art.py` and
+  `tests/fixtures/solved_art_reference.json` (the azoth repo's
+  `tools/SolvedArtReference.tscn`, headless): five looks (one mode, a mix,
+  chosen partners with colour by piece, an unmirrored outline, a tied pair
+  turned) whose sets match exactly and whose fields and zones match the game's
+  formula. **Regenerate the fixture when the game's solver changes** (its
+  `solver_version`, which the test checks).
+- **Cost**: a solve at the game's 64 grid takes 0.3-0.6 s for a mirrored
+  outline and about 4 s for an unmirrored one; solves are kept in memory
+  (`SOLVE_CACHE`), and drawing a frame after is ~0.02 s.
 
 ### The card is transparent, and cropped to itself
 

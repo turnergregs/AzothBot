@@ -101,7 +101,8 @@ def test_the_fixture_covers_every_family_and_silhouette():
 
 def test_an_unreadable_version_is_no_art():
     """The game draws nothing for a version it can't read rather than guess."""
-    assert not pa.has_art({"image_data": {"art": dict(ART, version=2)}})
+    # Version 2 is solved art (tests/test_solved_art.py); 3 is unknown.
+    assert not pa.has_art({"image_data": {"art": dict(ART, version=3)}})
     assert not pa.has_art({"image_data": {"art": {}}})
     assert not pa.has_art({"image_data": None})
     assert pa.has_art({"image_data": {"art": ART}})

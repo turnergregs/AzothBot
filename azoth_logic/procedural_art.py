@@ -47,6 +47,8 @@ import numpy as np  # noqa: E402
 # ArtVisuals.VERSION. An art dict of any other version draws nothing, as in the
 # game, which warns and draws nothing rather than guess.
 VERSION = 1
+# ArtVisuals.SOLVED_VERSION: solved art, azoth_logic/solved_art.py.
+SOLVED_VERSION = 2
 
 TRIANGLE, CIRCLE, SQUARE = "triangle", "circle", "square"
 FAMILIES = (TRIANGLE, CIRCLE, SQUARE)
@@ -166,11 +168,21 @@ def art_of(item: dict) -> dict:
         version = int(art.get("version", VERSION))
     except (TypeError, ValueError):
         return {}
-    return art if version == VERSION else {}
+    # Version 2 is solved art (azoth_logic/solved_art.py), drawn by field_for.
+    return art if version in (VERSION, SOLVED_VERSION) else {}
 
 
 def has_art(item: dict) -> bool:
     return bool(art_of(item))
+
+
+def field_for(art: dict, size: int, departure: float, threshold: float):
+    """The art's field: a Field, or for solved art (version 2) a
+    solved_art.SolvedField, which has the same interface."""
+    from azoth_logic import solved_art
+    if solved_art.is_solved(art):
+        return solved_art.SolvedField(art, size, departure, threshold)
+    return Field(art, size, departure, threshold)
 
 
 def resolve(art: dict) -> dict:

@@ -222,9 +222,11 @@ def needs_download(item: dict) -> bool:
     return not procedural_art.has_art(item) and bool(item.get("image"))
 
 
-def procedural_field(item: dict, size=ART_SIZE[0]) -> procedural_art.Field:
-    return procedural_art.Field(procedural_art.art_of(item), size,
-                                departure_for_card(item), THRESHOLD)
+def procedural_field(item: dict, size=ART_SIZE[0]):
+    """The item's procedural art as a field: wave art (procedural_art.Field) or
+    solved art (solved_art.SolvedField), the same interface."""
+    return procedural_art.field_for(procedural_art.art_of(item), size,
+                                    departure_for_card(item), THRESHOLD)
 
 
 def item_frames(item: dict, art_bytes, primary, secondary,
