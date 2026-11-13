@@ -6,7 +6,7 @@ from azoth_commands.helpers import pack_fields_into_embeds, safe_interaction, mi
 from azoth_commands.autocomplete import autocomplete_from_table
 from azoth_logic import taxonomy
 from constants import DEV_GUILD_ID, BOT_PLAYER_ID
-from supabase_helpers import fetch_all, update_record, get_deck_contents
+from supabase_helpers import fetch_all, update_record, get_deck_contents, find_deck
 
 from azoth_logic import bulk_report, deck_render, deck_staging
 
@@ -59,11 +59,10 @@ def add_deck_commands(cls):
 
 		from datetime import datetime
 
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
-
-		record = matches[0]
+		# An archived deck is reachable here so it can be unarchived.
+		record, problem = find_deck(name, allow_archived=True)
+		if problem:
+			return f"❌ {problem}"
 		update_data = {}
 		if new_name: update_data["name"] = new_name
 		if description: update_data["description"] = description
@@ -177,13 +176,11 @@ def add_deck_commands(cls):
 		interaction: Interaction,
 		name: str = SlashOption(description="Deck name", autocomplete=True),
 	):
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
+		record, problem = find_deck(name, allow_archived=True)
+		if problem:
+			return f"❌ {problem}"
 
 		MAX_LEN = 1900
-
-		record = matches[0]
 
 		success, contents = get_deck_contents(record)
 		record["contents"] = contents if success else f"(error loading contents: {contents})"
@@ -208,11 +205,9 @@ def add_deck_commands(cls):
 	):
 		import io
 
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
-
-		deck = matches[0]
+		deck, problem = find_deck(name, allow_archived=True)
+		if problem:
+			return f"❌ {problem}"
 
 		success, content_result = download_content_images(deck)
 		if not success:
@@ -250,11 +245,9 @@ def add_deck_commands(cls):
 	):
 		import io
 
-		matches = fetch_all(TABLE_NAME, filters={"name": name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{name}`."
-
-		deck = matches[0]
+		deck, problem = find_deck(name, allow_archived=True)
+		if problem:
+			return f"❌ {problem}"
 
 		success, content_result = download_content_images(deck)
 		if not success:
@@ -287,11 +280,9 @@ def add_deck_commands(cls):
 	):
 		from supabase_helpers import add_to_deck
 
-		matches = fetch_all(TABLE_NAME, filters={"name": deck_name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{deck_name}`."
-
-		deck = matches[0]
+		deck, problem = find_deck(deck_name)
+		if problem:
+			return f"❌ {problem}"
 
 		success, result = add_to_deck(deck, item_name, quantity)
 		if success:
@@ -310,11 +301,9 @@ def add_deck_commands(cls):
 	):
 		from supabase_helpers import remove_from_deck
 
-		matches = fetch_all(TABLE_NAME, filters={"name": deck_name})
-		if len(matches) == 0:
-			return f"❌ Could not find {MODEL_NAME} named `{deck_name}`."
-
-		deck = matches[0]
+		deck, problem = find_deck(deck_name)
+		if problem:
+			return f"❌ {problem}"
 
 		success, result = remove_from_deck(deck, item_name, quantity)
 		if success:
@@ -566,12 +555,10 @@ def add_deck_commands(cls):
 		from supabase_helpers import encode_item_ref, make_item_label, get_display_name
 
 		deck_name = interaction.data["options"][0]["value"]
-		matches = fetch_all(TABLE_NAME, filters={"name": deck_name})
-		if len(matches) == 0:
+		deck, problem = find_deck(deck_name)
+		if problem:
 			await interaction.response.send_autocomplete([])
 			return
-
-		deck = matches[0]
 		success, items = get_deck_contents(deck, full=True)
 		if not success or not items:
 			await interaction.response.send_autocomplete([])

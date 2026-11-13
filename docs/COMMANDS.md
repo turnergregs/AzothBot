@@ -288,6 +288,19 @@ narrow by that column and now list **every unarchived deck**.
 lookup across content types and can resolve to the wrong item — see
 [ARCHITECTURE.md § Deck membership](ARCHITECTURE.md#deck-membership).
 
+**A deck name means the live deck** (2026-11-13). Deck names are not unique:
+every pack deck has an archived draft twin of the same name. Every command
+that takes a deck by name resolves it through `supabase_helpers.pick_deck`:
+the one unarchived deck with that name, never an archived twin. Two live decks
+sharing a name are refused with both ids rather than guessed. `/add_to_deck`,
+`/remove_from_deck`, `/bulk_add_to_deck` and the create commands' `deck` option
+never write to an archived deck; they say it is archived and point at
+`/update_deck`. `/update_deck`, `/show_deck`, `/render_deck` and `/render_hand`
+take an archived deck when no live one has the name, so it can be read or
+unarchived. Before this, each took the first row the name matched, and
+`/add_to_deck Compost` put a new aspect into the archived Compost deck, which
+the game never loads.
+
 ### `/merge_staging`: the release step for staged content
 
 Cards, aspects and rites for the next release are uploaded early into the

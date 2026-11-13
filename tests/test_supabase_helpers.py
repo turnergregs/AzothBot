@@ -366,3 +366,43 @@ def test_a_between_filter_is_a_half_open_range(monkeypatch, fake_supabase):
     assert rows == [{"started_at": "2026-11-01"}]
     assert ("gte", "started_at", "2026-11-01") in fs.log["games"]["filters"]
     assert ("lt", "started_at", "2026-11-02") in fs.log["games"]["filters"]
+
+
+# ---------------------------------------------------------------------------
+# Which deck a name means
+# ---------------------------------------------------------------------------
+# REGRESSION (2026-11-13): deck commands took `matches[0]` of a name lookup.
+# Every pack deck has an archived draft twin of the same name, so `/add_to_deck
+# Compost` wrote a new aspect into the archived deck, which the game never loads.
+
+_LIVE = {"id": 48, "name": "Compost", "usage_type": "pack", "archived_at": None}
+_ARCHIVED = {"id": 60, "name": "Compost", "usage_type": "draft", "archived_at": "2026-11-07T15:16:49"}
+
+
+@pytest.mark.parametrize("rows", [[_ARCHIVED, _LIVE], [_LIVE, _ARCHIVED]])
+def test_a_deck_name_means_the_live_deck_whatever_the_order(rows):
+    assert h.pick_deck(rows, "Compost") == (_LIVE, None)
+    assert h.pick_deck(rows, "Compost", allow_archived=True) == (_LIVE, None)
+
+
+def test_two_live_decks_with_one_name_are_refused_not_guessed():
+    other = _LIVE | {"id": 49, "usage_type": "draft"}
+    deck, problem = h.pick_deck([_LIVE, other], "Compost")
+    assert deck is None
+    assert "2 live decks" in problem and "id 48 (pack)" in problem and "id 49 (draft)" in problem
+
+
+def test_an_archived_deck_is_only_taken_when_asked_for():
+    deck, problem = h.pick_deck([_ARCHIVED], "Compost")
+    assert deck is None
+    assert "archived" in problem and "id 60" in problem and "/update_deck" in problem
+    assert h.pick_deck([_ARCHIVED], "Compost", allow_archived=True) == (_ARCHIVED, None)
+
+
+def test_two_archived_decks_are_refused_even_when_archived_is_allowed():
+    deck, problem = h.pick_deck([_ARCHIVED, _ARCHIVED | {"id": 61}], "Compost", allow_archived=True)
+    assert deck is None and "2 archived decks" in problem
+
+
+def test_no_deck_by_that_name():
+    assert h.pick_deck([], "Nope") == (None, "No deck named `Nope`.")

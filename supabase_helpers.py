@@ -531,6 +531,45 @@ def _resolve_name_to_ref(item_name: str):
 	return None, None
 
 
+def pick_deck(rows: list[dict], name: str, allow_archived: bool = False) -> tuple[dict | None, str | None]:
+	"""The one deck a name means, out of every `decks` row with that name.
+
+	Returns `(deck, None)`, or `(None, reason)` with a reason to show as is.
+
+	REGRESSION (2026-11-13): commands took `matches[0]` of a name lookup, and
+	deck names stopped being unique when the onboarding work archived the draft
+	decks and recreated them as `pack` decks under the same names. `/add_to_deck
+	Compost` wrote a new aspect into the archived Compost deck, which the game
+	never loads, and nothing said so.
+
+	A live deck always wins. Two live decks with the name are refused rather than
+	guessed. With no live deck, `allow_archived` takes the one archived deck (for
+	reading it, or unarchiving it with `/update_deck`); without it the archived
+	deck is named so the reply explains what happened, and nothing is written.
+	"""
+	def described(decks: list[dict]) -> str:
+		return ", ".join(f"id {d.get('id')} ({d.get('usage_type') or 'no usage type'})" for d in decks)
+
+	live = [r for r in rows if not r.get("archived_at")]
+	if len(live) == 1:
+		return live[0], None
+	if len(live) > 1:
+		return None, f"{len(live)} live decks are named `{name}` ({described(live)}); rename one first."
+	if not rows:
+		return None, f"No deck named `{name}`."
+	if allow_archived and len(rows) == 1:
+		return rows[0], None
+	if allow_archived:
+		return None, f"{len(rows)} archived decks are named `{name}` ({described(rows)}); rename one first."
+	return None, (f"The only deck named `{name}` is archived ({described(rows)}), and the game never "
+		f"loads it. Unarchive it with `/update_deck` first if that is the one you mean.")
+
+
+def find_deck(name: str, allow_archived: bool = False) -> tuple[dict | None, str | None]:
+	"""`pick_deck` over the `decks` rows named `name`."""
+	return pick_deck(fetch_all("decks", filters={"name": name}), name, allow_archived)
+
+
 def add_to_deck(deck: dict, item_name: str, quantity: int = 1) -> tuple[bool, str]:
 	"""Add an item to a deck. item_name may be an encoded ref ('card:447') or a raw name."""
 	content_type, content_id = parse_item_ref(item_name)

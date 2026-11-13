@@ -15,6 +15,10 @@ TABLES = {
     "decks": [
         {"id": 3, "name": "Base Draft Deck"},
         {"id": 22, "name": "Testing Fates"},
+        # A live pack deck with an archived twin of the same name (2026-11-13).
+        {"id": 60, "name": "Compost", "usage_type": "draft", "archived_at": "2026-11-07T15:16:49"},
+        {"id": 48, "name": "Compost", "usage_type": "pack", "archived_at": None},
+        {"id": 70, "name": "Retired", "usage_type": "draft", "archived_at": "2026-11-07T15:16:49"},
     ],
     "cards": [
         {"id": 500, "name": "Gouge"},
@@ -112,6 +116,23 @@ def test_every_problem_is_reported_and_nothing_is_written(db):
     assert "Testing Fates: No aspect `Nope`." in text
     assert "No deck named `No Such Deck`." in text
     assert "matches 2 rows (ids 600, 601)" in text, "an ambiguous name is refused, not guessed"
+    assert db["inserts"] == [] and db["updates"] == []
+
+
+def test_a_deck_name_means_the_live_deck_not_its_archived_twin(db):
+    """REGRESSION (2026-11-13): an aspect added to Compost went to the archived
+    Compost deck, which the game never loads, because the lookup took the first
+    deck with the name."""
+    deck_bulk.apply(_payload(("Compost", [{"content_type": "aspect", "name": "Pittance"}])))
+
+    assert db["inserts"][0][1] == [{"deck_id": 48, "content_type": "aspect", "content_id": 900}]
+
+
+def test_an_archived_only_deck_is_never_written_to(db):
+    with pytest.raises(DeckBulkError) as e:
+        deck_bulk.apply(_payload(("Retired", [{"name": "Gouge"}])))
+
+    assert "is archived (id 70 (draft))" in str(e.value)
     assert db["inserts"] == [] and db["updates"] == []
 
 

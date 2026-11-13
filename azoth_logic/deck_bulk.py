@@ -111,11 +111,10 @@ def resolve(decks: list[dict]) -> list[dict]:
     cache: dict = {}
 
     for deck in decks:
-        rows = supabase_helpers.fetch_all("decks", filters={"name": deck["name"]})
-        if not rows:
-            errors.append(f"No deck named `{deck['name']}`.")
-        elif len(rows) > 1:
-            errors.append(f"{len(rows)} decks are named `{deck['name']}`; rename one first.")
+        # The live deck of that name; an archived twin is never written to.
+        deck_row, problem = supabase_helpers.find_deck(deck["name"])
+        if problem:
+            errors.append(problem)
 
         items = []
         for entry in deck["contents"]:
@@ -142,8 +141,8 @@ def resolve(decks: list[dict]) -> list[dict]:
             else:
                 items.append((db_type, found))
 
-        if rows and len(rows) == 1:
-            resolved.append({"deck": rows[0], "items": items})
+        if deck_row is not None:
+            resolved.append({"deck": deck_row, "items": items})
 
     if errors:
         # Deduplicated in order: one missing item named for two decks is still

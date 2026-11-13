@@ -65,15 +65,15 @@ def add_card_commands(cls):
 
 		# Optionally add to deck
 		if deck:
-			matches = fetch_all("decks", filters={"name": deck})
-			if len(matches) == 0:
-				return f"✅ Created `{name}`, but could not find deck named `{deck}`."
-
-			deck = matches[0]
+			from supabase_helpers import find_deck
+			deck_name = deck
+			deck, problem = find_deck(deck_name)
+			if problem:
+				return f"✅ Created `{name}`, but did not add it to a deck: {problem}"
 
 			success, result = add_to_deck(deck, name, quantity)
 			if not success:
-				return f"✅ Created `{name}`, but could not add to deck named `{deck}`:\n{result}."
+				return f"✅ Created `{name}`, but could not add to deck named `{deck_name}`:\n{result}."
 
 		# Generate and upload image
 		upload_success, file_path = generate_and_upload_image(created_record, bucket)
