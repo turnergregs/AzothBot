@@ -41,7 +41,7 @@ from azoth_logic import procedural_art as pa
 
 # ArtVisuals.SOLVED_VERSION; ModeSet's defaults and tiers; OutlineModes' ties.
 SOLVED_VERSION = 2
-SOLVER_VERSION = 2
+SOLVER_VERSION = 3  # 3: mirrored pieces join their reflections smoothly (mirror_join)
 DEFAULT_GRID = 64
 DEFAULT_TIER = 30
 TIER_STEP = 10

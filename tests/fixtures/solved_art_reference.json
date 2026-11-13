@@ -36183,7 +36183,7 @@
 	],
 	"grid": 24,
 	"size": 275,
-	"solver_version": 2,
+	"solver_version": 3,
 	"step": 11,
 	"threshold": 0.0005,
 	"tier": 10

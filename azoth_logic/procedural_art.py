@@ -102,6 +102,11 @@ OUTLINE_AT_LIMIT = 1.2
 OUTLINE_SIZE_MIN, OUTLINE_SIZE_MAX = 0.05, 1.2
 OUTLINE_BLEND_MAX = 0.4
 OUTLINE_DEFAULT_BLEND = 0.12
+# ArtOutline.mirror_joins: the least a piece's join with its own reflection is
+# softened by, and where mirror_asymmetry probes.
+MIRROR_JOIN_MIN = 0.1
+MIRROR_PROBE_RINGS = (0.0, 0.5, 1.0)
+MIRROR_PROBE_ANGLES = 12
 # ArtOutline.fit's sampling, matched so both draw the same fit.
 FIT_ROWS, FIT_SAMPLES, FIT_EXTENT_ROWS = 48, 49, 25
 
@@ -516,9 +521,43 @@ def _piece_distance(piece: dict, px, py, r):
     return _sd_hexagon(lx / sx, ly / sy, r) * m
 
 
-def _piece_mirrored(piece: dict, px, py, r, mirror: bool):
+def mirror_asymmetry(piece: dict, r) -> float:
+    """ArtOutline.mirror_asymmetry: the most the piece's distance and its
+    reflection's differ, probed at its centre and on rings round it. 0 for a
+    piece on the mirror line that is its own mirror image."""
+    ax, ay = piece["at"]
+    reach = max(piece["size"][0], piece["size"][1])
+    xs, ys = [], []
+    for ring in MIRROR_PROBE_RINGS:
+        for j in range(1 if ring == 0.0 else MIRROR_PROBE_ANGLES):
+            angle = 2.0 * np.pi * j / MIRROR_PROBE_ANGLES
+            xs.append(ax + np.cos(angle) * reach * ring)
+            ys.append(ay + np.sin(angle) * reach * ring)
+    xs, ys = np.array(xs), np.array(ys)
+    return float(np.max(np.abs(_piece_distance(piece, xs, ys, r) - _piece_distance(piece, -xs, ys, r))))
+
+
+def mirror_join(outline: dict, piece: dict, r) -> float:
+    """ArtOutline.mirror_joins for one piece: how softly a mirrored piece joins
+    its own reflection (the outline's blend, at least MIRROR_JOIN_MIN, never
+    more than mirror_asymmetry), so a piece crossing the mirror line leaves no
+    notch and one that is its own mirror image keeps its exact shape."""
+    k = max(outline.get("blend", OUTLINE_DEFAULT_BLEND), MIRROR_JOIN_MIN)
+    return min(k, mirror_asymmetry(piece, r))
+
+
+def _piece_mirrored(piece: dict, px, py, r, outline: dict):
+    """art_piece_mirrored: the piece, and its reflection smooth-joined to it
+    when the outline is mirrored."""
     d = _piece_distance(piece, px, py, r)
-    return np.minimum(d, _piece_distance(piece, -px, py, r)) if mirror else d
+    if not outline.get("mirror", True):
+        return d
+    e = _piece_distance(piece, -px, py, r)
+    k = mirror_join(outline, piece, r)
+    if k <= 0.0:
+        return np.minimum(d, e)
+    h = np.clip(0.5 + 0.5 * (e - d) / k, 0.0, 1.0)
+    return e + (d - e) * h - k * h * (1.0 - h)
 
 
 def outline_distance(outline: dict, px, py, roundness: float):
@@ -530,7 +569,7 @@ def outline_distance(outline: dict, px, py, roundness: float):
     for piece in outline.get("pieces", []):
         if piece["cut"]:
             continue
-        d = _piece_mirrored(piece, px, py, r, mirror)
+        d = _piece_mirrored(piece, px, py, r, outline)
         if shape is None:
             shape = d
         else:
@@ -541,7 +580,7 @@ def outline_distance(outline: dict, px, py, roundness: float):
     for piece in outline.get("pieces", []):
         if not piece["cut"]:
             continue
-        d = _piece_mirrored(piece, px, py, r, mirror)
+        d = _piece_mirrored(piece, px, py, r, outline)
         h = np.clip(0.5 - 0.5 * (shape + d) / k, 0.0, 1.0)
         shape = shape + (-d - shape) * h + k * h * (1.0 - h)
     return shape
@@ -560,7 +599,7 @@ def outline_softness(outline: dict, px, py, roundness: float, softness: float):
     added = [p for p in outline.get("pieces", []) if not p["cut"]]
     if not added:
         return np.full(np.shape(px), softness)
-    ds = [_piece_mirrored(p, px, py, r, outline.get("mirror", True)) for p in added]
+    ds = [_piece_mirrored(p, px, py, r, outline) for p in added]
     deepest = np.min(np.stack(ds), axis=0)
     weights = np.zeros(np.shape(px))
     thickness = np.zeros(np.shape(px))
@@ -581,7 +620,7 @@ def outline_zone(outline: dict, px, py, roundness: float):
     for piece in outline.get("pieces", []):
         if piece["cut"]:
             continue
-        d = _piece_mirrored(piece, px, py, r, outline.get("mirror", True))
+        d = _piece_mirrored(piece, px, py, r, outline)
         closer = d < best
         best = np.where(closer, d, best)
         zone = np.where(closer, piece["zone"] == 1, zone)
