@@ -24,7 +24,13 @@ QUESTIONS = {
     "cards": "Cards are easy to understand.",
     "new_attacks": "The new attack system is:",
     "new_boss_blocks": "The new boss block system is:",
+    "boss_rush": "Compared to a normal run, Boss Rush is:",
 }
+
+# Questions the game no longer asks (2026-11-25, Caleb): left out of every
+# survey report (stats_cards.is_survey). Their words stay above so a comment
+# still arriving from an older build is named in /live_reports.
+RETIRED = {"new_attacks", "new_boss_blocks"}
 
 # A few words for a row label.
 SHORT = {
@@ -41,16 +47,15 @@ SHORT = {
     "ui": "UI",
     "visuals": "Visuals",
     "cards": "Cards",
-    "new_attacks": "New attacks",
-    "new_boss_blocks": "Boss blocks",
+    "boss_rush": "Boss Rush",
 }
 
 # The order questions are reported in: the first-run question and the one
 # asked as the tutorial ends, then the run
 # questions, then the fight ones, then the ones about the game as a whole, then
-# the returning-player ones about a single change.
+# the returning-player ones about a single change or format.
 ORDER = ["understood", "tutorial_ready", "fun", "loss", "difficulty", "choices", "length", "variety",
-         "fight_fun", "fight_difficulty", "ui", "visuals", "cards", "new_attacks", "new_boss_blocks"]
+         "fight_fun", "fight_difficulty", "ui", "visuals", "cards", "boss_rush"]
 
 # Choice questions' answers, in the order the card shows them.
 CHOICES = {
@@ -79,6 +84,7 @@ SCALE_ENDS = {
     "cards": {1: "Disagree", 5: "Agree"},
     "new_attacks": {1: "Worse", 3: "About the same", 5: "Better"},
     "new_boss_blocks": {1: "Worse", 3: "About the same", 5: "Better"},
+    "boss_rush": {1: "Worse", 3: "About the same", 5: "Better"},
 }
 
 # Where a survey was shown, by `survey_responses.moment`.

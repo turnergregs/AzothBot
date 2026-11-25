@@ -1828,13 +1828,15 @@ def _answer_summary(question_id: str, counts: dict) -> str:
 # The game records its onboarding choices in survey_responses too (game
 # 2026-11-12, `moment = 'onboarding'`: Unlock everything, Lesson Complete,
 # the tutorial boss's Retry, Settings' tutorial buttons). They are not surveys,
-# and every survey report leaves them out.
+# and every survey report leaves them out, as it does the questions the game
+# no longer asks (sl.RETIRED).
 NOT_SURVEY_MOMENTS = {"onboarding"}
 
 
 def is_survey(row: dict) -> bool:
-    """Whether a survey_responses row (or survey_answer_view row) is a survey."""
-    return row.get("moment") not in NOT_SURVEY_MOMENTS
+    """Whether a survey_responses row (or survey_answer_view row) is a survey
+    still asked."""
+    return row.get("moment") not in NOT_SURVEY_MOMENTS and row.get("question_id") not in sl.RETIRED
 
 
 def survey_answers_card(tally: list, period: str = "Since the last post", cohort: str = "all"):

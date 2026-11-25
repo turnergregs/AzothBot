@@ -1161,7 +1161,7 @@ def test_the_survey_histograms_card_is_square():
     """The plots are sized to fill a square, whatever the count of charts,
     within HISTOGRAM_PLOT_H: one chart is clamped, so not square."""
     many = cards.survey_tally([_survey(qid, answer="3") for qid in
-                               ("fun", "choices", "length", "variety", "cards", "new_attacks")]
+                               ("fun", "choices", "length", "variety", "cards", "boss_rush")]
                               + [_survey("difficulty", answer="too_hard")]
                               + [_survey("understood", answer="yes", run=1)])
     img = Image.open(io.BytesIO(cards.surveys_histograms_card(many).png()))
@@ -1350,3 +1350,12 @@ def test_the_onboarding_choices_are_not_counted_as_surveys():
     tally = cards.survey_tally([_survey("fun", answer="4"),
                                 _survey("lesson_done", answer="next", moment="onboarding")])
     assert [r["question_id"] for r in tally] == ["fun"]
+
+
+def test_retired_questions_are_left_out_of_survey_reports():
+    """2026-11-25: the new attacks and new boss blocks questions are no longer
+    asked, so their old answers no longer fill a chart in every report."""
+    tally = cards.survey_tally([_survey("boss_rush", answer="4"),
+                                _survey("new_attacks", answer="2"),
+                                _survey("new_boss_blocks", answer="5")])
+    assert [r["question_id"] for r in tally] == ["boss_rush"]
